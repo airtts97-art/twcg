@@ -437,6 +437,126 @@ const abilityEffects = {
     };
     return "pending";
   },
+  destroySelf({ game, card }) {
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const unit = game.board[row][col];
+        if (unit && unit.instanceId === card.instanceId) {
+          unit.currentHp = 0;
+          cleanupAllDestroyed();
+          log(game, `${card.name}: 自壊`);
+          return;
+        }
+      }
+    }
+  },
+  searchDeckByType({ game, playerId, ability }) {
+    const player = game.players[playerId];
+    const amount = ability.amount || 1;
+    let found = 0;
+    for (let i = 0; i < player.mainDeck.length && found < amount; i++) {
+      const c = player.mainDeck[i];
+      if (c.type === ability.cardType) {
+        player.hand.push(player.mainDeck.splice(i, 1)[0]);
+        found++;
+        i--;
+      }
+    }
+    if (found) log(game, `${player.name}: デッキから${ability.cardType}を${found}枚手札に`);
+  },
+  revealTopNPick({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const n = ability.amount || 3;
+    const revealed = [];
+    for (let i = 0; i < n && player.mainDeck.length > 0; i++) {
+      revealed.push(player.mainDeck.shift());
+    }
+    if (!revealed.length) {
+      log(game, `${player.name}: デッキが空のため公開できない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "revealPick",
+      playerId,
+      revealed,
+      tagFilter: ability.tagFilter || null,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "revealPick" };
+    game.message = "公開されたカードから1枚選んで手札に加えてください。";
+    return "pending";
+  },
+  payResourceOrCoreDamage({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const canAfford = (player.resources[ability.resource] || 0) >= ability.amount;
+    if (canAfford) {
+      game.pendingChoice = {
+        type: "payOrDamage",
+        playerId,
+        cardName: card.name,
+        resource: ability.resource,
+        amount: ability.amount,
+        damage: ability.damage,
+        queueItem: { playerId, card, ability, source },
+      };
+      game.selected = { kind: "choice", choice: "payOrDamage" };
+      game.message = `${RESOURCE_LABELS[ability.resource]}${ability.amount}を支払うか、コアに${ability.damage}ダメージを受けますか？`;
+      return "pending";
+    }
+    player.core.hp -= ability.damage;
+    log(game, `${player.name}: 「${card.name}」支払えず → コアに${ability.damage}ダメージ`);
+    checkWinner(game);
+  },
+  gainShockOrAlert({ game, playerId, card }) {
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const unit = game.board[row][col];
+        if (unit && unit.instanceId === card.instanceId) {
+          if (!unit.keywords) unit.keywords = [];
+          const hasShock = hasKeyword(unit, "shock");
+          const hasAlert = hasKeyword(unit, "alert");
+          const hasMultiStrike = hasKeyword(unit, "multiStrike");
+          if (hasShock && hasAlert) {
+            unit.keywords = unit.keywords.filter((k) => k.id !== "shock" && k.id !== "alert" && k.id !== "multiStrike");
+            unit.keywords.push({ id: "multiStrike", value: 3 });
+            log(game, `${unit.name}: [衝撃]+[警戒] → [連撃③]`);
+          } else if (hasMultiStrike) {
+            unit.keywords = unit.keywords.filter((k) => k.id !== "multiStrike");
+            unit.keywords.push({ id: "shock" });
+            log(game, `${unit.name}: [連撃③]解除 → [衝撃]を得る`);
+          } else if (!hasShock) {
+            unit.keywords.push({ id: "shock" });
+            log(game, `${unit.name}: [衝撃]を得る`);
+          } else {
+            unit.keywords.push({ id: "alert" });
+            log(game, `${unit.name}: [警戒]を得る`);
+          }
+          return;
+        }
+      }
+    }
+  },
+  grantKeywordsToEnemyRelativeRow({ game, playerId, ability }) {
+    const opponent = opponentOf(playerId);
+    const oppInfo = PLAYERS[opponent];
+    const targetRow = oppInfo.summonRow + (ability.row - 1) * oppInfo.forward;
+    let count = 0;
+    if (targetRow < 0 || targetRow >= ROWS) return;
+    for (let col = 0; col < COLS; col++) {
+      const unit = game.board[targetRow]?.[col];
+      if (unit && unit.owner === opponent) {
+        if (!unit.keywords) unit.keywords = [];
+        for (const kw of (ability.keywords || [])) {
+          if (!unit.keywords.some((k) => k.id === kw)) {
+            unit.keywords.push({ id: kw });
+            count++;
+          }
+        }
+      }
+    }
+    const kwLabels = (ability.keywords || []).map((k) => KEYWORD_DEFINITIONS[k]?.label || k).join("・");
+    log(game, `${game.players[playerId].name}: 敵第${ability.row}行に[${kwLabels}]付与（${count}体）`);
+  },
 };
 
 const cardCatalog = {
@@ -1289,6 +1409,61 @@ function parseDeckmakerAbilities(card, localType) {
     const existingMill = abilities.findIndex((a) => a.trigger === "onMill" && a.effect === "summonSelfFromDump");
     if (existingMill >= 0) abilities.splice(existingMill, 1);
     abilities.push({ trigger: "onMill", effect: "summonSelfFromDumpMobile" });
+  }
+
+  // ---- New patterns ----
+
+  // onTurnStart: "ターン開始時：このユニットを破壊"
+  if (/ターン開始時[：:].*このユニットを破壊/.test(text)) {
+    abilities.push({ trigger: "onTurnStart", effect: "destroySelf" });
+  }
+
+  // onTurnStart: "ターン開始時：人Xを支払うか、コアにYダメージ" (幾龍)
+  const turnStartPayMatch = text.match(/ターン開始時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払うか[、,].*?コアに([0-9０-９①②③④⑤⑥⑦⑧⑨]+)ダメージ/);
+  if (turnStartPayMatch) {
+    const DESC_RES = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+    const resource = DESC_RES[turnStartPayMatch[1]] || "people";
+    const amount = parseDeckmakerKeywordValue(turnStartPayMatch[2]) || 1;
+    const damage = parseDeckmakerKeywordValue(turnStartPayMatch[3]) || 1;
+    abilities.push({ trigger: "onTurnStart", effect: "payResourceOrCoreDamage", resource, amount, damage });
+  }
+
+  // onTurnStart: "自ターン開始時：[衝撃]か[警戒]を得る" (編剣)
+  if (/[自]?ターン開始時[：:]\[衝撃\]か\[警戒\]を得る/.test(text)) {
+    abilities.push({ trigger: "onTurnStart", effect: "gainShockOrAlert" });
+  }
+
+  // Reveal top N and pick 1: "デッキの上からN枚を...公開し、1枚を...手札に加える"
+  const revealPickMatch = text.match(/デッキの上から([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚.*公開.*(?:1枚|一枚).*手札に加える/s);
+  if (revealPickMatch) {
+    const amount = parseDeckmakerKeywordValue(revealPickMatch[1]) || 3;
+    const tagFilterMatch = text.match(/\[([^\]]+)\](?:カード)?(?:があれば|のカードを)/);
+    const tagFilter = tagFilterMatch ? tagFilterMatch[1] : null;
+    abilities.push({ trigger: baseTrigger, effect: "revealTopNPick", amount, tagFilter });
+  }
+
+  // Search deck by card type: "デッキからタクトカードを手札に加える" (without quotes, not already matched)
+  if (!/デッキから「/.test(text) && !/デッキからコスト総量/.test(text)) {
+    const searchTypeMatch = text.match(/デッキから([^「\n(（]+?)カードを手札に加える/);
+    if (searchTypeMatch) {
+      const typeText = searchTypeMatch[1];
+      let cardType = null;
+      if (/タクト|指令/.test(typeText)) cardType = "tact";
+      else if (/ストラクト|施設/.test(typeText)) cardType = "struct";
+      if (cardType) abilities.push({ trigger: baseTrigger, effect: "searchDeckByType", cardType, amount: 1 });
+    }
+  }
+
+  // Grant keywords to enemy relative row: "自身の第N行の敵ユニット全てに...を付与"
+  const grantEnemyRowMatch = text.match(/自身の第([0-9一二三四五六七八九]+)行.*敵ユニット全てに.*を付与/);
+  if (grantEnemyRowMatch) {
+    const row = parseDeckmakerKeywordValue(grantEnemyRowMatch[1]) || 2;
+    const keywords = [];
+    if (/\[不動\]/.test(text)) keywords.push("immobile");
+    if (/\[不攻\]/.test(text)) keywords.push("noAttack");
+    if (/\[衝撃\]/.test(text)) keywords.push("shock");
+    if (/\[警戒\]/.test(text)) keywords.push("alert");
+    if (keywords.length) abilities.push({ trigger: baseTrigger, effect: "grantKeywordsToEnemyRelativeRow", row, keywords });
   }
 
   return abilities;
@@ -2930,6 +3105,65 @@ function resolveMysticCaptureChoice({ exile = false } = {}) {
   return true;
 }
 
+function resolveRevealPick(cardIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "revealPick") return false;
+  const player = state.players[pending.playerId];
+  const card = pending.revealed[cardIndex];
+  if (!card) return false;
+  if (pending.tagFilter && !(card.tags || []).includes(pending.tagFilter)) {
+    state.message = `[${pending.tagFilter}]タグのカードのみ選択できます。`;
+    return false;
+  }
+  pending.revealed.splice(cardIndex, 1);
+  player.hand.push(card);
+  for (const c of pending.revealed) player.mainDeck.push(c);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  log(state, `${player.name}: 「${card.name}」を手札に加え、残りをデッキ下へ`);
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function resolveRevealPickSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "revealPick") return false;
+  const player = state.players[pending.playerId];
+  for (const c of pending.revealed) player.mainDeck.push(c);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  log(state, `${player.name}: カードを選ばず全てデッキ下へ`);
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function resolvePayOrDamage(payChoice) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "payOrDamage") return false;
+  const player = state.players[pending.playerId];
+  if (payChoice) {
+    player.resources[pending.resource] = (player.resources[pending.resource] || 0) - pending.amount;
+    log(state, `${player.name}: 「${pending.cardName}」${RESOURCE_LABELS[pending.resource]}${pending.amount}を支払う`);
+  } else {
+    player.core.hp -= pending.damage;
+    log(state, `${player.name}: 「${pending.cardName}」支払わず → コアに${pending.damage}ダメージ`);
+    checkWinner(state);
+  }
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
 function isValidAbilityTarget(item, target) {
   if (!target) return false;
   if (item.ability.target === "enemyUnit") return target.owner !== item.playerId;
@@ -2961,6 +3195,13 @@ function startTurn(game, playerId) {
   }
   for (const [key, amount] of Object.entries(player.core.income || {})) addResources(player, key, amount);
   drawCards(game, playerId, player.core.draw);
+  // onTurnStart: trigger for all owned units (destroySelf, payOrDamage, gainShockOrAlert, etc.)
+  const turnStartUnits = unitsOwnedBy(playerId);
+  for (const unit of turnStartUnits) {
+    if ((unit.abilities || []).some((a) => a.trigger === "onTurnStart")) {
+      triggerAbilities(game, playerId, unit, "onTurnStart");
+    }
+  }
   const structsWithEffect = player.structs.filter(
     (s) => (s.abilities || []).some((a) => a.trigger === "onStructurePhase")
   );
@@ -2988,6 +3229,7 @@ function startTurn(game, playerId) {
 
 function activateStructInPhase(index) {
   if (!canControlActivePlayer()) return false;
+  if (state.pendingChoice) return false;
   const pending = state.pendingStructPhase;
   if (!pending) return false;
   if (pending.activatedIndexes.includes(index)) return false;
@@ -3004,6 +3246,7 @@ function activateStructInPhase(index) {
 
 function endStructPhase() {
   if (!canControlActivePlayer()) return false;
+  if (state.pendingChoice) return false;
   const pending = state.pendingStructPhase;
   if (!pending) return false;
   if (pending.pendingResourceChoice) return false;
@@ -4751,33 +4994,36 @@ function drawChoiceOverlay() {
   if (!pending) return;
   ctx.fillStyle = "rgba(0, 0, 8, 0.75)";
   ctx.fillRect(0, 0, W, H);
+  if (pending.type === "mysticCapture") drawMysticCapturePanel(pending);
+  else if (pending.type === "revealPick") drawRevealPickPanel(pending);
+  else if (pending.type === "payOrDamage") drawPayOrDamagePanel(pending);
+}
 
-  const x = 388;
-  const y = 202;
-  const w = 664;
-  const h = 392;
+function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
   ctx.save();
-  ctx.shadowColor = "#8040ff";
+  ctx.shadowColor = shadowColor || "#8040ff";
   ctx.shadowBlur = 30;
-  roundRect(x, y, w, h, 12, "rgba(8,10,28,0.97)", "rgba(100,50,200,0.7)", 2);
+  roundRect(x, y, w, h, 12, "rgba(8,10,28,0.97)", accentColor, 2);
   ctx.shadowBlur = 0;
   ctx.restore();
-  // Top accent
   const acGrd = ctx.createLinearGradient(x, y, x + w, y);
   acGrd.addColorStop(0, "transparent");
-  acGrd.addColorStop(0.3, "rgba(120,60,220,0.6)");
-  acGrd.addColorStop(0.7, "rgba(120,60,220,0.6)");
+  acGrd.addColorStop(0.3, accentColor);
+  acGrd.addColorStop(0.7, accentColor);
   acGrd.addColorStop(1, "transparent");
   ctx.fillStyle = acGrd;
   ctx.fillRect(x, y, w, 2);
+}
 
+function drawMysticCapturePanel(pending) {
+  const x = 388, y = 202, w = 664, h = 392;
+  drawChoicePanelBase(x, y, w, h, "rgba(100,50,200,0.7)");
   ctx.fillStyle = "#d0b0ff";
   ctx.font = "700 22px 'Yu Gothic UI', sans-serif";
   ctx.fillText("神秘捕縛", x + 28, y + 38);
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   ctx.fillStyle = "rgba(180,160,220,0.8)";
   ctx.fillText("手札の神秘タグユニットを選択します。捨てると1回、除外すると2回、登場時効果を発動します。", x + 28, y + 64, w - 56);
-
   const choices = mysticCaptureChoices();
   if (!choices.length) {
     ctx.fillStyle = "rgba(180,160,220,0.8)";
@@ -4799,7 +5045,6 @@ function drawChoiceOverlay() {
     ctx.fillText(`${tagLabels(card).join("/")} / ${formatCost(card.cost)}`, cardX + 10, cardY + 38, 260);
     addHit(cardX, cardY, 282, 48, () => toggleMysticCaptureChoice(handIndex));
   });
-
   const selectedCount = pending.selectedHandIndexes.length;
   ctx.fillStyle = "rgba(180,160,220,0.8)";
   ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
@@ -4807,6 +5052,66 @@ function drawChoiceOverlay() {
   drawButton(x + 28, y + h - 58, 150, 36, "選ばず解決", () => resolveMysticCaptureChoice({ exile: false }));
   drawButton(x + 196, y + h - 58, 180, 36, "捨てて1回発動", () => resolveMysticCaptureChoice({ exile: false }));
   drawButton(x + 394, y + h - 58, 210, 36, "除外して2回発動", () => resolveMysticCaptureChoice({ exile: true }), null, { accent: "p1" });
+}
+
+function drawRevealPickPanel(pending) {
+  const cards = pending.revealed || [];
+  const colW = 200, colH = 80, cols = Math.min(cards.length, 3);
+  const panelW = Math.max(500, cols * (colW + 16) + 56);
+  const panelH = 300;
+  const x = Math.round((W - panelW) / 2);
+  const y = Math.round((H - panelH) / 2);
+  drawChoicePanelBase(x, y, panelW, panelH, "rgba(40,120,200,0.7)", "#2060ff");
+  ctx.fillStyle = "#a0d0ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("デッキ公開：1枚選んで手札に", x + 24, y + 36);
+  if (pending.tagFilter) {
+    ctx.fillStyle = "rgba(160,200,255,0.7)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`[${pending.tagFilter}]タグのカードのみ選択可`, x + 24, y + 56);
+  }
+  const isController = canControlActivePlayer() && state.pendingChoice?.playerId === controlledPlayerId();
+  cards.forEach((card, i) => {
+    const cx = x + 28 + i * (colW + 16);
+    const cy = y + 72;
+    const pickable = !pending.tagFilter || (card.tags || []).includes(pending.tagFilter);
+    const fill = pickable ? "rgba(20,50,100,0.8)" : "rgba(30,20,40,0.6)";
+    const border = pickable ? "rgba(60,140,220,0.8)" : "rgba(80,60,100,0.4)";
+    roundRect(cx, cy, colW, colH, 6, fill, border, pickable ? 2 : 1);
+    ctx.fillStyle = pickable ? "#d0eeff" : "#706080";
+    ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.name, cx + 8, cy + 22, colW - 16);
+    ctx.fillStyle = "rgba(160,180,220,0.7)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.type + (card.tags?.length ? "  " + card.tags.slice(0, 2).join("/") : ""), cx + 8, cy + 40, colW - 16);
+    ctx.fillText(formatCost(card.cost || {}), cx + 8, cy + 56, colW - 16);
+    if (isController && pickable) addHit(cx, cy, colW, colH, () => { resolveRevealPick(i); render(); });
+  });
+  if (isController) {
+    drawButton(x + panelW - 220, y + panelH - 52, 196, 36, "選ばずデッキ下へ", () => { resolveRevealPickSkip(); render(); });
+  }
+}
+
+function drawPayOrDamagePanel(pending) {
+  const x = 420, y = 280, w = 600, h = 240;
+  drawChoicePanelBase(x, y, w, h, "rgba(180,60,60,0.7)", "#ff4040");
+  ctx.fillStyle = "#ffb0b0";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」ターン開始時効果`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(255,180,180,0.85)";
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  const resLabel = RESOURCE_LABELS[pending.resource] || pending.resource;
+  ctx.fillText(`${resLabel}を${pending.amount}支払うか、自分のコアに${pending.damage}ダメージを受けてください。`, x + 28, y + 66, w - 56);
+  const player = state.players[pending.playerId];
+  const curRes = player.resources[pending.resource] || 0;
+  ctx.fillStyle = "rgba(255,200,180,0.7)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`現在の${resLabel}: ${curRes}  /  コアHP: ${player.core.hp}`, x + 28, y + 92);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  if (isController) {
+    drawButton(x + 28, y + h - 58, 240, 36, `${resLabel}${pending.amount}を支払う`, () => { resolvePayOrDamage(true); render(); }, null, { accent: "p1" });
+    drawButton(x + 290, y + h - 58, 220, 36, `コアに${pending.damage}ダメージ`, () => { resolvePayOrDamage(false); render(); });
+  }
 }
 
 function canAffordStructActivation(struct, player) {
@@ -5571,6 +5876,8 @@ function abilityText(card) {
         onDestroy: "破壊時",
         onStructurePhase: "Structure Phase",
         onDestroyEnemyUnit: "相手ユニット破壊時",
+        onTurnStart: "ターン開始時",
+        onMill: "デッキから墓地送り時",
       }[ability.trigger] || ability.trigger;
       const effect = {
         drawCards: `カードを${ability.amount}枚引く`,
@@ -5583,6 +5890,12 @@ function abilityText(card) {
         mysticCapture: "神秘ユニットを選択して登場時効果を発動",
         grantDestroyGain: `味方ユニット1体に「破壊時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}」を付与`,
         chooseExchange: `${(ability.costOptions || []).map((o) => `${RESOURCE_LABELS[o.resource] || o.resource}${o.amount}`).join("または")}を支払い → ${Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("/")}`,
+        destroySelf: "自壊",
+        searchDeckByType: `デッキから${ability.cardType || "?"}を手札に`,
+        revealTopNPick: `デッキ上${ability.amount || 3}枚公開→1枚手札に`,
+        payResourceOrCoreDamage: `${RESOURCE_LABELS[ability.resource] || ability.resource}${ability.amount}支払いまたはコア${ability.damage}ダメージ`,
+        gainShockOrAlert: "[衝撃]か[警戒]を得る",
+        grantKeywordsToEnemyRelativeRow: `敵第${ability.row}行に${(ability.keywords || []).map((k) => `[${KEYWORD_DEFINITIONS[k]?.label || k}]`).join("")}付与`,
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })
