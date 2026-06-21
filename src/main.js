@@ -5558,7 +5558,7 @@ function drawHand() {
     const cy = hy + 18;
     if (cx + cardW > hx + hw - 8) return;
     const isSelected = state.selected?.kind === "hand" && state.selected.playerId === player.id && state.selected.index === i;
-    drawCard(cx, cy, cardW, cardH, card, { selected: isSelected, small: false });
+    drawCard(cx, cy, cardW, cardH, card, { selected: isSelected, small: false, artOnly: true });
     addHit(cx, cy, cardW, cardH, () => {
       if (!requireActivePlayerControl()) return;
       state.selected = { kind: "hand", playerId: player.id, index: i, confirmed: false };
