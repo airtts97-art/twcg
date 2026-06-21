@@ -103,6 +103,11 @@ const DEFAULT_STRUCT_DECK_IDS = ["town", "grove", "mine", "refinery", "powerPlan
 const SAVED_DECK_KEY = "twcg.savedDeck.v1";
 const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
 const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
+const FORCE_BUNDLED_CARD_IDS = new Set([
+  "card_1753611167885", // クリスタヴィアゴーレム
+  "card_1753660736818", // 覆没の大暴走
+  "card_1755655012242", // 忌地:山
+]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
   nature: "nature",
@@ -380,6 +385,47 @@ const abilityEffects = {
     }
     if (found) log(game, `${player.name}: 「${ability.cardName || ability.tag}」を${found}枚手札に`);
   },
+  summonGolemFromDeckOrDump({ game, playerId, card, ability }) {
+    summonGolemFromZones(game, playerId, {
+      maxCost: ability.maxCost || 3,
+      row: ability.row,
+      sourceCardName: card.name,
+    });
+  },
+  summonGolemToSameRow({ game, playerId, card, ability }) {
+    summonGolemFromZones(game, playerId, {
+      maxCost: ability.maxCost || 3,
+      row: card.row,
+      sourceCardName: card.name,
+    });
+  },
+  tactToStructOverStruct({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const requiredName = ability.requiredStructName || "覆没の迷宮";
+    const hasRequiredStruct = player.structs.some((struct) => struct.id === ability.requiredStructId || struct.name === requiredName);
+    if (!hasRequiredStruct) {
+      log(game, `${player.name}: ${requiredName} がないため ${card.name} を施設化できません`);
+      return;
+    }
+    const tactIndex = player.tactZone.indexOf(card);
+    if (tactIndex >= 0) player.tactZone.splice(tactIndex, 1);
+    const structCard = cloneCard(card);
+    structCard.type = "struct";
+    structCard.rested = false;
+    structCard.abilities = [
+      {
+        trigger: "onStructurePhase",
+        effect: "chooseSummonGolem",
+        maxCost: ability.maxCost || 3,
+        costOptions: ability.costOptions || [
+          { resource: "ore", amount: 2 },
+          { resource: "magic", amount: 1 },
+        ],
+      },
+    ];
+    player.structs.push(structCard);
+    log(game, `${player.name}: ${card.name} をストラクトとして配置`);
+  },
   summonSelfFromDumpMobile({ game, playerId, card }) {
     const player = game.players[playerId];
     const dumpIdx = player.dump.findLastIndex((c) => c.id === card.id);
@@ -435,6 +481,27 @@ const abilityEffects = {
     game.pendingStructPhase.pendingResourceChoice = {
       costOptions: ability.costOptions,
       produces: ability.produces,
+      cardName: card.name,
+    };
+    return "pending";
+  },
+  chooseProduceResource({ game, card, ability }) {
+    if (!game.pendingStructPhase) return;
+    game.pendingStructPhase.pendingResourceChoice = {
+      options: ability.options || [],
+      cardName: card.name,
+    };
+    return "pending";
+  },
+  chooseSummonGolem({ game, card, ability }) {
+    if (!game.pendingStructPhase) return;
+    game.pendingStructPhase.pendingResourceChoice = {
+      options: (ability.costOptions || []).map((opt) => ({
+        id: opt.resource,
+        label: `${RESOURCE_LABELS[opt.resource] || opt.resource}${opt.amount}`,
+        cost: { [opt.resource]: opt.amount },
+        action: { effect: "summonGolemFromDeckOrDump", maxCost: ability.maxCost || 3 },
+      })),
       cardName: card.name,
     };
     return "pending";
@@ -664,6 +731,46 @@ const abilityEffects = {
     checkWinner(game);
   },
 };
+
+function findFirstEmptyColInRow(game, row) {
+  if (row < 0 || row >= ROWS) return -1;
+  for (let col = 0; col < COLS; col += 1) {
+    if (!game.board[row][col]) return col;
+  }
+  return -1;
+}
+
+function isGolemCard(card, maxCost = 3) {
+  return card?.type === "unit" && (card.tags || []).includes("ゴーレム") && totalCostAmount(card.cost || {}) <= maxCost;
+}
+
+function summonGolemFromZones(game, playerId, { maxCost = 3, row = null, sourceCardName = "効果" } = {}) {
+  const player = game.players[playerId];
+  const targetRow = Number.isInteger(row) ? row : player.summonRow;
+  const col = findFirstEmptyColInRow(game, targetRow);
+  if (col < 0) {
+    log(game, `${sourceCardName}: ゴーレムを出す空きマスがありません`);
+    return false;
+  }
+
+  let zone = "mainDeck";
+  let index = player.mainDeck.findIndex((card) => isGolemCard(card, maxCost));
+  if (index < 0) {
+    zone = "dump";
+    index = player.dump.findIndex((card) => isGolemCard(card, maxCost));
+  }
+  if (index < 0) {
+    log(game, `${sourceCardName}: コスト総量${maxCost}以下のゴーレムが見つかりません`);
+    return false;
+  }
+
+  const [card] = player[zone].splice(index, 1);
+  const unit = makeUnit(card.id, playerId, targetRow, col, { rested: true });
+  game.board[targetRow][col] = unit;
+  log(game, `${sourceCardName}: ${card.name} を場に出しました`);
+  triggerAbilities(game, playerId, unit, "onSummon", { from: zone });
+  return true;
+}
 
 const cardCatalog = {
   cores: {
@@ -1242,7 +1349,7 @@ function loadBundledDeckData() {
     // Bundled cards usually don't overwrite user-customized versions already in catalog.
     // Core cards are refreshed from Deckmaker source so corrected initialResources
     // migrate even when an older imported copy is still stored in localStorage.
-    if (!cardCatalog[group][card.id] || (group === "cores" && deckmakerCard.initialResources)) {
+    if (!cardCatalog[group][card.id] || FORCE_BUNDLED_CARD_IDS.has(card.id) || (group === "cores" && deckmakerCard.initialResources)) {
       cardCatalog[group][card.id] = card;
     }
   }
@@ -1642,6 +1749,37 @@ function parseDeckmakerAbilities(card, localType) {
     }
   }
 
+  if (card.id === "card_1755655012242") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "chooseProduceResource",
+      options: [
+        { id: "magic", label: "\u9b541", cost: {}, produces: { magic: 1 } },
+        { id: "ore", label: "\u92712", cost: {}, produces: { ore: 2 } },
+        { id: "funds", label: "\u91d12", cost: {}, produces: { funds: 2 } },
+      ],
+    });
+  }
+
+  if (card.id === "card_1753660736818") {
+    abilities.push({
+      trigger: "onPlay",
+      effect: "tactToStructOverStruct",
+      requiredStructId: "card_1753661462969",
+      requiredStructName: "\u8986\u6ca1\u306e\u8ff7\u5bae",
+      maxCost: 3,
+      costOptions: [
+        { resource: "ore", amount: 2 },
+        { resource: "magic", amount: 1 },
+      ],
+    });
+  }
+
+  if (card.id === "card_1753611167885") {
+    abilities.push({ trigger: "onAttack", effect: "summonGolemToSameRow", maxCost: 3 });
+  }
+
   return abilities;
 }
 
@@ -1665,6 +1803,10 @@ function fromDeckmakerCard(card) {
   if (localType === "unit") {
     base.atk = Number(card.attack) || 0;
     base.hp = Number(card.defense) || 1;
+    if (card.id === "card_1753611167885") {
+      base.requiredStructId = "card_1753660736818";
+      base.requiredStructName = "\u8986\u6ca1\u306e\u5927\u66b4\u8d70";
+    }
   }
   if (localType === "core") {
     base.hp = Number(card.defense || card.hp) || 20;
@@ -3583,6 +3725,29 @@ function resolveMarketChoice(resource) {
   const pending = state.pendingStructPhase;
   if (!pending?.pendingResourceChoice) return;
   const choice = pending.pendingResourceChoice;
+  if (Array.isArray(choice.options)) {
+    const option = choice.options.find((opt) => opt.id === resource || opt.resource === resource);
+    if (!option) return;
+    const player = state.players[pending.playerId];
+    const cost = normalizeResourceObject(option.cost || {});
+    if (!pay(player, cost)) return;
+    for (const [res, amt] of Object.entries(option.produces || {})) {
+      addResources(player, res, amt);
+    }
+    if (option.action?.effect) {
+      abilityEffects[option.action.effect]?.({
+        game: state,
+        playerId: pending.playerId,
+        card: { name: choice.cardName },
+        ability: option.action,
+      });
+    }
+    pending.pendingResourceChoice = null;
+    processEffectQueue(state);
+    syncOnlineAction("marketChoice");
+    render();
+    return;
+  }
   const option = (choice.costOptions || []).find((o) => o.resource === resource);
   if (!option) return;
   const player = state.players[pending.playerId];
@@ -3647,11 +3812,20 @@ function enemyInRow(playerId, row) {
   return state.board[row].some((unit) => unit && unit.owner !== playerId);
 }
 
+function canMeetUnitStructRequirement(player, card) {
+  if (!card?.requiredStructId && !card?.requiredStructName) return true;
+  return player.structs.some((struct) => {
+    if (card.requiredStructId && struct.id === card.requiredStructId) return true;
+    return card.requiredStructName && struct.name === card.requiredStructName;
+  });
+}
+
 function placeUnitFromHand(handIndex, row, col) {
   if (!requireActivePlayerControl()) return false;
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
   if (!card || card.type !== "unit") return fail("ユニットカードを選択してください。");
+  if (!canMeetUnitStructRequirement(player, card)) return fail(`${card.requiredStructName || "\u5fc5\u8981\u30b9\u30c8\u30e9\u30af\u30c8"} \u304c\u306a\u3044\u305f\u3081\u51fa\u6483\u3067\u304d\u307e\u305b\u3093\u3002`);
   if (!canSummonToRow(card, player, row)) return fail("この行には配置できません。");
   if (state.board[row][col]) return fail("このマスには既にユニットがあります。");
   if (enemyInRow(state.activePlayer, row)) return fail("敵ユニットが存在する横列には配置できません。");
@@ -3855,6 +4029,7 @@ function attackWithSelectedUnit(target) {
   if (target.kind === "core") {
     if (!canAttackCore(unit)) return fail("コアへ直接攻撃できる位置ではありません。");
     if (!payAttackCosts(player, unit)) return fail("アクトコストが不足しています。");
+    triggerAttackAbilities(unit);
     const defender = state.players[opponentOf(unit.owner)];
     defender.core.hp -= unit.atk;
     afterAttack(unit);
@@ -3870,6 +4045,7 @@ function attackWithSelectedUnit(target) {
   if (!legality.ok) return fail(legality.reason);
   if (!payAttackCosts(player, unit)) return fail("アクトコストが不足しています。");
 
+  triggerAttackAbilities(unit);
   const rawDamage = calculateAttackDamage(unit, defender);
   const damage = hasKeyword(defender, "oneDamage") ? Math.min(rawDamage, 1) : rawDamage;
   defender.currentHp -= damage;
@@ -3901,6 +4077,15 @@ function payAttackCosts(player, unit) {
     cost.electric = (cost.electric || 0) + totalCostAmount(unit.actCost);
   }
   return payForCard(player, cost, unit);
+}
+
+function triggerAttackAbilities(unit) {
+  for (const ability of unit.abilities || []) {
+    if (ability.trigger === "onAttack") {
+      state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" } });
+    }
+  }
+  processEffectQueue(state);
 }
 
 function afterAttack(unit) {
@@ -5550,6 +5735,14 @@ function canAffordStructActivation(struct, player) {
         (opt) => (player.resources[opt.resource] || 0) >= opt.amount
       );
       if (!canAffordAny) return false;
+    } else if (ab.effect === "chooseProduceResource") {
+      const canAffordAny = (ab.options || []).some((opt) => canPay(player, opt.cost || {}));
+      if (!canAffordAny) return false;
+    } else if (ab.effect === "chooseSummonGolem") {
+      const canAffordAny = (ab.costOptions || []).some(
+        (opt) => (player.resources[opt.resource] || 0) >= opt.amount
+      );
+      if (!canAffordAny) return false;
     } else {
       for (const [res, amt] of Object.entries(ab.cost || {})) {
         if ((player.resources[res] || 0) < amt) return false;
@@ -5648,11 +5841,19 @@ function drawStructPhaseOverlay() {
     ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
     ctx.fillText(`${choice.cardName}: 支払う資源を選択してください`, x + 26, choiceY + 20);
     let bx = x + 26;
-    for (const opt of choice.costOptions) {
-      const canPay = (player.resources[opt.resource] || 0) >= opt.amount;
-      const label = `${RESOURCE_LABELS[opt.resource] || opt.resource} ${opt.amount}`;
-      if (isController && canPay) {
-        drawButton(bx, choiceY + 28, 120, 22, label, () => resolveMarketChoice(opt.resource));
+    const options = Array.isArray(choice.options)
+      ? choice.options
+      : (choice.costOptions || []).map((opt) => ({
+          id: opt.resource,
+          resource: opt.resource,
+          label: `${RESOURCE_LABELS[opt.resource] || opt.resource} ${opt.amount}`,
+          cost: { [opt.resource]: opt.amount },
+        }));
+    for (const opt of options) {
+      const canPayOption = canPay(player, opt.cost || {});
+      const label = opt.label || opt.id || opt.resource;
+      if (isController && canPayOption) {
+        drawButton(bx, choiceY + 28, 120, 22, label, () => resolveMarketChoice(opt.id || opt.resource));
       } else {
         drawButton(bx, choiceY + 28, 120, 22, label, null, null, { accent: "dim" });
       }
@@ -6646,6 +6847,8 @@ const testing = {
   playWildFromHand,
   playGrandFromHand,
   playStruct,
+  activateStructInPhase,
+  resolveMarketChoice,
   toggleMysticCaptureChoice,
   resolveMysticCaptureChoice,
   selectHandCard: selectHandCardForTest,

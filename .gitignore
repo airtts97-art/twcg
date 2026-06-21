@@ -1,0 +1,6 @@
+output/
+.env.local
+node_modules/
+dist/
+*.log
+*.err.log
