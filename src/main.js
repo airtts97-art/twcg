@@ -4544,7 +4544,6 @@ function render() {
   drawHand();
   drawResourceBar();
   drawActionPanel();
-  drawTurnStartSummaryPanel();
   drawLog();
   drawAnimations();
   drawStructPhaseOverlay();
