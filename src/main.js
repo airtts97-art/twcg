@@ -6,6 +6,7 @@ const W = canvas.width;
 const H = canvas.height;
 const ROWS = 4;
 const COLS = 5;
+const CARD_ASPECT = 63 / 88; // portrait width:height ratio (standard TCG card)
 const RESOURCE_KEYS = ["funds", "people", "nature", "ore", "fuel", "electric", "magic"];
 const CARD_TYPE_LABELS = {
   all: "全種",
@@ -5172,6 +5173,46 @@ function drawHeader() {
   drawButton(1308, 12, 120, 36, "HOME", () => (app.screen = "home"), null, { dark: true });
 }
 
+function drawBoardCard(cx, cy, cellW, cellH, unit) {
+  const isSelected = selectedUnit() === unit;
+  const padX = 10, padY = 6;
+  const avW = cellW - padX * 2;  // available width in cell
+  const avH = cellH - padY * 2;  // available height in cell
+
+  if (unit.rested) {
+    // レスト時: ポートレートカードを90°時計回りに回転して表示
+    // ポートレートカード (cardW × cardH) を 90°回転すると視覚上 cardH × cardW になる
+    // 視覚上の幅 = cardH ≤ avW, 視覚上の高さ = cardW ≤ avH となるよう計算
+    let cardW = avH;                       // portrait card の幅 = 利用可能高さ
+    let cardH = cardW / CARD_ASPECT;       // portrait card の高さ = 幅 / 比率
+    if (cardH > avW) { cardH = avW; cardW = cardH * CARD_ASPECT; }
+
+    const centerX = cx + cellW / 2;
+    const centerY = cy + cellH / 2;
+
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.rotate(Math.PI / 2);              // 90° 時計回り
+    // portrait card を中心から描画 (drawCard は通常座標系で動く)
+    drawCard(-cardH / 2, -cardW / 2, cardH, cardW, unit, {
+      selected: isSelected,
+      noHover: true,
+      noRestOverlay: true,
+    });
+    ctx.restore();
+
+    // ホバー検出は元のセル座標で登録
+    addCardHover(cx + padX, cy + padY, avW, avH, unit);
+  } else {
+    // 通常時: 縦横比を維持したポートレートカードをセル中央に表示
+    const cardH = Math.min(avH, avW / CARD_ASPECT);
+    const cardW = cardH * CARD_ASPECT;
+    const offX = cx + padX + (avW - cardW) / 2;
+    const offY = cy + padY + (avH - cardH) / 2;
+    drawCard(offX, offY, cardW, cardH, unit, { selected: isSelected });
+  }
+}
+
 function drawBoard() {
   const { x, y, w, h } = layout.board;
   // Board surround
@@ -5244,7 +5285,7 @@ function drawBoard() {
       }
 
       addHit(cx, cy, layout.cell.w, layout.cell.h, () => handleCellClick(row, col));
-      if (unit) drawCard(cx + 6, cy + 6, layout.cell.w - 12, layout.cell.h - 12, unit, { selected: selectedUnit() === unit });
+      if (unit) drawBoardCard(cx, cy, layout.cell.w, layout.cell.h, unit);
     }
   }
 }
@@ -5483,18 +5524,19 @@ function drawHand() {
   ctx.fillStyle = "rgba(80,110,180,0.6)";
   ctx.fillText(`${player.hand.length}枚`, hx + 60, hy + 16);
 
-  const cardW = 102;
-  const cardH = hh - 28;
+  const cardH = hh - 24;
+  const cardW = Math.round(cardH * CARD_ASPECT);   // 縦横比維持
+  const stride = cardW + 5;
   player.hand.forEach((card, i) => {
-    const cx = hx + 12 + i * (cardW + 4);
-    const cy = hy + 20;
+    const cx = hx + 12 + i * stride;
+    const cy = hy + 18;
     if (cx + cardW > hx + hw - 8) return;
     const isSelected = state.selected?.kind === "hand" && state.selected.playerId === player.id && state.selected.index === i;
     drawCard(cx, cy, cardW, cardH, card, { selected: isSelected, small: false });
     addHit(cx, cy, cardW, cardH, () => {
       if (!requireActivePlayerControl()) return;
       state.selected = { kind: "hand", playerId: player.id, index: i, confirmed: false };
-      state.message = `${card.name}: 内容を確認してから使用できます。`;
+      state.message = `${card.name}: カード確認後に使用できます。`;
     });
   });
 }
@@ -5571,13 +5613,14 @@ function drawStructBar(playerId, x, y, w, h) {
   ctx.font = "700 9px 'Yu Gothic UI', sans-serif";
   ctx.fillText("STRUCT", x + lpW + 12, y + 13);
 
-  // Struct cards (horizontal)
+  // Struct cards (horizontal, portrait ratio)
   const structStartX = x + lpW + 12;
-  const deckAreaW = 128; // right reserved for deck+grave
+  const deckAreaW = 128;
   const structAreaW = w - lpW - 16 - deckAreaW;
   const maxStructSlots = 6;
-  const slotW = Math.min(120, Math.floor(structAreaW / maxStructSlots) - 2);
-  const cardH = h - 12;
+  const cardH = h - 12;                            // 利用可能高さ
+  const cardW2 = Math.round(cardH * CARD_ASPECT);  // 縦横比から幅を計算
+  const slotW = Math.min(cardW2, Math.floor(structAreaW / maxStructSlots) - 2);
 
   player.structs.forEach((card, i) => {
     const cx2 = structStartX + i * (slotW + 2);
@@ -6494,7 +6537,7 @@ function drawCard(x, y, w, h, card, options = {}) {
         ctx.font = `600 ${Math.max(8, fs - 2)}px 'Yu Gothic UI', sans-serif`;
         ctx.fillText(keywords, x + 5, statsY + 24, w - 10);
       }
-      if (card.rested) drawRestedOverlay(x, y, w, h, options);
+      if (card.rested && !options.noRestOverlay) drawRestedOverlay(x, y, w, h, options);
     } else {
       const typeLabel = { tact: "TACT", wild: "WILD", grand: "GRAND", struct: "STRUCT" }[card.type] || card.type.toUpperCase();
       ctx.fillStyle = theme.text;
