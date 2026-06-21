@@ -117,6 +117,38 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1753611167885", // クリスタヴィアゴーレム
   "card_1753660736818", // 覆没の大暴走
   "card_1755655012242", // 忌地:山
+  "card_1753611174564", // 肉の王城
+  "card_1753660083940", // アトラス・コントロール
+  "card_1753659816385", // 演説
+  "card_1753661091291", // 間接貿易
+  "card_1753661560335", // 儀式の準備
+  "card_1753660371468", // 産業革命
+  "card_1753659109009", // 死体漁り
+  "card_1753659571381", // 世論誘導
+  "card_1753681080997", // 第二墓標
+  "card_1753683637865", // 難民保護施設
+  "card_1753683067735", // 農業協同組合
+  "card_1753664991902", // 農民
+  "card_1753904806388", // ゴールドラッシュ
+  "card_1753716897980", // アングローナ近衛儀礼兵
+  "card_1753760240197", // 採掘
+  "card_1753775442028", // 堕ちし龍の動死体
+  "card_1755612018710", // 忌地:森
+  "card_1755654825932", // 忌地:団地
+  "card_1755655390809", // 忌地:天宮
+  "card_1755656642598", // 特別指定忌地:霊廟
+  "card_1755648239499", // 虚の尖塔
+  "card_1753662513755", // 命脈の交信
+  "card_1753662124367", // 動死体の呼び声
+  "card_1755701443493", // 呼び贄
+  "card_1755906183709", // 風是の怪異
+  "card_1755925813924", // 怪異災害:吹雪
+  "card_1755670731207", // 【正体不明】罪人
+  "card_1762416434855", // 編剣の怪異
+  "card_1766737979616", // 思想魔法『強制送還』
+  "card_1753905404273", // 炎使いの騎士
+  "card_1753968998785", // 炎の英傑
+  "card_1753970684315", // 炎の大英傑
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -179,6 +211,24 @@ function cellCardPos(row, col) {
   };
 }
 
+// アニメーション用: セル内のポートレートカード実座標を返す
+function cellPortraitCardBounds(row, col) {
+  const visualRow = boardRowToVisualRow(row);
+  const cx = layout.board.x + col * layout.cell.w;
+  const cy = layout.board.y + visualRow * layout.cell.h;
+  const padX = 6, padY = 4, statsH = 22;
+  const avW = layout.cell.w - padX * 2;
+  const avH = layout.cell.h - padY - statsH;
+  const cardH = Math.min(avH, avW / CARD_ASPECT);
+  const cardW = cardH * CARD_ASPECT;
+  return {
+    x: cx + padX + (avW - cardW) / 2,
+    y: cy + padY + (avH - cardH) / 2,
+    w: cardW,
+    h: cardH,
+  };
+}
+
 function easeInOut(t) {
   return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 }
@@ -206,14 +256,14 @@ function tickAnimations() {
 }
 
 function startMoveAnimation(card, fromRow, fromCol, toRow, toCol) {
-  const from = cellCardPos(fromRow, fromCol);
-  const to = cellCardPos(toRow, toCol);
+  const from = cellPortraitCardBounds(fromRow, fromCol);
+  const to = cellPortraitCardBounds(toRow, toCol);
   startAnimation({ type: "move", card, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, w: from.w, h: from.h, duration: 280 });
 }
 
 function startAttackAnimation(card, fromRow, fromCol, toRow, toCol) {
-  const from = cellCardPos(fromRow, fromCol);
-  const to = cellCardPos(toRow, toCol);
+  const from = cellPortraitCardBounds(fromRow, fromCol);
+  const to = cellPortraitCardBounds(toRow, toCol);
   startAnimation({ type: "attack", card, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, w: from.w, h: from.h, duration: 340 });
 }
 
@@ -234,7 +284,7 @@ function drawAnimations() {
     }
     ctx.save();
     ctx.globalAlpha = t > 0.85 && anim.type === "move" ? 1 - (t - 0.85) / 0.15 : 1;
-    drawCard(px, py, anim.w, anim.h, anim.card, { selected: true });
+    drawCard(px, py, anim.w, anim.h, anim.card, { selected: true, artOnly: true });
     ctx.restore();
   }
 }
@@ -346,6 +396,239 @@ const abilityEffects = {
       }
     }
     log(game, `${game.players[playerId].name}: 味方ユニットHP +${ability.amount}`);
+  },
+  buffSelfAtk({ game, playerId, card, ability }) {
+    card.atk = (card.atk || 0) + (ability.amount || 1);
+    log(game, `${game.players[playerId].name}: 「${card.name}」+${ability.amount || 1}/0 補正`);
+  },
+  buffSelfHpFromTagCount({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const tag = ability.tag;
+    let count = 0;
+    for (const boardRow of game.board) {
+      for (const cell of boardRow) {
+        if (cell && cell !== card && cell.owner === playerId && (cell.tags || []).includes(tag)) count++;
+      }
+    }
+    if (count > 0) {
+      card.hp = (card.hp || 0) + count;
+      if (card.maxHp !== undefined) card.maxHp = (card.maxHp || 0) + count;
+      if (card.currentHp !== undefined) card.currentHp = (card.currentHp || 0) + count;
+      log(game, `${player.name}: 「${card.name}」±0/+${count}（[${tag}]×${count}）`);
+    }
+  },
+  gainPerStructTag({ game, playerId, ability }) {
+    const player = game.players[playerId];
+    const tag = ability.tag;
+    const count = (player.structs || []).filter((s) => (s.tags || []).includes(tag)).length;
+    if (count > 0) {
+      addResources(player, ability.resource, count * (ability.amount || 1));
+      log(game, `${player.name}: [${tag}]×${count} → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${count}`);
+    }
+  },
+  chooseGainResource({ game, playerId, card, ability, source }) {
+    game.pendingChoice = {
+      type: "chooseGainResource",
+      playerId,
+      options: ability.options || [],
+      cardName: card?.name || "",
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "chooseGainResource" };
+    game.message = "得る資源を選んでください。";
+    return "pending";
+  },
+  buffSelfHp({ game, playerId, card, ability }) {
+    const amount = ability.amount || 1;
+    card.hp = (card.hp || 0) + amount;
+    if (card.maxHp !== undefined) card.maxHp = (card.maxHp || 0) + amount;
+    if (card.currentHp !== undefined) card.currentHp = (card.currentHp || 0) + amount;
+    log(game, `${game.players[playerId].name}: 「${card.name}」+0/+${amount}`);
+  },
+  addCounters({ game, playerId, card, ability }) {
+    card.counters = (card.counters || 0) + (ability.amount || 1);
+    log(game, `${game.players[playerId].name}: 「${card.name}」カウンター +${ability.amount || 1}`);
+  },
+  healSelfAndRemoveCounter({ game, playerId, card, ability }) {
+    if ((card.counters || 0) > 0) card.counters -= 1;
+    const amount = ability.amount || 1;
+    card.currentHp = Math.min(card.maxHp || card.hp || card.currentHp || 0, (card.currentHp || 0) + amount);
+    log(game, `${game.players[playerId].name}: 「${card.name}」${amount}回復`);
+  },
+  coreDeathCounter({ game, playerId, card, ability }) {
+    card.counters = (card.counters || 0) + 1;
+    const threshold = ability.threshold || 4;
+    if (card.counters >= threshold) {
+      card.counters = 0;
+      addResources(game.players[playerId], ability.resource || "people", ability.amount || 1);
+      log(game, `${game.players[playerId].name}: 「${card.name}」カウンター${threshold}消費`);
+    }
+  },
+  grantIndestructibleToTagUnits({ game, playerId, ability }) {
+    const tag = ability.tag;
+    let count = 0;
+    for (const unit of unitsOwnedBy(playerId)) {
+      if (!tag || (unit.tags || []).includes(tag)) {
+        unit.indestructibleUntilTurnEnd = playerId;
+        count++;
+      }
+    }
+    log(game, `${game.players[playerId].name}: [${tag || "味方"}] ${count}体に破壊不能`);
+  },
+  gainResourcePlusPerStructTag({ game, playerId, ability }) {
+    const player = game.players[playerId];
+    const base = ability.baseAmount || 0;
+    const tag = ability.tag;
+    const count = (player.structs || []).filter((s) => (s.tags || []).includes(tag)).length;
+    const amount = base + count * (ability.amountPer || 1);
+    addResources(player, ability.resource, amount);
+    log(game, `${player.name}: ${RESOURCE_LABELS[ability.resource] || ability.resource}+${amount}`);
+  },
+  opponentDiscard({ game, playerId, ability }) {
+    const opponent = game.players[opponentOf(playerId)];
+    const amount = ability.amount || 1;
+    for (let i = 0; i < amount && opponent.hand.length; i++) {
+      const index = Math.floor(Math.random() * opponent.hand.length);
+      opponent.dump.push(opponent.hand.splice(index, 1)[0]);
+    }
+    log(game, `${opponent.name}: 手札を${amount}枚捨てる`);
+  },
+  drawPlusPayResource({ game, playerId, ability }) {
+    const player = game.players[playerId];
+    let extra = 0;
+    const maxPay = Math.min(player.resources[ability.resource] || 0, ability.maxPay || 99);
+    if (maxPay > 0) {
+      player.resources[ability.resource] -= maxPay;
+      extra = maxPay;
+    }
+    drawCards(game, playerId, (ability.baseDraw || 1) + extra);
+  },
+  destroyUpToEnemyCards({ game, playerId, ability }) {
+    const opponent = opponentOf(playerId);
+    let remaining = ability.amount || 1;
+    for (let row = 0; row < ROWS && remaining > 0; row++) {
+      for (let col = 0; col < COLS && remaining > 0; col++) {
+        const unit = game.board[row][col];
+        if (unit?.owner === opponent) {
+          unit.currentHp = 0;
+          remaining--;
+        }
+      }
+    }
+    cleanupAllDestroyed();
+  },
+  destroyFriendlyUnitDraw({ game, playerId, target, ability }) {
+    if (!target || target.owner !== playerId) return;
+    target.currentHp = 0;
+    cleanupDestroyed(target);
+    drawCards(game, playerId, ability.amount || 1);
+  },
+  controlEnemyUnitToSummonRow({ game, playerId, target }) {
+    if (!target || target.owner === playerId) return;
+    const oldOwner = target.owner;
+    const oldRow = target.row;
+    const oldCol = target.col;
+    const player = game.players[playerId];
+    const col = findFirstEmptyColInRow(game, player.summonRow);
+    if (col < 0) return;
+    game.board[oldRow][oldCol] = null;
+    target.owner = playerId;
+    target.row = player.summonRow;
+    target.col = col;
+    target.rested = true;
+    game.board[target.row][target.col] = target;
+    log(game, `${game.players[playerId].name}: 「${target.name}」の支配を得た`);
+  },
+  prohibitOpponentTact({ game, playerId }) {
+    if (!game.globalEffects) game.globalEffects = [];
+    game.globalEffects.push({ type: "noTact", playerId: opponentOf(playerId), untilPlayerTurnEnd: playerId });
+    log(game, `${game.players[playerId].name}: 相手の指令使用を封じた`);
+  },
+  summonNamedFromHand({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const idx = player.hand.findIndex((c) => c.name === ability.cardName || c.id === ability.cardId);
+    if (idx < 0) return;
+    const targetCard = player.hand[idx];
+    if (!payForCard(player, targetCard.cost || {}, targetCard)) return;
+    const col = findFirstEmptyColInRow(game, player.summonRow);
+    if (col < 0) return;
+    player.hand.splice(idx, 1);
+    const unit = makeUnit(targetCard.id, playerId, player.summonRow, col, { rested: true });
+    unit.counters = ability.counters || 0;
+    game.board[player.summonRow][col] = unit;
+    triggerAbilities(game, playerId, unit, "onSummon");
+    log(game, `${player.name}: 「${card.name}」で「${targetCard.name}」を出撃`);
+  },
+  reviveTagUnitsUpToCost({ game, playerId, ability }) {
+    const player = game.players[playerId];
+    const tag = ability.tag;
+    let remaining = ability.maxTotalCost || 4;
+    let count = 0;
+    for (let i = 0; i < player.dump.length; i++) {
+      const c = player.dump[i];
+      const cost = totalCostAmount(c.cost || {});
+      if (c.type !== "unit" || !(c.tags || []).includes(tag) || cost > remaining) continue;
+      const col = findFirstEmptyColInRow(game, player.summonRow);
+      if (col < 0) break;
+      player.dump.splice(i, 1);
+      i--;
+      remaining -= cost;
+      const unit = makeUnit(c.id, playerId, player.summonRow, col, { rested: true, fromDump: true });
+      game.board[player.summonRow][col] = unit;
+      triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
+      count++;
+    }
+    log(game, `${player.name}: 墓地から[${tag}] ${count}体を出した`);
+  },
+  damageRestedTarget({ game, target, ability }) {
+    if (!target || !target.rested) return;
+    target.currentHp -= ability.amount || 2;
+    cleanupAllDestroyed();
+  },
+  exileTargetNonNeutralNonUnifall({ game, target }) {
+    if (!target) return;
+    const faction = target.faction || "";
+    if (faction === "ニュートラル" || faction === "ユニフォール") return;
+    game.board[target.row][target.col] = null;
+    game.players[target.owner].exileZone.push(stripRuntime(target));
+    log(game, `「${target.name}」を除外`);
+  },
+  grantKeywordsToAllMagicMachines({ game, ability }) {
+    for (const pid of ["p1", "p2"]) {
+      for (const unit of unitsOwnedBy(pid)) {
+        const tags = unit.tags || [];
+        if (!tags.includes("魔法") || !tags.includes("機械")) continue;
+        if (!unit.keywords) unit.keywords = [];
+        for (const kw of ability.keywords || []) {
+          if (!unit.keywords.some((k) => k.id === kw.id)) unit.keywords.push({ ...kw });
+        }
+      }
+    }
+  },
+  damageAllEnemiesAndPushBack({ game, playerId, ability, card }) {
+    const opponent = opponentOf(playerId);
+    const player = game.players[opponent];
+    for (const unit of [...unitsOwnedBy(opponent)]) {
+      unit.currentHp -= ability.amount || 3;
+      const toRow = unit.row - player.forward;
+      if (toRow >= 0 && toRow < ROWS && !game.board[toRow][unit.col]) {
+        game.board[unit.row][unit.col] = null;
+        unit.row = toRow;
+        game.board[toRow][unit.col] = unit;
+      }
+    }
+    cleanupAllDestroyed(card);
+  },
+  reviveStructFromDump({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const idx = player.dump.findIndex((c) => c.type === "struct");
+    if (idx < 0) {
+      if (ability.fallback) return abilityEffects[ability.fallback.effect]?.({ game, playerId, card, ability: ability.fallback });
+      return;
+    }
+    const [struct] = player.dump.splice(idx, 1);
+    player.structs.push(struct);
+    log(game, `${player.name}: 墓地から「${struct.name}」を建設`);
   },
   buffFriendlyUnitsAtk({ game, playerId, ability }) {
     for (const row of game.board) {
@@ -712,7 +995,12 @@ const abilityEffects = {
   reviveUnitFromDump({ game, playerId, card, ability }) {
     const player = game.players[playerId];
     const maxCost = ability.maxCost || 1;
-    const eligible = player.dump.filter((c) => c.type === "unit" && totalCostAmount(c.cost || {}) <= maxCost);
+    const filterTag = ability.tag || null;
+    const eligible = player.dump.filter(
+      (c) => c.type === "unit"
+        && totalCostAmount(c.cost || {}) <= maxCost
+        && (!filterTag || (c.tags || []).includes(filterTag))
+    );
     if (!eligible.length) {
       log(game, `${player.name}: 「${card.name}」— 墓地に対象ユニットがいない`);
       return;
@@ -726,7 +1014,7 @@ const abilityEffects = {
       queueItem: { playerId, card, ability, source: { zone: "struct" } },
     };
     game.selected = { kind: "choice", choice: "reviveFromDump" };
-    game.message = `墓地から蘇生するユニット（コスト総量${maxCost}以下）を選んでください。`;
+    game.message = `墓地から蘇生するユニット（コスト総量${maxCost}以下${filterTag ? `・[${filterTag}]` : ""}）を選んでください。`;
     return "pending";
   },
   restTargetNoUnrest({ game, target }) {
@@ -1835,6 +2123,145 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
+  if (card.id === "card_1753611174564") {
+    abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "coreDeathCounter", threshold: 4, resource: "people", amount: 1 });
+  }
+
+  if (card.id === "card_1753660083940") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "controlEnemyUnitToSummonRow", target: "enemyUnit" });
+  }
+
+  if (card.id === "card_1753659816385") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "searchUnitToCostHand", maxCost: 4, tag: "歩兵", amount: 1 });
+  }
+
+  if (card.id === "card_1753661091291") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onPlay",
+      effect: "chooseGainResource",
+      options: [
+        { id: "nature", label: "自3", cost: {}, produces: { nature: 3 } },
+        { id: "ore", label: "鉱3", cost: {}, produces: { ore: 3 } },
+        { id: "fuel", label: "燃3", cost: {}, produces: { fuel: 3 } },
+      ],
+    });
+    abilities.push({ trigger: "onPlay", effect: "opponentDiscard", amount: 1 });
+  }
+
+  if (card.id === "card_1753661560335") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "searchCardToHand", tag: "儀式", amount: 1 });
+  }
+
+  if (card.id === "card_1753660371468") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "buffTagUnitsAtk", tag: "機械", amount: 2 });
+    abilities.push({ trigger: "onPlay", effect: "grantIndestructibleToTagUnits", tag: "機械" });
+  }
+
+  if (card.id === "card_1753659109009") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "destroyFriendlyUnitDraw", target: "friendlyUnit", amount: 1 });
+  }
+
+  if (card.id === "card_1753659571381") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "prohibitOpponentTact" });
+  }
+
+  if (card.id === "card_1753683637865") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource: "people", amount: 1 });
+  }
+
+  if (card.id === "card_1753664991902") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onActivate", effect: "buffSelfAtk", activationCost: { nature: 1 }, amount: 1 });
+  }
+
+  if (card.id === "card_1753904806388") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "gainResourcePlusPerStructTag", resource: "funds", baseAmount: 2, tag: "鉱山", amountPer: 1 });
+  }
+
+  if (card.id === "card_1753716897980") {
+    abilities.push({ trigger: "onSummon", effect: "buffSelfHpFromTagCount", tag: "農民" });
+  }
+
+  if (card.id === "card_1753760240197") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "drawPlusPayResource", resource: "ore", baseDraw: 1, maxPay: 99 });
+  }
+
+  if (card.id === "card_1753775442028") {
+    abilities.push({ trigger: "onSummon", effect: "addCounters", amount: 2 });
+    abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "healSelfAndRemoveCounter", amount: 1 });
+  }
+
+  if (card.id === "card_1755612018710") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
+    abilities.push({ trigger: "onStructurePhaseHP", effect: "produceResourceCostHP", resource: "nature", amount: 1, hpCost: 3 });
+  }
+
+  if (card.id === "card_1755654825932") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
+    abilities.push({ trigger: "onStructurePhaseHP", effect: "produceResourceCostHP", resource: "people", amount: 2, hpCost: 3 });
+  }
+
+  if (card.id === "card_1755655390809") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
+    abilities.push({ trigger: "onStructurePhaseHP", effect: "produceResourceCostHP", resource: "electric", amount: 1, hpCost: 3 });
+  }
+
+  if (card.id === "card_1755656642598") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onStructurePhase", effect: "reviveStructFromDump", fallback: { effect: "produceResource", resource: "magic", amount: 2 } });
+  }
+
+  if (card.id === "card_1755648239499") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "grantKeywordsToAllMagicMachines", keywords: [{ id: "shock" }, { id: "pierce", value: 2 }] });
+  }
+
+  if (card.id === "card_1753662513755") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "summonNamedFromHand", cardName: "再生の真なる神", counters: 0 });
+  }
+
+  if (card.id === "card_1753662124367") {
+    abilities.push({ trigger: "onPlay", effect: "millCards", amount: 3 });
+    abilities.push({ trigger: "onPlay", effect: "reviveTagUnitsUpToCost", tag: "屍人", maxTotalCost: 4 });
+  }
+
+  if (card.id === "card_1755906183709") {
+    abilities.push({ trigger: "onAttack", effect: "damageAllEnemiesAndPushBack", amount: 3 });
+  }
+
+  if (card.id === "card_1755925813924") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "grantKeywordsToEnemyRelativeRow", row: 2, keywords: ["immobile", "noAttack"] });
+  }
+
+  if (card.id === "card_1755670731207") {
+    abilities.push({ trigger: "onSummon", effect: "damageRestedTarget", target: "anyUnit", amount: 2 });
+    abilities.push({ trigger: "onTurnStart", effect: "destroySelf" });
+  }
+
+  if (card.id === "card_1762416434855") {
+    abilities.push({ trigger: "onTurnStart", effect: "gainShockOrAlert" });
+  }
+
+  if (card.id === "card_1766737979616") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "exileTargetNonNeutralNonUnifall", target: "enemyUnit" });
+  }
+
   return abilities;
 }
 
@@ -1862,6 +2289,9 @@ function fromDeckmakerCard(card) {
       base.requiredStructId = "card_1753660736818";
       base.requiredStructName = "\u8986\u6ca1\u306e\u5927\u66b4\u8d70";
     }
+    if (card.id === "card_1753905404273") base.requiredSacrificeName = "炎使いの剣士";
+    if (card.id === "card_1753968998785") base.requiredSacrificeName = "炎使いの騎士";
+    if (card.id === "card_1753970684315") base.requiredSacrificeName = "炎の英傑";
   }
   if (localType === "core") {
     base.hp = Number(card.defense || card.hp) || 20;
@@ -3640,6 +4070,30 @@ function resolveChooseActivationResource(resource) {
   return true;
 }
 
+function resolveChooseGainResource(optionId) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "chooseGainResource") return false;
+  const option = (pending.options || []).find((opt) => opt.id === optionId || opt.resource === optionId);
+  if (!option) return false;
+  const player = state.players[pending.playerId];
+  const cost = normalizeResourceObject(option.cost || {});
+  if (!pay(player, cost)) {
+    state.message = "資源が不足しています。";
+    return false;
+  }
+  for (const [res, amount] of Object.entries(option.produces || {})) {
+    addResources(player, res, amount);
+  }
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function isValidAbilityTarget(item, target) {
   if (!target) return false;
   if (item.ability.target === "enemyUnit") return target.owner !== item.playerId;
@@ -3843,6 +4297,12 @@ function endTurn() {
       triggerAbilities(state, endingPlayer, unit, "onTurnEnd");
     }
   }
+  for (const unit of unitsOwnedBy(endingPlayer)) {
+    if (unit.indestructibleUntilTurnEnd === endingPlayer) delete unit.indestructibleUntilTurnEnd;
+  }
+  state.globalEffects = (state.globalEffects || []).filter(
+    (effect) => effect.untilPlayerTurnEnd !== endingPlayer
+  );
   const next = opponentOf(endingPlayer);
   if (endingPlayer === "p2") state.turn += 1;
   log(state, `${state.players[endingPlayer].name}: ターン終了`);
@@ -3875,17 +4335,33 @@ function canMeetUnitStructRequirement(player, card) {
   });
 }
 
+function findRequiredSacrificeUnit(playerId, card) {
+  if (!card?.requiredSacrificeName) return null;
+  return unitsOwnedBy(playerId).find((unit) => unit.name === card.requiredSacrificeName);
+}
+
+function applyUnitSacrificeRequirement(playerId, card) {
+  const sacrifice = findRequiredSacrificeUnit(playerId, card);
+  if (!sacrifice) return true;
+  state.board[sacrifice.row][sacrifice.col] = null;
+  state.players[playerId].dump.push(stripRuntime(sacrifice));
+  log(state, `${state.players[playerId].name}: 「${sacrifice.name}」を墓地に送った`);
+  return true;
+}
+
 function placeUnitFromHand(handIndex, row, col) {
   if (!requireActivePlayerControl()) return false;
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
   if (!card || card.type !== "unit") return fail("ユニットカードを選択してください。");
   if (!canMeetUnitStructRequirement(player, card)) return fail(`${card.requiredStructName || "\u5fc5\u8981\u30b9\u30c8\u30e9\u30af\u30c8"} \u304c\u306a\u3044\u305f\u3081\u51fa\u6483\u3067\u304d\u307e\u305b\u3093\u3002`);
+  if (card.requiredSacrificeName && !findRequiredSacrificeUnit(state.activePlayer, card)) return fail(`${card.requiredSacrificeName} がないため出撃できません。`);
   if (!canSummonToRow(card, player, row)) return fail("この行には配置できません。");
   if (state.board[row][col]) return fail("このマスには既にユニットがあります。");
   if (enemyInRow(state.activePlayer, row)) return fail("敵ユニットが存在する横列には配置できません。");
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
 
+  applyUnitSacrificeRequirement(state.activePlayer, card);
   revealCardUse(state.activePlayer, card, "summon");
   const unit = makeUnit(card.id, state.activePlayer, row, col, { rested: true });
   state.board[row][col] = unit;
@@ -3909,6 +4385,9 @@ function playTactFromHand(handIndex) {
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
   if (!card || card.type !== "tact") return fail("指令カードを選択してください。");
+  if ((state.globalEffects || []).some((effect) => effect.type === "noTact" && effect.playerId === state.activePlayer)) {
+    return fail("現在、指令カードを使用できません。");
+  }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
   revealCardUse(state.activePlayer, card, "play");
   player.hand.splice(handIndex, 1);
@@ -4214,8 +4693,14 @@ function canAttackCore(unit) {
 function cleanupDestroyed(unit, killer = null) {
   if (!unit || unit.currentHp > 0) return;
   if (unit.destroyed) return;
+  if (unit.indestructibleUntilTurnEnd) {
+    unit.currentHp = Math.max(1, unit.currentHp || 1);
+    log(state, `「${unit.name}」は破壊不能で場に残った`);
+    return;
+  }
   unit.destroyed = true;
   triggerAbilities(state, unit.owner, unit, "onDestroy");
+  triggerAbilities(state, unit.owner, state.players[unit.owner].core, "onFriendlyUnitDestroyed", { target: unit });
   state.board[unit.row][unit.col] = null;
   // [降臨] returnToHandOnDestroy: owner gets card back to hand instead of dump
   const returnEffect = (state.globalEffects || []).find(
@@ -5227,12 +5712,12 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
   const cardH = Math.min(avH, avW / CARD_ASPECT);
   const cardW = cardH * CARD_ASPECT;
 
+  const isEnemy = unit.owner !== viewerPlayerId();
+
   if (unit.rested) {
     // レスト時: 90°時計回りに回転して横向き表示
-    // ローカル(cardW×cardH) → ワールド cardH×cardW (landscape)
-    // 回転後のサイズがセルに収まるよう計算
-    let rW = avH;               // 回転後の視覚幅 = ポートレート高さ
-    let rH = rW * CARD_ASPECT;  // 回転後の視覚高さ = ポートレート幅
+    let rW = avH;
+    let rH = rW * CARD_ASPECT;
     if (rH > avW) { rH = avW; rW = rH / CARD_ASPECT; }
 
     const centerX = cx + cellW / 2;
@@ -5241,17 +5726,34 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
     ctx.save();
     ctx.translate(centerX, centerY);
     ctx.rotate(Math.PI / 2);
-    // ローカル座標 (rH×rW) → ワールドで rW×rH の横向きになる
     drawCard(-rH / 2, -rW / 2, rH, rW, unit, {
       selected: isSelected, noHover: true, noRestOverlay: true, artOnly: true,
     });
     ctx.restore();
+    // 敵ユニット: 赤色オーバーレイ（レスト時は視覚領域 rW×rH を横向きで適用）
+    if (isEnemy) {
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = "#ff2020";
+      ctx.fillRect(centerX - rW / 2, centerY - rH / 2, rW, rH);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
     addCardHover(cx, cy, cellW, cellH, unit);
   } else {
     // 通常時: ポートレートカードをアートのみで表示
     const offX = cx + padX + (avW - cardW) / 2;
     const offY = cy + padY + (avH - cardH) / 2;
     drawCard(offX, offY, cardW, cardH, unit, { selected: isSelected, artOnly: true });
+    // 敵ユニット: 赤色オーバーレイ
+    if (isEnemy) {
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = "#ff2020";
+      ctx.fillRect(offX, offY, cardW, cardH);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
   }
 
   // ATK / HP / HP bar をカードの外（セル下部）に表示
@@ -5844,6 +6346,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "payOrDamage") drawPayOrDamagePanel(pending);
   else if (pending.type === "reviveFromDump") drawReviveFromDumpPanel(pending);
   else if (pending.type === "chooseActivationResource") drawChooseActivationResourcePanel(pending);
+  else if (pending.type === "chooseGainResource") drawChooseGainResourcePanel(pending);
 }
 
 function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
@@ -6011,6 +6514,31 @@ function drawChooseActivationResourcePanel(pending) {
       const by = y + h - btnH - 20;
       const label = `${RESOURCE_LABELS[res] || res}（${player.resources[res]}）`;
       drawButton(bx, by, btnW, btnH, label, () => { resolveChooseActivationResource(res); render(); }, null, { accent: "p1" });
+    });
+  }
+}
+
+function drawChooseGainResourcePanel(pending) {
+  const options = pending.options || [];
+  const btnW = 120, btnH = 44, gap = 12;
+  const w = Math.max(460, options.length * (btnW + gap) + gap * 2);
+  const h = 184;
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,140,100,0.8)", "#30c080");
+  ctx.fillStyle = "#a8ffd0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName || "効果"}: 得る資源を選択`, x + 24, y + 34);
+  ctx.fillStyle = "rgba(180,230,210,0.8)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("使用する選択肢を選んでください。", x + 24, y + 58);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  if (isController) {
+    options.forEach((opt, i) => {
+      const bx = x + gap + i * (btnW + gap);
+      const by = y + h - btnH - 22;
+      const label = opt.label || Object.entries(opt.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join(" ");
+      drawButton(bx, by, btnW, btnH, label, () => resolveChooseGainResource(opt.id || opt.resource), null, { accent: "p1" });
     });
   }
 }
@@ -7183,6 +7711,7 @@ const testing = {
   playStruct,
   activateStructInPhase,
   resolveMarketChoice,
+  resolveChooseGainResource,
   toggleMysticCaptureChoice,
   resolveMysticCaptureChoice,
   selectHandCard: selectHandCardForTest,
@@ -7193,6 +7722,8 @@ const testing = {
   attack: attackWithSelectedUnit,
   resolveTarget: resolvePendingTarget,
   processEffectQueue,
+  activateSelectedUnit,
+  cleanupAllDestroyed,
   move: moveSelectedUnit,
   retreat: retreatSelectedUnit,
   endTurn,
