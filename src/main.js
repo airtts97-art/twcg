@@ -747,6 +747,33 @@ const abilityEffects = {
     log(game, `${player.name}: 「${card.name}」ライフ${hpCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`);
     checkWinner(game);
   },
+  deployNamedFromDecks({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const max = ability.maxTotal || 3;
+    let placed = 0;
+    // メインデッキから指定ユニット名を自動配置
+    for (let i = 0; i < player.mainDeck.length && placed < max; i++) {
+      if (player.mainDeck[i].name !== ability.unitName) continue;
+      const emptyCol = findFirstEmptyColInRow(game, player.summonRow);
+      if (emptyCol < 0) break;
+      const unitCard = player.mainDeck.splice(i, 1)[0];
+      const unit = makeUnit(unitCard.id, playerId, player.summonRow, emptyCol, { rested: true });
+      game.board[player.summonRow][emptyCol] = unit;
+      log(game, `${player.name}: 「${card.name}」効果 — 「${unitCard.name}」出撃`);
+      placed++;
+      i--;
+    }
+    // ストラクトデッキから指定施設名を建設
+    for (let i = 0; i < player.structDeck.length && placed < max; i++) {
+      if (player.structDeck[i].name !== ability.structName) continue;
+      const sc = player.structDeck.splice(i, 1)[0];
+      player.structs.push(sc);
+      log(game, `${player.name}: 「${card.name}」効果 — 「${sc.name}」建設`);
+      placed++;
+      i--;
+    }
+    if (placed === 0) log(game, `${player.name}: 「${card.name}」— 対象カードが見つからない`);
+  },
 };
 
 function findFirstEmptyColInRow(game, row) {
@@ -1795,6 +1822,17 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1753611167885") {
     abilities.push({ trigger: "onAttack", effect: "summonGolemToSameRow", maxCost: 3 });
+  }
+
+  // 農業協同組合: 建設時に農民・農場を合計3枚まで場に出す
+  if (card.id === "card_1753683067735") {
+    abilities.push({
+      trigger: "onPlay",
+      effect: "deployNamedFromDecks",
+      unitName: "農民",
+      structName: "農場",
+      maxTotal: 3,
+    });
   }
 
   return abilities;
@@ -3926,6 +3964,7 @@ function playStruct(index) {
   player.structDeck.splice(index, 1);
   state.selected = null;
   log(state, `${player.name}: 「${card.name}」を建設`);
+  triggerAbilities(state, state.activePlayer, card, "onPlay", { zone: "struct" });
   if (syncOnlineAction("buildStruct", state.activePlayer)) {
     attachPendingLocalPopup(state.activePlayer, card, "build");
   } else {
