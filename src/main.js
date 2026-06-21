@@ -1754,8 +1754,12 @@ function selectMatchDeck(deckId) {
 }
 
 async function loadServerConfig() {
+  if (!SERVER_BASE && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+    // GitHub Pages などの外部ホストで ?ws= なし → サーバー不明、Google ログイン無効
+    googleSignInEnabled = false;
+    return;
+  }
   try {
-    // ?ws=wss://xxxx.trycloudflare.com/ws → https://xxxx.trycloudflare.com/config
     const response = await fetch(`${SERVER_BASE}/config`);
     if (!response.ok) return;
     const config = await response.json();
