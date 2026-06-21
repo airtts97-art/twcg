@@ -150,17 +150,18 @@ const DECKMAKER_TYPE_LABELS = {
   struct: "ストラクト",
 };
 
-// セル幅 = レスト時カード幅 (= ポートレートカード高さ + padX*2)
-// cellH = 524/4 = 131, avH = 131-4-22 = 105(アート高さ), cellW = 105+12 = 117
+// 全画面レイアウト: 1440×900 を隙間なく使用
+// ヘッダー: y=0〜60, 左右パネル: w=200, センター: w=1040
+// board cell: 208×140
 const layout = {
-  board:        { x: 192, y: 156, w: 585, h: 524 },   // 5×117=585, cell:117×131
-  hand:         { x: 192, y: 736, w: 585, h: 120 },
-  topHand:      { x: 192, y: 62,  w: 585, h: 36  },
-  left:         { x: 4,   y: 62,  w: 184, h: 834 },
-  right:        { x: 781, y: 62,  w: 184, h: 834 },   // board右端+4
-  oppStruct:    { x: 192, y: 100, w: 585, h: 52  },
-  playerStruct: { x: 192, y: 680, w: 585, h: 52  },
-  resourceBar:  { x: 192, y: 860, w: 585, h: 36  },
+  board:        { x: 200, y: 138, w: 1040, h: 560 },  // cell:208×140
+  hand:         { x: 200, y: 750, w: 1040, h: 108 },
+  topHand:      { x: 200, y: 60,  w: 1040, h: 28  },
+  left:         { x: 0,   y: 60,  w: 200,  h: 840 },
+  right:        { x: 1240,y: 60,  w: 200,  h: 840 },
+  oppStruct:    { x: 200, y: 88,  w: 1040, h: 50  },
+  playerStruct: { x: 200, y: 698, w: 1040, h: 52  },
+  resourceBar:  { x: 200, y: 858, w: 1040, h: 42  },
 };
 layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
 
