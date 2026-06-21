@@ -501,6 +501,7 @@ const abilityEffects = {
   chooseProduceResource({ game, card, ability }) {
     if (!game.pendingStructPhase) return;
     game.pendingStructPhase.pendingResourceChoice = {
+      type: "chooseProduceResource",
       options: ability.options || [],
       cardName: card.name,
     };
@@ -6050,7 +6051,8 @@ function drawStructPhaseOverlay() {
     roundRect(x + 14, choiceY, w - 28, 58, 6, "rgba(4,14,28,0.92)", "rgba(60,120,200,0.7)", 1.5);
     ctx.fillStyle = "#90b8e8";
     ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(`${choice.cardName}: 支払う資源を選択してください`, x + 26, choiceY + 20);
+    const choiceVerb = choice.type === "chooseProduceResource" ? "得る資源を選択してください" : "支払う資源を選択してください";
+    ctx.fillText(`${choice.cardName}: ${choiceVerb}`, x + 26, choiceY + 20);
     let bx = x + 26;
     const options = Array.isArray(choice.options)
       ? choice.options
@@ -6730,6 +6732,7 @@ function abilityText(card) {
         onFirstDraw: "最初のドロー時",
         onDamageDealt: "攻撃ダメージ与えた時",
         onStructurePhaseHP: "ライフ起動",
+        onAttack: "攻撃するとき",
       }[ability.trigger] || ability.trigger;
       const effect = {
         drawCards: `カードを${ability.amount}枚引く`,
@@ -6742,6 +6745,11 @@ function abilityText(card) {
         mysticCapture: "神秘ユニットを選択して登場時効果を発動",
         grantDestroyGain: `味方ユニット1体に「破壊時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}」を付与`,
         chooseExchange: `${(ability.costOptions || []).map((o) => `${RESOURCE_LABELS[o.resource] || o.resource}${o.amount}`).join("または")}を支払い → ${Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("/")}`,
+        chooseProduceResource: `${(ability.options || []).map((o) => o.label || o.id).join("か")}を得る`,
+        chooseSummonGolem: `${(ability.costOptions || []).map((o) => `${RESOURCE_LABELS[o.resource] || o.resource}${o.amount}`).join("または")}→コスト${ability.maxCost || 3}以下の[ゴーレム]を出す`,
+        tactToStructOverStruct: `「${ability.requiredStructName || "覆没の迷宮"}」があればストラクト化`,
+        summonGolemFromDeckOrDump: `デッキ・墓地からコスト${ability.maxCost || 3}以下の[ゴーレム]を出す`,
+        summonGolemToSameRow: `デッキ・墓地からコスト${ability.maxCost || 3}以下の[ゴーレム]を同じ行に出す`,
         destroySelf: "自壊",
         searchDeckByType: `デッキから${ability.cardType || "?"}を手札に`,
         revealTopNPick: `デッキ上${ability.amount || 3}枚公開→1枚手札に`,
