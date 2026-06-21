@@ -39,6 +39,14 @@ const ONLINE_WS_URL = (() => {
   const host = location.port === "5173" ? `${hostname}:5174` : location.host || `${hostname}:5174`;
   return `${protocol}://${host}/ws`;
 })();
+// ?ws=wss://xxxx/ws → https://xxxx  (fallback: same origin)
+const SERVER_BASE = (() => {
+  const params = new URLSearchParams(location.search);
+  if (params.has("ws")) {
+    return params.get("ws").replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace(/\/ws$/, "");
+  }
+  return "";
+})();
 const RESOURCE_LABELS = {
   funds: "資金",
   people: "人",
@@ -1657,7 +1665,7 @@ async function syncDecksFromServer() {
   const userKey = deckServerUserKey();
   if (!userKey) return false;
   try {
-    const response = await fetch(`/api/decks?user=${encodeURIComponent(userKey)}`);
+    const response = await fetch(`${SERVER_BASE}/api/decks?user=${encodeURIComponent(userKey)}`);
     if (!response.ok) return false;
     const payload = await response.json();
     const decks = (payload.decks || []).map((entry) => ({ ...entry, deck: normalizeDeckData(entry.deck) })).filter((entry) => entry.deck);
@@ -1676,7 +1684,7 @@ async function persistDecksToServer() {
   const userKey = deckServerUserKey();
   if (!userKey) return false;
   try {
-    const response = await fetch(`/api/decks?user=${encodeURIComponent(userKey)}`, {
+    const response = await fetch(`${SERVER_BASE}/api/decks?user=${encodeURIComponent(userKey)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ decks: app.savedDecks }),
@@ -1748,11 +1756,7 @@ function selectMatchDeck(deckId) {
 async function loadServerConfig() {
   try {
     // ?ws=wss://xxxx.trycloudflare.com/ws → https://xxxx.trycloudflare.com/config
-    const params = new URLSearchParams(location.search);
-    const configUrl = params.has("ws")
-      ? params.get("ws").replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace(/\/ws$/, "/config")
-      : "/config";
-    const response = await fetch(configUrl);
+    const response = await fetch(`${SERVER_BASE}/config`);
     if (!response.ok) return;
     const config = await response.json();
     googleClientId = config.googleClientId || "";
@@ -1804,7 +1808,7 @@ async function handleGoogleCredential(response) {
 }
 
 async function verifyGoogleCredential(credential) {
-  const serverResult = await fetch("/api/auth/google", {
+  const serverResult = await fetch(`${SERVER_BASE}/api/auth/google`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ credential }),
