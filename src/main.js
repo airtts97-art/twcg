@@ -33,17 +33,22 @@ let googleClientId = "";
 let googleSignInEnabled = false;
 const ONLINE_WS_URL = (() => {
   const params = new URLSearchParams(location.search);
-  if (params.has("ws")) return params.get("ws");
+  if (params.has("ws")) {
+    localStorage.setItem("twcg_ws_url", params.get("ws"));
+    return params.get("ws");
+  }
+  const saved = localStorage.getItem("twcg_ws_url");
+  if (saved) return saved;
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const hostname = location.hostname || "127.0.0.1";
   const host = location.port === "5173" ? `${hostname}:5174` : location.host || `${hostname}:5174`;
   return `${protocol}://${host}/ws`;
 })();
-// ?ws=wss://xxxx/ws → https://xxxx  (fallback: same origin)
+// wss://xxxx/ws → https://xxxx  (fallback: same origin)
 const SERVER_BASE = (() => {
-  const params = new URLSearchParams(location.search);
-  if (params.has("ws")) {
-    return params.get("ws").replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace(/\/ws$/, "");
+  const wsUrl = ONLINE_WS_URL;
+  if (wsUrl.includes("://") && !wsUrl.startsWith("ws://localhost") && !wsUrl.startsWith("wss://localhost") && !wsUrl.includes("127.0.0.1")) {
+    return wsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace(/\/ws$/, "");
   }
   return "";
 })();
