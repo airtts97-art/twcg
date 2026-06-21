@@ -31,14 +31,23 @@ const SORT_OPTIONS = [
 ];
 let googleClientId = "";
 let googleSignInEnabled = false;
+const DEFAULT_PUBLIC_SERVER_BASE = "https://discussing-motivated-personal-forwarding.trycloudflare.com";
+const DEFAULT_PUBLIC_WS_URL = `${DEFAULT_PUBLIC_SERVER_BASE.replace(/^https:/, "wss:")}/ws`;
 const ONLINE_WS_URL = (() => {
   const params = new URLSearchParams(location.search);
   if (params.has("ws")) {
     localStorage.setItem("twcg_ws_url", params.get("ws"));
     return params.get("ws");
   }
+  if (params.has("server")) {
+    const serverBase = params.get("server").replace(/\/+$/, "");
+    const wsUrl = `${serverBase.replace(/^https:/, "wss:").replace(/^http:/, "ws:")}/ws`;
+    localStorage.setItem("twcg_ws_url", wsUrl);
+    return wsUrl;
+  }
   const saved = localStorage.getItem("twcg_ws_url");
   if (saved) return saved;
+  if (location.hostname.endsWith("github.io")) return DEFAULT_PUBLIC_WS_URL;
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const hostname = location.hostname || "127.0.0.1";
   const host = location.port === "5173" ? `${hostname}:5174` : location.host || `${hostname}:5174`;
