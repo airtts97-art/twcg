@@ -150,15 +150,17 @@ const DECKMAKER_TYPE_LABELS = {
   struct: "ストラクト",
 };
 
+// セル幅 = レスト時カード幅 (= ポートレートカード高さ + padX*2)
+// cellH = 524/4 = 131, avH = 131-4-22 = 105(アート高さ), cellW = 105+12 = 117
 const layout = {
-  board:        { x: 192, y: 156, w: 1056, h: 524 },
-  hand:         { x: 192, y: 736, w: 1056, h: 120 },
-  topHand:      { x: 192, y: 62,  w: 960,  h: 36  },
-  left:         { x: 4,   y: 100, w: 184,  h: 796 },
-  right:        { x: 1252,y: 100, w: 184,  h: 796 },
-  oppStruct:    { x: 192, y: 100, w: 1056, h: 52  },
-  playerStruct: { x: 192, y: 680, w: 1056, h: 52  },
-  resourceBar:  { x: 192, y: 860, w: 1056, h: 36  },
+  board:        { x: 192, y: 156, w: 585, h: 524 },   // 5×117=585, cell:117×131
+  hand:         { x: 192, y: 736, w: 585, h: 120 },
+  topHand:      { x: 192, y: 62,  w: 585, h: 36  },
+  left:         { x: 4,   y: 62,  w: 184, h: 834 },
+  right:        { x: 781, y: 62,  w: 184, h: 834 },   // board右端+4
+  oppStruct:    { x: 192, y: 100, w: 585, h: 52  },
+  playerStruct: { x: 192, y: 680, w: 585, h: 52  },
+  resourceBar:  { x: 192, y: 860, w: 585, h: 36  },
 };
 layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
 
@@ -4534,6 +4536,7 @@ function render() {
   drawTopHand();
   drawStructBar(opp, layout.oppStruct.x, layout.oppStruct.y, layout.oppStruct.w, layout.oppStruct.h);
   drawBoard();
+  drawBoardActionButtons();
   drawStructBar(viewer, layout.playerStruct.x, layout.playerStruct.y, layout.playerStruct.w, layout.playerStruct.h);
   drawSidePanel(viewer, layout.left);
   drawSidePanel(opp, layout.right);
@@ -5721,27 +5724,50 @@ function drawOnlinePendingOverlay() {
 }
 
 function drawActionPanel() {
-  const rx = layout.right.x;
-  const ry = layout.right.y;
+  // ボタンはカードの近くに表示するため(drawBoardActionButtons)、ここでは何もしない
+}
+
+function drawBoardActionButtons() {
   const unit = selectedUnit();
-  // Action panel integrated into right panel top
-  if (unit && unit.owner === state.activePlayer) {
-    const panelH = 76;
-    roundRect(rx, ry, layout.right.w, panelH, 6, "rgba(8,14,34,0.92)", "rgba(40,70,160,0.55)", 1.5);
-    ctx.fillStyle = "rgba(160,185,240,0.8)";
-    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(unit.name, rx + 8, ry + 16, layout.right.w - 12);
-    const hasActivate = (unit.abilities || []).some((a) => a.trigger === "onActivate");
-    if (hasActivate) {
-      drawButton(rx + 4,  ry + 24, 42, 26, "前進", moveSelectedUnit);
-      drawButton(rx + 50, ry + 24, 42, 26, "後退", retreatSelectedUnit);
-      drawButton(rx + 96, ry + 24, 40, 26, "起動", activateSelectedUnit, null, { accent: "p2" });
-      drawButton(rx + 140, ry + 24, 40, 26, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
-    } else {
-      drawButton(rx + 4,  ry + 24, 56, 26, "前進", moveSelectedUnit);
-      drawButton(rx + 64, ry + 24, 56, 26, "後退", retreatSelectedUnit);
-      drawButton(rx + 124, ry + 24, 56, 26, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
-    }
+  if (!unit || unit.owner !== state.activePlayer || !canControlActivePlayer()) return;
+
+  const visualRow = boardRowToVisualRow(unit.row);
+  const cellX = layout.board.x + unit.col * layout.cell.w;
+  const cellY = layout.board.y + visualRow * layout.cell.h;
+  const cW = layout.cell.w;
+  const cH = layout.cell.h;
+  const isViewerUnit = unit.owner === viewerPlayerId();
+
+  const btnH = 22;
+  const panelH = btnH + 8;
+
+  // 自プレイヤーのユニット→セルの下、相手→セルの上
+  let panelY = isViewerUnit ? cellY + cH + 2 : cellY - panelH - 2;
+  if (panelY + panelH > layout.board.y + layout.board.h) panelY = cellY - panelH - 2;
+  if (panelY < layout.board.y) panelY = cellY + cH + 2;
+
+  const panelX = cellX + 1;
+  const panelW = cW - 2;
+
+  ctx.save();
+  ctx.shadowColor = "#4080ff";
+  ctx.shadowBlur = 10;
+  roundRect(panelX, panelY, panelW, panelH, 5, "rgba(4,10,28,0.94)", "rgba(50,100,220,0.8)", 1.5);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  const hasActivate = (unit.abilities || []).some((a) => a.trigger === "onActivate");
+  const btns = [
+    { label: "前進", fn: moveSelectedUnit },
+    { label: "後退", fn: retreatSelectedUnit },
+    ...(hasActivate ? [{ label: "起動", fn: activateSelectedUnit, accent: "p2" }] : []),
+    { label: "攻撃", fn: () => { state.message = "敵ユニットか敵コアを選択"; }, accent: "p1" },
+  ];
+  const bw = Math.floor((panelW - 6 - (btns.length - 1) * 2) / btns.length);
+  let bx = panelX + 3;
+  for (const btn of btns) {
+    drawButton(bx, panelY + 3, bw, btnH, btn.label, btn.fn, null, btn.accent ? { accent: btn.accent } : {});
+    bx += bw + 2;
   }
 }
 
@@ -5986,15 +6012,23 @@ function drawStructPhaseOverlay() {
     .filter(({ s }) => (s.abilities || []).some((a) => a.trigger === "onStructurePhase"));
   const isController = canControlActivePlayer();
 
-  ctx.fillStyle = "rgba(0,0,8,0.72)";
+  ctx.fillStyle = "rgba(0,0,8,0.76)";
   ctx.fillRect(0, 0, W, H);
 
-  const rowH = 62;
-  const headerH = 76;
+  // カード画像メインのレイアウト
+  const cardW = 96;
+  const cardH = Math.round(cardW / CARD_ASPECT); // 134
+  const cardGap = 14;
+  const cols = Math.min(5, structs.length || 1);
+  const contentW = cols * (cardW + cardGap) - cardGap;
+
+  const headerH = 72;
+  const btnH = 28;
+  const cardRowH = cardH + 4 + 13 + 6 + btnH + 6; // card+abilityText+btn
   const choiceH = pending.pendingResourceChoice ? 72 : 0;
-  const footerH = 58;
-  const w = 640;
-  const h = headerH + structs.length * rowH + choiceH + footerH;
+  const footerH = 56;
+  const w = Math.max(660, contentW + 80);
+  const h = headerH + cardRowH + choiceH + footerH;
   const x = Math.round((W - w) / 2);
   const y = Math.round((H - h) / 2);
 
@@ -6014,44 +6048,66 @@ function drawStructPhaseOverlay() {
   ctx.fillRect(x, y, w, 2);
 
   ctx.fillStyle = "#70dfa8";
-  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("ストラクトフェーズ", x + 24, y + 34);
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("ストラクトフェーズ", x + 24, y + 28);
   ctx.fillStyle = "rgba(130,200,160,0.75)";
-  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("発動するストラクトを選択（スキップ可）", x + 24, y + 56);
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("発動するストラクトを選択（スキップ可）", x + 24, y + 50);
+
+  const cardsAreaX = x + Math.round((w - contentW) / 2);
+  const cardsAreaY = y + headerH;
 
   structs.forEach(({ s: struct, origIdx }, i) => {
     const activated = pending.activatedIndexes.includes(origIdx);
     const affordable = canAffordStructActivation(struct, player);
-    const ry = y + headerH + i * rowH;
-    const rowFill = activated ? "rgba(16,54,34,0.75)" : "rgba(8,26,16,0.75)";
-    const rowBorder = activated ? "rgba(50,160,90,0.85)" : affordable ? "rgba(30,80,50,0.5)" : "rgba(100,40,40,0.5)";
-    roundRect(x + 14, ry + 5, w - 28, rowH - 10, 6, rowFill, rowBorder, activated ? 2 : 1);
+    const cx = cardsAreaX + i * (cardW + cardGap);
+    const cy = cardsAreaY;
 
-    ctx.fillStyle = activated ? "#60c890" : affordable ? "#90c8a8" : "#a07070";
-    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(`${activated ? "✓ " : ""}${struct.name}`, x + 26, ry + 24, 280);
+    // カード画像（メイン）
+    ctx.save();
+    if (activated) { ctx.shadowColor = "#50e890"; ctx.shadowBlur = 18; }
+    drawCard(cx, cy, cardW, cardH, struct, { noHover: !isController, small: true });
+    ctx.shadowBlur = 0;
+    ctx.restore();
 
+    // 支払い不可オーバーレイ
+    if (!affordable && !activated) {
+      roundRect(cx, cy, cardW, cardH, 6, "rgba(60,0,0,0.55)", "rgba(160,40,40,0.7)", 1.5);
+    }
+
+    // 効果テキスト
     const abText = (struct.abilities || [])
       .filter((a) => a.trigger === "onStructurePhase")
       .map((a) => abilityText({ abilities: [a] }))
       .join(" / ");
-    ctx.fillStyle = activated ? "rgba(80,160,100,0.7)" : affordable ? "rgba(120,180,140,0.72)" : "rgba(160,100,100,0.7)";
-    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(abText || struct.text || "", x + 26, ry + 42, 380);
+    ctx.fillStyle = activated ? "#60c890" : affordable ? "#a0d8b8" : "#a07070";
+    ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(abText || struct.text || "", cx + cardW / 2, cy + cardH + 14, cardW);
+    ctx.textAlign = "left";
 
+    // 発動ボタン
     const hpAbility = (struct.abilities || []).find((a) => a.trigger === "onStructurePhaseHP");
+    const btnY = cy + cardH + 22;
     if (isController && !activated) {
       if (affordable) {
-        drawButton(x + w - 110, ry + 13, 84, 30, "発動", () => activateStructInPhase(origIdx));
+        drawButton(cx, btnY, cardW, btnH, "発動", () => activateStructInPhase(origIdx));
       } else {
-        drawButton(x + w - 110, ry + 13, 84, 30, "発動不可", null, null, { accent: "dim" });
+        drawButton(cx, btnY, cardW, btnH, "発動不可", null, null, { accent: "dim" });
       }
+    } else if (activated) {
+      ctx.fillStyle = "#50d880";
+      ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("✓ 発動済", cx + cardW / 2, btnY + 18);
+      ctx.textAlign = "left";
     }
     if (hpAbility && isController && !struct.hpActivatedThisTurn) {
       const hpCanAfford = player.core.hp > hpAbility.hpCost;
       const hpLabel = `ライフ${hpAbility.hpCost}`;
-      drawButton(x + w - 204, ry + 13, 86, 30, hpLabel, hpCanAfford ? () => activateStructHPAbility(origIdx) : null, null, hpCanAfford ? { accent: "p2" } : { accent: "dim" });
+      drawButton(cx, btnY + btnH + 4, cardW, 22, hpLabel,
+        hpCanAfford ? () => activateStructHPAbility(origIdx) : null,
+        null, hpCanAfford ? { accent: "p2" } : { accent: "dim" });
     }
   });
 
@@ -6087,7 +6143,7 @@ function drawStructPhaseOverlay() {
   if (isController) {
     const endDisabled = !!choice;
     drawButton(
-      x + w - 210, y + h - 44, 190, 34,
+      x + w - 216, y + h - 44, 196, 34,
       "ストラクトフェーズ終了",
       endDisabled ? null : endStructPhase,
       null,
