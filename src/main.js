@@ -79,6 +79,7 @@ const KEYWORD_DEFINITIONS = {
   noAttack: { label: "不攻", description: "Cannot attack." },
   soulPay: { label: "魂支払", description: "May exile dump cards to pay missing magic costs." },
   cleave: { label: "巨撃", description: "Also damages units horizontally adjacent to the attack target." },
+  oneDamage: { label: "一傷防御", description: "Can only receive 1 damage per hit from any source." },
 };
 const PLAYERS = {
   p1: { id: "p1", name: "Player 1", side: "bottom", forward: -1, summonRow: 3, coreRow: 4, directRow: 1 },
@@ -418,8 +419,9 @@ const abilityEffects = {
   },
   damageTargetUnit({ game, target, ability }) {
     if (!target) return;
-    target.currentHp -= ability.amount;
-    log(game, `${target.name}: ${ability.amount}ダメージ`);
+    const dmg = hasKeyword(target, "oneDamage") ? Math.min(ability.amount, 1) : ability.amount;
+    target.currentHp -= dmg;
+    log(game, `${target.name}: ${dmg}ダメージ`);
     cleanupAllDestroyed();
   },
   grantDestroyGain({ game, playerId, ability, target }) {
@@ -556,6 +558,63 @@ const abilityEffects = {
     }
     const kwLabels = (ability.keywords || []).map((k) => KEYWORD_DEFINITIONS[k]?.label || k).join("・");
     log(game, `${game.players[playerId].name}: 敵第${ability.row}行に[${kwLabels}]付与（${count}体）`);
+  },
+  destroySelfIfUnrested({ game, card }) {
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const unit = game.board[row][col];
+        if (unit && unit.instanceId === card.instanceId) {
+          if (!unit.rested) {
+            unit.currentHp = 0;
+            cleanupAllDestroyed();
+            log(game, `${card.name}: アンレスト状態のため自壊`);
+          }
+          return;
+        }
+      }
+    }
+  },
+  summonToken({ game, playerId, ability }) {
+    const TOKEN_DEFS = {
+      quartzToken: { name: "クォーツトークン", atk: 0, hp: 3, keywords: [{ id: "immobile" }, { id: "raid" }], text: "[不動][奇襲]" },
+    };
+    const def = TOKEN_DEFS[ability.tokenId];
+    if (!def) return;
+    const player = game.players[playerId];
+    for (let col = 0; col < COLS; col++) {
+      if (!game.board[player.summonRow][col]) {
+        const unit = {
+          id: ability.tokenId,
+          type: "unit",
+          name: def.name,
+          faction: "ニュートラル",
+          tags: [],
+          cost: {},
+          actCost: {},
+          text: def.text,
+          keywords: def.keywords.map((k) => ({ ...k })),
+          abilities: [],
+          atk: def.atk,
+          hp: def.hp,
+          instanceId: nextInstanceId++,
+          owner: playerId,
+          row: player.summonRow,
+          col,
+          maxHp: def.hp,
+          currentHp: def.hp,
+          rested: true,
+          attacksThisTurn: 0,
+          mobileMoveUsed: false,
+          counters: 0,
+          fromDump: false,
+          isToken: true,
+        };
+        game.board[player.summonRow][col] = unit;
+        log(game, `${player.name}: 「${def.name}」を生成`);
+        return;
+      }
+    }
+    log(game, `${player.name}: 場が満員のため「${def.name}」を出せない`);
   },
 };
 
@@ -1204,6 +1263,18 @@ function deckmakerTypeToLocal(cardOrType) {
   return "tact";
 }
 
+function parseActivationCostFromText(costText) {
+  const cost = {};
+  const RES_MAP = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+  const re = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+  let m;
+  while ((m = re.exec(costText)) !== null) {
+    const res = RES_MAP[m[1]];
+    if (res) cost[res] = (cost[res] || 0) + (parseDeckmakerKeywordValue(m[2]) || 1);
+  }
+  return cost;
+}
+
 function fromDeckmakerCosts(costs = {}) {
   const result = emptyResources();
   for (const [deckmakerKey, amount] of Object.entries(costs || {})) {
@@ -1243,6 +1314,7 @@ function parseDeckmakerKeywords(card) {
     ["noAttack", /不攻/g],
     ["soulPay", /魂/g],
     ["cleave", /巨撃[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["oneDamage", /ダメージを1[づず]つしか受けない/g],
   ];
   const keywords = [];
   const seen = new Set();
@@ -1442,8 +1514,8 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: baseTrigger, effect: "revealTopNPick", amount, tagFilter });
   }
 
-  // Search deck by card type: "デッキからタクトカードを手札に加える" (without quotes, not already matched)
-  if (!/デッキから「/.test(text) && !/デッキからコスト総量/.test(text)) {
+  // Search deck by card type: "デッキからタクトカードを手札に加える" (without quotes, not already matched, not in activation block)
+  if (!/デッキから「/.test(text) && !/デッキからコスト総量/.test(text) && !/レストする[：:].*デッキから/.test(text)) {
     const searchTypeMatch = text.match(/デッキから([^「\n(（]+?)カードを手札に加える/);
     if (searchTypeMatch) {
       const typeText = searchTypeMatch[1];
@@ -1464,6 +1536,31 @@ function parseDeckmakerAbilities(card, localType) {
     if (/\[衝撃\]/.test(text)) keywords.push("shock");
     if (/\[警戒\]/.test(text)) keywords.push("alert");
     if (keywords.length) abilities.push({ trigger: baseTrigger, effect: "grantKeywordsToEnemyRelativeRow", row, keywords });
+  }
+
+  // onTurnEnd: "ターン終了時：アンレスト状態なら破壊"
+  if (/ターン終了時[：:].*アンレスト.*(?:破壊|自壊)/.test(text)) {
+    abilities.push({ trigger: "onTurnEnd", effect: "destroySelfIfUnrested" });
+  }
+
+  // onActivate: "X(cost) を支払い、このカードをレストする：effect" (unit cards only)
+  if (localType === "unit") {
+    const activateMatch = text.match(/(?:([^。\n\r]*?)(?:を支払い|を消費)[、,\s]*)?(?:このカードを|このユニットを)?レストする[：:](.*?)(?=[。]|$)/ms);
+    if (activateMatch) {
+      const costText = activateMatch[1] || "";
+      const effectText = (activateMatch[2] || "").trim();
+      const activationCost = parseActivationCostFromText(costText);
+      if (/デッキから.*タクトカード/.test(effectText) || /デッキからタクト/.test(effectText)) {
+        abilities.push({ trigger: "onActivate", effect: "searchDeckByType", cardType: "tact", amount: 1, activationCost });
+      } else if (/クォーツトークン/.test(effectText)) {
+        abilities.push({ trigger: "onActivate", effect: "summonToken", tokenId: "quartzToken", activationCost });
+      } else if (/デッキからコスト総量/.test(effectText)) {
+        const m2 = effectText.match(/コスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)以下(?:の\[([^\]]+)\])?ユニット/);
+        if (m2) {
+          abilities.push({ trigger: "onActivate", effect: "searchUnitToCostHand", maxCost: parseDeckmakerKeywordValue(m2[1]) || 3, tag: m2[2] || null, amount: 1, activationCost });
+        }
+      }
+    }
   }
 
   return abilities;
@@ -3310,6 +3407,12 @@ function endTurn() {
       log(state, `${state.players[endingPlayer].name}: 降臨ターン終了時回復 +${healAmt}（治療${healingCount}体）`);
     }
   }
+  // onTurnEnd: trigger for all owned units (destroySelfIfUnrested, etc.)
+  for (const unit of unitsOwnedBy(endingPlayer)) {
+    if ((unit.abilities || []).some((a) => a.trigger === "onTurnEnd")) {
+      triggerAbilities(state, endingPlayer, unit, "onTurnEnd");
+    }
+  }
   const next = opponentOf(endingPlayer);
   if (endingPlayer === "p2") state.turn += 1;
   log(state, `${state.players[endingPlayer].name}: ターン終了`);
@@ -3490,6 +3593,29 @@ function retreatSelectedUnit() {
   return true;
 }
 
+function activateSelectedUnit() {
+  if (!requireActivePlayerControl()) return false;
+  if (state.phase !== "main") return fail("メインフェーズのみ起動できます。");
+  if (state.pendingChoice || state.pendingTarget) return false;
+  const unit = selectedUnit();
+  if (!unit) return false;
+  if (unit.owner !== state.activePlayer) return fail("自分のユニットのみ起動できます。");
+  if (unit.rested) return fail("レスト状態のユニットは起動できません。");
+  const activateAbilities = (unit.abilities || []).filter((a) => a.trigger === "onActivate");
+  if (!activateAbilities.length) return false;
+  const player = state.players[state.activePlayer];
+  const ability = activateAbilities[0];
+  const cost = ability.activationCost || {};
+  if (!pay(player, cost)) return fail("起動コストが不足しています。");
+  unit.rested = true;
+  const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
+  log(state, `${player.name}: 「${unit.name}」起動${costLabel ? `（${costLabel}）` : ""}`);
+  triggerAbilities(state, state.activePlayer, unit, "onActivate");
+  syncOnlineAction("activateUnit", state.activePlayer);
+  render();
+  return true;
+}
+
 function attackWithSelectedUnit(target) {
   if (!requireActivePlayerControl()) return false;
   const unit = selectedUnit();
@@ -3517,11 +3643,15 @@ function attackWithSelectedUnit(target) {
   if (!legality.ok) return fail(legality.reason);
   if (!payAttackCosts(player, unit)) return fail("アクトコストが不足しています。");
 
-  const damage = calculateAttackDamage(unit, defender);
+  const rawDamage = calculateAttackDamage(unit, defender);
+  const damage = hasKeyword(defender, "oneDamage") ? Math.min(rawDamage, 1) : rawDamage;
   defender.currentHp -= damage;
   if (damage > 0 && hasKeyword(unit, "shock")) defender.rested = true;
   applyCleave(unit, defender);
-  if (canCounterAttack(defender, unit)) unit.currentHp -= defender.atk;
+  if (canCounterAttack(defender, unit)) {
+    const counterRaw = defender.atk;
+    unit.currentHp -= hasKeyword(unit, "oneDamage") ? Math.min(counterRaw, 1) : counterRaw;
+  }
   startAttackAnimation(unit, unit.row, unit.col, defender.row, defender.col);
   afterAttack(unit);
   log(state, `「${unit.name}」が「${defender.name}」を攻撃`);
@@ -4959,9 +5089,17 @@ function drawActionPanel() {
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
   ctx.fillText(state.message, x + 12, y + 18, 214);
   if (unit && unit.owner === state.activePlayer) {
-    drawButton(x + 10, y + 30, 64, 28, "前進", moveSelectedUnit);
-    drawButton(x + 84, y + 30, 64, 28, "後退", retreatSelectedUnit);
-    drawButton(x + 158, y + 30, 66, 28, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
+    const hasActivate = (unit.abilities || []).some((a) => a.trigger === "onActivate");
+    if (hasActivate) {
+      drawButton(x + 10, y + 30, 46, 28, "前進", moveSelectedUnit);
+      drawButton(x + 62, y + 30, 46, 28, "後退", retreatSelectedUnit);
+      drawButton(x + 114, y + 30, 46, 28, "起動", activateSelectedUnit, null, { accent: "p2" });
+      drawButton(x + 166, y + 30, 60, 28, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
+    } else {
+      drawButton(x + 10, y + 30, 64, 28, "前進", moveSelectedUnit);
+      drawButton(x + 84, y + 30, 64, 28, "後退", retreatSelectedUnit);
+      drawButton(x + 158, y + 30, 66, 28, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
+    }
   }
 }
 
@@ -5877,7 +6015,9 @@ function abilityText(card) {
         onStructurePhase: "Structure Phase",
         onDestroyEnemyUnit: "相手ユニット破壊時",
         onTurnStart: "ターン開始時",
+        onTurnEnd: "ターン終了時",
         onMill: "デッキから墓地送り時",
+        onActivate: "起動",
       }[ability.trigger] || ability.trigger;
       const effect = {
         drawCards: `カードを${ability.amount}枚引く`,
@@ -5896,6 +6036,8 @@ function abilityText(card) {
         payResourceOrCoreDamage: `${RESOURCE_LABELS[ability.resource] || ability.resource}${ability.amount}支払いまたはコア${ability.damage}ダメージ`,
         gainShockOrAlert: "[衝撃]か[警戒]を得る",
         grantKeywordsToEnemyRelativeRow: `敵第${ability.row}行に${(ability.keywords || []).map((k) => `[${KEYWORD_DEFINITIONS[k]?.label || k}]`).join("")}付与`,
+        destroySelfIfUnrested: "アンレストなら自壊",
+        summonToken: "トークン生成",
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })
