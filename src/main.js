@@ -616,6 +616,53 @@ const abilityEffects = {
     }
     log(game, `${player.name}: 場が満員のため「${def.name}」を出せない`);
   },
+  gainActCostResources({ game, playerId, card, target }) {
+    if (!target) return;
+    const player = game.players[playerId];
+    for (const [res, amount] of Object.entries(target.actCost || {})) {
+      if (amount > 0) addResources(player, res, 1);
+    }
+    const costLabel = Object.entries(target.actCost || {}).filter(([, a]) => a > 0).map(([r]) => RESOURCE_LABELS[r] || r).join("・");
+    if (costLabel) log(game, `${card.name}: 「${target.name}」アクトコスト（${costLabel}）の資源を獲得`);
+  },
+  reviveUnitFromDump({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const maxCost = ability.maxCost || 1;
+    const eligible = player.dump.filter((c) => c.type === "unit" && totalCostAmount(c.cost || {}) <= maxCost);
+    if (!eligible.length) {
+      log(game, `${player.name}: 「${card.name}」— 墓地に対象ユニットがいない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "reviveFromDump",
+      playerId,
+      eligible,
+      maxCost,
+      grantTag: ability.grantTag || null,
+      queueItem: { playerId, card, ability, source: { zone: "struct" } },
+    };
+    game.selected = { kind: "choice", choice: "reviveFromDump" };
+    game.message = `墓地から蘇生するユニット（コスト総量${maxCost}以下）を選んでください。`;
+    return "pending";
+  },
+  restTargetNoUnrest({ game, target }) {
+    if (!target) return;
+    target.rested = true;
+    target.lockedRestTurns = (target.lockedRestTurns || 0) + 1;
+    log(game, `${target.name}: レスト（次のターン解除不可）`);
+  },
+  produceResourceCostHP({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const hpCost = ability.hpCost || 3;
+    if (player.core.hp <= hpCost) {
+      log(game, `${player.name}: コアHPが不足しているため「${card.name}」のHP起動を使えない`);
+      return;
+    }
+    player.core.hp -= hpCost;
+    addResources(player, ability.resource, ability.amount || 1);
+    log(game, `${player.name}: 「${card.name}」ライフ${hpCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`);
+    checkWinner(game);
+  },
 };
 
 const cardCatalog = {
@@ -1541,6 +1588,38 @@ function parseDeckmakerAbilities(card, localType) {
   // onTurnEnd: "ターン終了時：アンレスト状態なら破壊"
   if (/ターン終了時[：:].*アンレスト.*(?:破壊|自壊)/.test(text)) {
     abilities.push({ trigger: "onTurnEnd", effect: "destroySelfIfUnrested" });
+  }
+
+  // onDamageDealt: "このユニットが敵ユニットへ攻撃でダメージを与えた時...アクトコスト...資源を１得る"
+  if (/攻撃.*ダメージを与えた時.*アクトコスト.*資源を.*得る|敵ユニットへ攻撃でダメージを与えた時.*資源.*得る/.test(text)) {
+    abilities.push({ trigger: "onDamageDealt", effect: "gainActCostResources" });
+  }
+
+  // onFirstDraw (struct): "ターンで始めてカードを引いた時...コスト総量N以下のユニット...フィールドに出す"
+  const firstDrawReviveMatch = text.match(/ターンで始めてカードを引いた時.*?コスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)以下のユニットカードを.*フィールドに出す.*?(?:\[([^\]]+)\]を与える)?/s);
+  if (firstDrawReviveMatch) {
+    const maxCost = parseDeckmakerKeywordValue(firstDrawReviveMatch[1]) || 1;
+    const grantTag = firstDrawReviveMatch[2] || "屍人";
+    abilities.push({ trigger: "onFirstDraw", effect: "reviveUnitFromDump", maxCost, grantTag });
+  }
+
+  // onActivate: "任意の資源①を支払い、このユニットをレストする：...ユニットをレストする"
+  if (localType === "unit" && /任意の資源([①②③④⑤⑥⑦⑧⑨0-9]+)を支払い.*レストする/.test(text)) {
+    const amountStr = text.match(/任意の資源([①②③④⑤⑥⑦⑧⑨0-9]+)/)?.[1] || "①";
+    const amount = parseDeckmakerKeywordValue(amountStr) || 1;
+    abilities.push({ trigger: "onActivate", effect: "restTargetNoUnrest", activationCostType: "anyOne", activationCostAmount: amount });
+  }
+
+  // struct HP-cost ability: "ライフをN支払う(1ターンに1度)：資源X得る" — uses onStructurePhaseHP (separate from normal rest activation)
+  if (localType === "struct") {
+    const hpCostMatch = text.match(/ライフを([0-9０-９①②③④⑤⑥⑦⑧⑨]+)支払う.*?[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/);
+    if (hpCostMatch) {
+      const DESC_RES2 = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+      const hpCost = parseDeckmakerKeywordValue(hpCostMatch[1]) || 3;
+      const resource = DESC_RES2[hpCostMatch[2]] || "nature";
+      const amount = parseDeckmakerKeywordValue(hpCostMatch[3]) || 1;
+      abilities.push({ trigger: "onStructurePhaseHP", effect: "produceResourceCostHP", resource, amount, hpCost });
+    }
   }
 
   // onActivate: "X(cost) を支払い、このカードをレストする：effect" (unit cards only)
@@ -3029,12 +3108,24 @@ function totalCostAmount(cost = {}) {
 
 function drawCards(game, playerId, count, announce = true) {
   const player = game.players[playerId];
+  const drewAny = player.mainDeck.length > 0 && count > 0;
   for (let i = 0; i < count; i += 1) {
     if (player.mainDeck.length === 0) break;
     if (player.core.handLimit && player.hand.length >= player.core.handLimit) break;
     player.hand.push(player.mainDeck.shift());
   }
   if (announce) log(game, `${player.name}: ${count}枚ドロー`);
+  // onFirstDraw: trigger unrested structs with this ability the first time cards are drawn each turn
+  if (drewAny && !game.firstDrawFiredFor?.[playerId]) {
+    if (!game.firstDrawFiredFor) game.firstDrawFiredFor = {};
+    game.firstDrawFiredFor[playerId] = true;
+    for (const struct of (player.structs || [])) {
+      if (!struct.rested && (struct.abilities || []).some((a) => a.trigger === "onFirstDraw")) {
+        struct.rested = true;
+        triggerAbilities(game, playerId, struct, "onFirstDraw", { zone: "struct" });
+      }
+    }
+  }
 }
 
 function opponentOf(playerId) {
@@ -3112,7 +3203,7 @@ function processEffectQueue(game) {
       game.message = `${item.card.name}: 対象を選択してください。`;
       return;
     }
-    const result = effect({ game, playerId: item.playerId, card: item.card, ability: item.ability, source: item.source });
+    const result = effect({ game, playerId: item.playerId, card: item.card, ability: item.ability, source: item.source, target: item.target || null });
     if (result === "pending") return;
     completeAbilitySource(game, item);
   }
@@ -3261,6 +3352,97 @@ function resolvePayOrDamage(payChoice) {
   return true;
 }
 
+function resolveReviveFromDump(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "reviveFromDump") return false;
+  const player = state.players[pending.playerId];
+  const card = pending.eligible[index];
+  if (!card) return false;
+  const dumpIdx = player.dump.indexOf(card);
+  if (dumpIdx >= 0) player.dump.splice(dumpIdx, 1);
+  const playerInfo = PLAYERS[pending.playerId];
+  let placed = false;
+  for (let col = 0; col < COLS; col++) {
+    if (!state.board[playerInfo.summonRow][col]) {
+      const unit = {
+        ...cloneCard(card),
+        instanceId: nextInstanceId++,
+        owner: pending.playerId,
+        row: playerInfo.summonRow,
+        col,
+        maxHp: card.hp,
+        currentHp: card.hp,
+        rested: true,
+        attacksThisTurn: 0,
+        mobileMoveUsed: false,
+        counters: 0,
+        fromDump: true,
+      };
+      if (pending.grantTag && !(unit.tags || []).includes(pending.grantTag)) {
+        unit.tags = [...(unit.tags || []), pending.grantTag];
+      }
+      state.board[playerInfo.summonRow][col] = unit;
+      placed = true;
+      log(state, `${player.name}: 「${card.name}」を墓地から蘇生${pending.grantTag ? `（[${pending.grantTag}]付与）` : ""}`);
+      break;
+    }
+  }
+  if (!placed) {
+    log(state, `${player.name}: 場が満員のため「${card.name}」を蘇生できない`);
+    player.dump.push(card);
+  }
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function resolveReviveFromDumpSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "reviveFromDump") return false;
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  log(state, `${state.players[pending.playerId].name}: 蘇生スキップ`);
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function resolveChooseActivationResource(resource) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "chooseActivationResource") return false;
+  const player = state.players[pending.playerId];
+  if ((player.resources[resource] || 0) < pending.amount) {
+    state.message = "その資源が不足しています。";
+    return false;
+  }
+  addResources(player, resource, -pending.amount);
+  const unit = state.board[pending.unitRow]?.[pending.unitCol];
+  if (unit) unit.rested = true;
+  const costLabel = `${RESOURCE_LABELS[resource] || resource}${pending.amount}`;
+  log(state, `${player.name}: 「${unit?.name || "?"}」起動（${costLabel}）`);
+  state.pendingChoice = null;
+  state.selected = null;
+  if (pending.abilityEffect === "restTargetNoUnrest" && unit) {
+    state.pendingTarget = {
+      playerId: pending.playerId,
+      card: unit,
+      ability: { effect: "restTargetNoUnrest", trigger: "onActivate", target: "enemyUnit" },
+      source: { zone: "board" },
+    };
+    state.selected = { kind: "target", target: "enemyUnit" };
+    state.message = `${unit.name}: レストさせる相手ユニットを選択してください。`;
+  }
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function isValidAbilityTarget(item, target) {
   if (!target) return false;
   if (item.ability.target === "enemyUnit") return target.owner !== item.playerId;
@@ -3285,8 +3467,17 @@ function startTurn(game, playerId) {
   const player = game.players[playerId];
   const resourcesBefore = { ...player.resources };
   const handBefore = player.hand.length;
+  if (!game.firstDrawFiredFor) game.firstDrawFiredFor = {};
+  delete game.firstDrawFiredFor[playerId];
+  for (const struct of (player.structs || [])) {
+    struct.hpActivatedThisTurn = false;
+  }
   for (const unit of unitsOwnedBy(playerId)) {
-    unit.rested = false;
+    if ((unit.lockedRestTurns || 0) > 0) {
+      unit.lockedRestTurns--;
+    } else {
+      unit.rested = false;
+    }
     unit.attacksThisTurn = 0;
     unit.mobileMoveUsed = false;
   }
@@ -3322,6 +3513,25 @@ function startTurn(game, playerId) {
     game.selected = null;
     game.message = `${player.name}: 行動してください。`;
   }
+}
+
+function activateStructHPAbility(index) {
+  if (!canControlActivePlayer()) return false;
+  if (state.pendingChoice) return false;
+  const pending = state.pendingStructPhase;
+  if (!pending) return false;
+  const player = state.players[pending.playerId];
+  const struct = player.structs[index];
+  if (!struct) return false;
+  const hpAbility = (struct.abilities || []).find((a) => a.trigger === "onStructurePhaseHP");
+  if (!hpAbility) return false;
+  if (struct.hpActivatedThisTurn) return false;
+  if (player.core.hp <= hpAbility.hpCost) return fail("コアHPが不足しています。");
+  struct.hpActivatedThisTurn = true;
+  const result = abilityEffects[hpAbility.effect]?.({ game: state, playerId: pending.playerId, card: struct, ability: hpAbility });
+  syncOnlineAction("activateStructHP", pending.playerId);
+  render();
+  return true;
 }
 
 function activateStructInPhase(index) {
@@ -3605,6 +3815,23 @@ function activateSelectedUnit() {
   if (!activateAbilities.length) return false;
   const player = state.players[state.activePlayer];
   const ability = activateAbilities[0];
+  if (ability.activationCostType === "anyOne") {
+    const amount = ability.activationCostAmount || 1;
+    const affordable = RESOURCE_KEYS.filter((r) => (player.resources[r] || 0) >= amount);
+    if (!affordable.length) return fail("支払える資源がありません。");
+    state.pendingChoice = {
+      type: "chooseActivationResource",
+      playerId: state.activePlayer,
+      amount,
+      unitRow: unit.row,
+      unitCol: unit.col,
+      abilityEffect: ability.effect,
+    };
+    state.selected = { kind: "choice", choice: "chooseActivationResource" };
+    state.message = "支払う資源を1種類選んでください。";
+    render();
+    return true;
+  }
   const cost = ability.activationCost || {};
   if (!pay(player, cost)) return fail("起動コストが不足しています。");
   unit.rested = true;
@@ -3651,6 +3878,14 @@ function attackWithSelectedUnit(target) {
   if (canCounterAttack(defender, unit)) {
     const counterRaw = defender.atk;
     unit.currentHp -= hasKeyword(unit, "oneDamage") ? Math.min(counterRaw, 1) : counterRaw;
+  }
+  if (damage > 0) {
+    for (const ability of (unit.abilities || [])) {
+      if (ability.trigger === "onDamageDealt") {
+        state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" }, target: defender });
+      }
+    }
+    processEffectQueue(state);
   }
   startAttackAnimation(unit, unit.row, unit.col, defender.row, defender.col);
   afterAttack(unit);
@@ -5135,6 +5370,8 @@ function drawChoiceOverlay() {
   if (pending.type === "mysticCapture") drawMysticCapturePanel(pending);
   else if (pending.type === "revealPick") drawRevealPickPanel(pending);
   else if (pending.type === "payOrDamage") drawPayOrDamagePanel(pending);
+  else if (pending.type === "reviveFromDump") drawReviveFromDumpPanel(pending);
+  else if (pending.type === "chooseActivationResource") drawChooseActivationResourcePanel(pending);
 }
 
 function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
@@ -5252,6 +5489,60 @@ function drawPayOrDamagePanel(pending) {
   }
 }
 
+function drawReviveFromDumpPanel(pending) {
+  const eligible = pending.eligible || [];
+  const cardW = 108, cardH = 150, gap = 16;
+  const cols = Math.min(eligible.length, 5);
+  const w = Math.max(480, cols * (cardW + gap) + gap + 60);
+  const h = 280;
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+  drawChoicePanelBase(x, y, w, h, "rgba(80,40,140,0.75)", "#c060ff");
+  ctx.fillStyle = "#d8b0ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`墓地から蘇生（コスト総量${pending.maxCost}以下）`, x + 24, y + 32);
+  ctx.fillStyle = "rgba(190,160,240,0.8)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("蘇生するユニットを選んでください。", x + 24, y + 54);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const startX = x + 30;
+  const cardsY = y + 70;
+  eligible.forEach((card, i) => {
+    const cx = startX + i * (cardW + gap);
+    drawCard(cx, cardsY, cardW, cardH, card, { selected: false });
+    if (isController) addHit(cx, cardsY, cardW, cardH, () => { resolveReviveFromDump(i); render(); });
+  });
+  if (isController) {
+    drawButton(x + w - 120, y + h - 44, 100, 30, "スキップ", () => { resolveReviveFromDumpSkip(); render(); });
+  }
+}
+
+function drawChooseActivationResourcePanel(pending) {
+  const player = state.players[pending.playerId];
+  const affordable = RESOURCE_KEYS.filter((r) => (player.resources[r] || 0) >= pending.amount);
+  const btnW = 100, btnH = 44, gap = 12;
+  const w = Math.max(500, affordable.length * (btnW + gap) + gap * 2);
+  const h = 180;
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,80,160,0.8)", "#4080ff");
+  ctx.fillStyle = "#a0c8ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("起動コスト: 支払う資源を選択", x + 24, y + 34);
+  ctx.fillStyle = "rgba(160,200,255,0.8)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`いずれか${pending.amount}を支払ってください。`, x + 24, y + 58);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  if (isController) {
+    affordable.forEach((res, i) => {
+      const bx = x + gap + i * (btnW + gap);
+      const by = y + h - btnH - 20;
+      const label = `${RESOURCE_LABELS[res] || res}（${player.resources[res]}）`;
+      drawButton(bx, by, btnW, btnH, label, () => { resolveChooseActivationResource(res); render(); }, null, { accent: "p1" });
+    });
+  }
+}
+
 function canAffordStructActivation(struct, player) {
   for (const ab of (struct.abilities || []).filter((a) => a.trigger === "onStructurePhase")) {
     if (ab.effect === "chooseExchange") {
@@ -5334,12 +5625,18 @@ function drawStructPhaseOverlay() {
     ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
     ctx.fillText(abText || struct.text || "", x + 26, ry + 42, 380);
 
+    const hpAbility = (struct.abilities || []).find((a) => a.trigger === "onStructurePhaseHP");
     if (isController && !activated) {
       if (affordable) {
         drawButton(x + w - 110, ry + 13, 84, 30, "発動", () => activateStructInPhase(origIdx));
       } else {
         drawButton(x + w - 110, ry + 13, 84, 30, "発動不可", null, null, { accent: "dim" });
       }
+    }
+    if (hpAbility && isController && !struct.hpActivatedThisTurn) {
+      const hpCanAfford = player.core.hp > hpAbility.hpCost;
+      const hpLabel = `ライフ${hpAbility.hpCost}`;
+      drawButton(x + w - 204, ry + 13, 86, 30, hpLabel, hpCanAfford ? () => activateStructHPAbility(origIdx) : null, null, hpCanAfford ? { accent: "p2" } : { accent: "dim" });
     }
   });
 
@@ -6018,6 +6315,9 @@ function abilityText(card) {
         onTurnEnd: "ターン終了時",
         onMill: "デッキから墓地送り時",
         onActivate: "起動",
+        onFirstDraw: "最初のドロー時",
+        onDamageDealt: "攻撃ダメージ与えた時",
+        onStructurePhaseHP: "ライフ起動",
       }[ability.trigger] || ability.trigger;
       const effect = {
         drawCards: `カードを${ability.amount}枚引く`,
@@ -6038,6 +6338,10 @@ function abilityText(card) {
         grantKeywordsToEnemyRelativeRow: `敵第${ability.row}行に${(ability.keywords || []).map((k) => `[${KEYWORD_DEFINITIONS[k]?.label || k}]`).join("")}付与`,
         destroySelfIfUnrested: "アンレストなら自壊",
         summonToken: "トークン生成",
+        gainActCostResources: "攻撃ダメージ時：相手アクトコスト資源を獲得",
+        reviveUnitFromDump: `墓地からコスト${ability.maxCost}以下のユニットを蘇生`,
+        restTargetNoUnrest: "相手ユニットをレスト（次ターン解除不可）",
+        produceResourceCostHP: `ライフ${ability.hpCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })
