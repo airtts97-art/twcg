@@ -6067,7 +6067,7 @@ function drawStructPhaseOverlay() {
     // カード画像（メイン）
     ctx.save();
     if (activated) { ctx.shadowColor = "#50e890"; ctx.shadowBlur = 18; }
-    drawCard(cx, cy, cardW, cardH, struct, { noHover: !isController, small: true });
+    drawCard(cx, cy, cardW, cardH, struct, { noHover: !isController, small: true, artOnly: true });
     ctx.shadowBlur = 0;
     ctx.restore();
 
