@@ -151,13 +151,13 @@ const DECKMAKER_TYPE_LABELS = {
 };
 
 const layout = {
-  board:        { x: 192, y: 168, w: 1056, h: 452 },
-  hand:         { x: 192, y: 696, w: 1056, h: 160 },
+  board:        { x: 192, y: 156, w: 1056, h: 524 },
+  hand:         { x: 192, y: 736, w: 1056, h: 120 },
   topHand:      { x: 192, y: 62,  w: 960,  h: 36  },
-  left:         { x: 4,   y: 100, w: 184,  h: 756 },
-  right:        { x: 1252,y: 100, w: 184,  h: 756 },
-  oppStruct:    { x: 192, y: 100, w: 1056, h: 64  },
-  playerStruct: { x: 192, y: 620, w: 1056, h: 72  },
+  left:         { x: 4,   y: 100, w: 184,  h: 796 },
+  right:        { x: 1252,y: 100, w: 184,  h: 796 },
+  oppStruct:    { x: 192, y: 100, w: 1056, h: 52  },
+  playerStruct: { x: 192, y: 680, w: 1056, h: 52  },
   resourceBar:  { x: 192, y: 860, w: 1056, h: 36  },
 };
 layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
@@ -5176,41 +5176,67 @@ function drawHeader() {
 
 function drawBoardCard(cx, cy, cellW, cellH, unit) {
   const isSelected = selectedUnit() === unit;
-  const padX = 10, padY = 6;
-  const avW = cellW - padX * 2;  // available width in cell
-  const avH = cellH - padY * 2;  // available height in cell
+  const padX = 6, padY = 4;
+  const statsH = 22;  // カード外下部のATK/HP表示エリア
+  const avW = cellW - padX * 2;
+  const avH = cellH - padY * 2 - statsH;  // アート用の縦スペース
+
+  // ポートレートカードサイズ (63:88比率)
+  const cardH = Math.min(avH, avW / CARD_ASPECT);
+  const cardW = cardH * CARD_ASPECT;
 
   if (unit.rested) {
-    // レスト時: ポートレートカードを90°時計回りに回転して表示
-    // ポートレートカード (cardW × cardH) を 90°回転すると視覚上 cardH × cardW になる
-    // 視覚上の幅 = cardH ≤ avW, 視覚上の高さ = cardW ≤ avH となるよう計算
-    let cardW = avH;                       // portrait card の幅 = 利用可能高さ
-    let cardH = cardW / CARD_ASPECT;       // portrait card の高さ = 幅 / 比率
-    if (cardH > avW) { cardH = avW; cardW = cardH * CARD_ASPECT; }
+    // レスト時: 90°時計回りに回転して横向き表示
+    // ローカル(cardW×cardH) → ワールド cardH×cardW (landscape)
+    // 回転後のサイズがセルに収まるよう計算
+    let rW = avH;               // 回転後の視覚幅 = ポートレート高さ
+    let rH = rW * CARD_ASPECT;  // 回転後の視覚高さ = ポートレート幅
+    if (rH > avW) { rH = avW; rW = rH / CARD_ASPECT; }
 
     const centerX = cx + cellW / 2;
-    const centerY = cy + cellH / 2;
+    const centerY = cy + padY + avH / 2;
 
     ctx.save();
     ctx.translate(centerX, centerY);
-    ctx.rotate(Math.PI / 2);              // 90° 時計回り
-    // ローカル座標で描画すると worldWidth=cardH, worldHeight=cardW の横向きになる
-    drawCard(-cardW / 2, -cardH / 2, cardW, cardH, unit, {
-      selected: isSelected,
-      noHover: true,
-      noRestOverlay: true,
+    ctx.rotate(Math.PI / 2);
+    // ローカル座標 (rH×rW) → ワールドで rW×rH の横向きになる
+    drawCard(-rH / 2, -rW / 2, rH, rW, unit, {
+      selected: isSelected, noHover: true, noRestOverlay: true, artOnly: true,
     });
     ctx.restore();
-
-    // ホバー検出は元のセル座標で登録
-    addCardHover(cx + padX, cy + padY, avW, avH, unit);
+    addCardHover(cx, cy, cellW, cellH, unit);
   } else {
-    // 通常時: 縦横比を維持したポートレートカードをセル中央に表示
-    const cardH = Math.min(avH, avW / CARD_ASPECT);
-    const cardW = cardH * CARD_ASPECT;
+    // 通常時: ポートレートカードをアートのみで表示
     const offX = cx + padX + (avW - cardW) / 2;
     const offY = cy + padY + (avH - cardH) / 2;
-    drawCard(offX, offY, cardW, cardH, unit, { selected: isSelected });
+    drawCard(offX, offY, cardW, cardH, unit, { selected: isSelected, artOnly: true });
+  }
+
+  // ATK / HP / HP bar をカードの外（セル下部）に表示
+  if (unit.type === "unit") {
+    const maxHp = unit.maxHp ?? unit.hp;
+    const curHp = unit.currentHp ?? unit.hp;
+    const hpRatio = maxHp > 0 ? Math.max(0, curHp / maxHp) : 0;
+    const hpCol = hpRatio > 0.5 ? "#30c060" : hpRatio > 0.25 ? "#e0a020" : "#e02020";
+    const sy = cy + cellH - statsH;
+    ctx.fillStyle = "rgba(4,8,20,0.82)";
+    ctx.fillRect(cx + 2, sy, cellW - 4, statsH);
+    // ATK
+    ctx.fillStyle = "#a0c8ff";
+    ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`⚔${unit.atk}`, cx + 5, sy + 14);
+    // HP
+    ctx.textAlign = "right";
+    ctx.fillStyle = hpCol;
+    ctx.fillText(`♥${curHp}`, cx + cellW - 5, sy + 14);
+    ctx.textAlign = "left";
+    // HP bar
+    const barY = sy + statsH - 5;
+    const barW = cellW - 8;
+    ctx.fillStyle = "rgba(20,20,40,0.8)";
+    ctx.fillRect(cx + 4, barY, barW, 4);
+    ctx.fillStyle = hpCol;
+    ctx.fillRect(cx + 4, barY, barW * hpRatio, 4);
   }
 }
 
@@ -5419,48 +5445,44 @@ function drawSidePanel(playerId, box) {
   ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(box.x + 8, box.y + 230); ctx.lineTo(box.x + box.w - 8, box.y + 230); ctx.stroke();
 
-  // STRUCT DECK (only for viewer — this is what you use to play new structs)
+  // STRUCT DECK — カード画像で全て表示（viewer のみ）
   if (playerId === viewerPlayerId()) {
     const deckTitleY = box.y + 242;
-    const deckCardsY = box.y + 258;
+    const deckCardsY = box.y + 256;
     ctx.fillStyle = "rgba(160,180,230,0.7)";
     ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
-    ctx.fillText("STRUCT DECK", box.x + 8, deckTitleY);
-    ctx.fillStyle = "rgba(100,120,180,0.55)";
-    ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(`${player.structDeck.length}枚`, box.x + 100, deckTitleY);
-    drawButton(box.x + box.w - 58, deckTitleY - 12, 24, 16, "↑", () => changeStructDeckScroll(-1), null, { micro: true });
-    drawButton(box.x + box.w - 30, deckTitleY - 12, 24, 16, "↓", () => changeStructDeckScroll(1), null, { micro: true });
+    ctx.fillText(`STRUCT DECK (${player.structDeck.length})`, box.x + 8, deckTitleY);
+    // カード幅: パネル幅に3列で並べる
+    const panelBottom = box.y + box.h - 6;
+    const cols = 3;
+    const cW = Math.floor((box.w - 12 - (cols - 1) * 3) / cols);
+    const cH = Math.round(cW / CARD_ASPECT);
+    const stride = cW + 3;
+    addWheelRegion(box.x + 6, deckCardsY, box.w - 12, panelBottom - deckCardsY, (deltaY) => changeStructDeckScroll(deltaY > 0 ? 1 : -1));
     const scrollInfo = clampStructDeckScroll(player);
-    const startIndex = scrollInfo.scroll * 2;
-    const visibleCards = player.structDeck.slice(startIndex, startIndex + scrollInfo.visibleRows * 2);
-    const panelBottom = box.y + box.h - 8;
-    const maxRows = Math.floor((panelBottom - deckCardsY) / 44);
-    const actualRows = Math.min(maxRows, scrollInfo.visibleRows);
-    addWheelRegion(box.x + 8, deckCardsY, box.w - 16, actualRows * 44, (deltaY) => changeStructDeckScroll(deltaY > 0 ? 1 : -1));
-    visibleCards.forEach((card, visibleIndex) => {
-      if (visibleIndex >= actualRows * 2) return;
-      const i = startIndex + visibleIndex;
-      const col = visibleIndex % 2;
-      const row = Math.floor(visibleIndex / 2);
-      const cW = (box.w - 18) / 2;
-      const bx = box.x + 8 + col * (cW + 2);
-      const by = deckCardsY + row * 44;
-      if (by + 40 > panelBottom) return;
-      const selected = state.selected?.kind === "structDeck" && state.selected.playerId === playerId && state.selected.index === i;
+    const startIndex = scrollInfo.scroll * cols;
+    player.structDeck.forEach((card, absI) => {
+      if (absI < startIndex) return;
+      const vi = absI - startIndex;
+      const col = vi % cols;
+      const row = Math.floor(vi / cols);
+      const bx = box.x + 6 + col * stride;
+      const by = deckCardsY + row * (cH + 3);
+      if (by + cH > panelBottom) return;
+      const selected = state.selected?.kind === "structDeck" && state.selected.playerId === playerId && state.selected.index === absI;
       const canAfford = canPay(player, card.cost);
-      const fill = selected ? "rgba(140,100,20,0.75)" : canAfford ? "rgba(20,50,100,0.75)" : "rgba(20,20,40,0.65)";
-      const border = selected ? "rgba(220,170,40,0.9)" : canAfford ? "rgba(50,100,200,0.55)" : "rgba(40,40,80,0.4)";
-      roundRect(bx, by, cW, 40, 5, fill, border, selected ? 1.5 : 1);
-      ctx.fillStyle = selected ? "#ffd860" : canAfford ? "#90b8f0" : "#506080";
-      ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
-      ctx.fillText(card.name.split(" ")[0], bx + 5, by + 25, cW - 8);
-      addHit(bx, by, cW, 40, () => {
+      drawCard(bx, by, cW, cH, card, { selected, small: true, artOnly: true });
+      if (!canAfford) {
+        ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(bx, by, cW, cH);
+      }
+      addHit(bx, by, cW, cH, () => {
         if (!requireActivePlayerControl()) return;
-        state.selected = { kind: "structDeck", playerId, index: i, confirmed: false };
-        state.message = `${card.name}: 内容を確認してから使用できます。`;
+        state.selected = { kind: "structDeck", playerId, index: absI, confirmed: false };
+        state.message = `${card.name}: カード確認後に設置できます。`;
       });
     });
+    drawButton(box.x + box.w - 58, deckTitleY - 12, 24, 16, "↑", () => changeStructDeckScroll(-1), null, { micro: true });
+    drawButton(box.x + box.w - 30, deckTitleY - 12, 24, 16, "↓", () => changeStructDeckScroll(1), null, { micro: true });
   }
 }
 
@@ -5605,61 +5627,49 @@ function drawStructBar(playerId, x, y, w, h) {
   const bg = isP1 ? "rgba(6,12,34,0.88)" : "rgba(34,6,6,0.88)";
   roundRect(x, y, w, h, 6, bg, accentColor, 1);
 
-  // LP display (left portion)
-  const lpW = 136;
-  drawLPDisplay(playerId, x + 4, y + 4, lpW, h - 8);
+  // LP display (compact left)
+  const lpW = 90;
+  drawLPDisplay(playerId, x + 2, y + 2, lpW, h - 4);
 
-  // Struct zone label
-  ctx.fillStyle = "rgba(140,160,210,0.55)";
-  ctx.font = "700 9px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("STRUCT", x + lpW + 12, y + 13);
+  // Deck + GY (right side, compact)
+  const pileW = 44; const pileH = h - 6;
+  const gyX = x + w - pileW - 2;
+  const deckX = gyX - pileW - 4;
 
-  // Struct cards (horizontal, portrait ratio)
-  const structStartX = x + lpW + 12;
-  const deckAreaW = 128;
-  const structAreaW = w - lpW - 16 - deckAreaW;
-  const maxStructSlots = 6;
-  const cardH = h - 12;                            // 利用可能高さ
-  const cardW2 = Math.round(cardH * CARD_ASPECT);  // 縦横比から幅を計算
-  const slotW = Math.min(cardW2, Math.floor(structAreaW / maxStructSlots) - 2);
+  roundRect(deckX, y + 3, pileW, pileH, 3, "rgba(10,20,54,0.85)", "rgba(50,90,200,0.5)", 1);
+  ctx.fillStyle = "#7098c8"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif"; ctx.textAlign = "center";
+  ctx.fillText("DECK", deckX + pileW / 2, y + 13);
+  ctx.font = "700 16px 'Yu Gothic UI', sans-serif"; ctx.fillStyle = "#c0d8ff";
+  ctx.fillText(String(player.mainDeck.length), deckX + pileW / 2, y + pileH - 2);
+
+  roundRect(gyX, y + 3, pileW, pileH, 3, "rgba(14,36,14,0.85)", "rgba(40,130,60,0.5)", 1);
+  ctx.fillStyle = "#70b880"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("GY", gyX + pileW / 2, y + 13);
+  ctx.font = "700 16px 'Yu Gothic UI', sans-serif"; ctx.fillStyle = "#c0e8d0";
+  ctx.fillText(String(player.dump.length), gyX + pileW / 2, y + pileH - 2);
+  ctx.textAlign = "left";
+  addHit(gyX, y + 3, pileW, pileH, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
+
+  // Struct zone cards — art-only, portrait ratio, as many as fit
+  const structStartX = x + lpW + 6;
+  const structEndX = deckX - 4;
+  const structAreaW = structEndX - structStartX;
+  const cardH = h - 6;
+  const cardW = Math.round(cardH * CARD_ASPECT);
+  const gap = 2;
+  const stride = cardW + gap;
 
   player.structs.forEach((card, i) => {
-    const cx2 = structStartX + i * (slotW + 2);
-    if (cx2 + slotW > x + w - deckAreaW - 4) return;
+    const cx2 = structStartX + i * stride;
+    if (cx2 + cardW > structEndX) return;
     const selected = state.selected?.kind === "fieldStruct" && state.selected.playerId === playerId && state.selected.index === i;
-    drawCard(cx2, y + 6, slotW, cardH, card, { selected, small: true });
-    addHit(cx2, y + 6, slotW, cardH, () => {
+    drawCard(cx2, y + 3, cardW, cardH, card, { selected, small: true, artOnly: true });
+    addHit(cx2, y + 3, cardW, cardH, () => {
       const detailOpen = consumeFieldDoubleClick(`fieldStruct:${playerId}:${i}`);
       state.selected = { kind: "fieldStruct", playerId, index: i, detailOpen };
       state.message = detailOpen ? `${card.name}: detail` : `${card.name} を選択`;
     });
   });
-
-  // Deck + Grave piles (right side)
-  const deckX = x + w - deckAreaW + 2;
-  const pileW = 56; const pileH = h - 10;
-  // Deck
-  roundRect(deckX, y + 5, pileW, pileH, 4, "rgba(10,20,54,0.85)", "rgba(50,90,200,0.5)", 1);
-  ctx.fillStyle = "#7098c8";
-  ctx.font = "700 9px 'Yu Gothic UI', sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText("DECK", deckX + pileW / 2, y + 18);
-  ctx.font = "800 22px 'Yu Gothic UI', sans-serif";
-  ctx.fillStyle = "#c0d8ff";
-  ctx.fillText(String(player.mainDeck.length), deckX + pileW / 2, y + pileH - 4);
-  ctx.textAlign = "left";
-  // Grave (GY)
-  const gyX = deckX + pileW + 4;
-  roundRect(gyX, y + 5, pileW, pileH, 4, "rgba(14,36,14,0.85)", "rgba(40,130,60,0.5)", 1);
-  ctx.fillStyle = "#70b880";
-  ctx.font = "700 9px 'Yu Gothic UI', sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText("GY", gyX + pileW / 2, y + 18);
-  ctx.font = "800 22px 'Yu Gothic UI', sans-serif";
-  ctx.fillStyle = "#c0e8d0";
-  ctx.fillText(String(player.dump.length), gyX + pileW / 2, y + pileH - 4);
-  ctx.textAlign = "left";
-  addHit(gyX, y + 5, pileW, pileH, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
 }
 
 function drawResourceBar() {
@@ -6476,18 +6486,20 @@ function drawCard(x, y, w, h, card, options = {}) {
   const fs = isSmall ? 10 : 13;
 
   ctx.save();
-  if (isSelected) {
-    ctx.shadowColor = "#f0c040";
-    ctx.shadowBlur = 20;
-  }
-
-  // Card background gradient
+  if (isSelected) { ctx.shadowColor = "#f0c040"; ctx.shadowBlur = 20; }
   const bgGrd = ctx.createLinearGradient(x, y, x, y + h);
   bgGrd.addColorStop(0, theme.grad[0]);
   bgGrd.addColorStop(1, theme.grad[1]);
   roundRect(x, y, w, h, 6, bgGrd, isSelected ? "#f0c040" : theme.accent, isSelected ? 2.5 : 1.5);
   ctx.shadowBlur = 0;
   ctx.restore();
+
+  if (options.artOnly) {
+    // フィールド表示用: アートのみ、名前・ステータスなし
+    drawCardArt(x + 2, y + 2, w - 4, h - 4, card, options);
+    if (card.rested && !options.noRestOverlay) drawRestedOverlay(x, y, w, h, options);
+    return;
+  }
 
   // Art area (top 60% of card)
   const artH = Math.max(22, Math.floor(h * 0.58));
@@ -6499,7 +6511,6 @@ function drawCard(x, y, w, h, card, options = {}) {
   nameGrd.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = nameGrd;
   ctx.fillRect(x + 2, y + 2, w - 4, 22);
-
   ctx.fillStyle = "#e8f0ff";
   ctx.font = `700 ${fs}px 'Yu Gothic UI', sans-serif`;
   ctx.fillText(card.name, x + 5, y + 15, w - 10);
@@ -6510,21 +6521,14 @@ function drawCard(x, y, w, h, card, options = {}) {
   if (statsH > 0) {
     ctx.fillStyle = "rgba(4,8,20,0.85)";
     ctx.fillRect(x + 2, statsY, w - 4, statsH);
-
     if (card.type === "unit") {
-      // HP bar
       const maxHp = card.maxHp ?? card.hp;
       const curHp = card.currentHp ?? card.hp;
       const hpRatio = maxHp > 0 ? Math.max(0, curHp / maxHp) : 0;
-      const barX = x + 4;
-      const barY = statsY + statsH - 8;
-      const barW = w - 8;
-      ctx.fillStyle = "rgba(20,20,40,0.8)";
-      ctx.fillRect(barX, barY, barW, 5);
+      const barX = x + 4; const barY = statsY + statsH - 8; const barW = w - 8;
+      ctx.fillStyle = "rgba(20,20,40,0.8)"; ctx.fillRect(barX, barY, barW, 5);
       const hpCol = hpRatio > 0.5 ? "#30c060" : hpRatio > 0.25 ? "#e0a020" : "#e02020";
-      ctx.fillStyle = hpCol;
-      ctx.fillRect(barX, barY, barW * hpRatio, 5);
-
+      ctx.fillStyle = hpCol; ctx.fillRect(barX, barY, barW * hpRatio, 5);
       ctx.fillStyle = "#c0d8ff";
       ctx.font = `700 ${fs}px 'Yu Gothic UI', sans-serif`;
       ctx.fillText(`${card.atk}`, x + 5, statsY + 12);
@@ -6532,7 +6536,6 @@ function drawCard(x, y, w, h, card, options = {}) {
       ctx.fillStyle = hpRatio < 0.5 ? "#ff8080" : "#80e080";
       ctx.fillText(`${curHp}`, x + w - 5, statsY + 12);
       ctx.textAlign = "left";
-
       const keywords = keywordLabels(card).join(" ");
       if (keywords && statsH > 22) {
         ctx.fillStyle = theme.text;
@@ -6591,6 +6594,23 @@ function drawCardArt(x, y, w, h, card, options = {}) {
     pg.addColorStop(1, theme.grad[1]);
     ctx.fillStyle = pg;
     ctx.fillRect(x, y, w, h);
+    // カード名を中央に改行表示（仮画像）
+    const name = card?.name || "";
+    if (name && w > 16 && h > 12) {
+      const fs = Math.max(7, Math.min(13, Math.floor(w / 4.8)));
+      ctx.fillStyle = theme.text || "rgba(200,220,255,0.9)";
+      ctx.font = `600 ${fs}px 'Yu Gothic UI', sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const charsPerLine = Math.max(2, Math.floor((w - 6) / (fs * 0.9)));
+      const lines = [];
+      for (let i = 0; i < name.length; i += charsPerLine) lines.push(name.slice(i, i + charsPerLine));
+      const lineH = fs + 3;
+      let ty = y + h / 2 - (lines.length - 1) * lineH / 2;
+      for (const line of lines) { ctx.fillText(line, x + w / 2, ty, w - 4); ty += lineH; }
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+    }
     return;
   }
   ctx.save();
