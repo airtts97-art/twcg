@@ -1747,7 +1747,12 @@ function selectMatchDeck(deckId) {
 
 async function loadServerConfig() {
   try {
-    const response = await fetch("/config");
+    // ?ws=wss://xxxx.trycloudflare.com/ws → https://xxxx.trycloudflare.com/config
+    const params = new URLSearchParams(location.search);
+    const configUrl = params.has("ws")
+      ? params.get("ws").replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace(/\/ws$/, "/config")
+      : "/config";
+    const response = await fetch(configUrl);
     if (!response.ok) return;
     const config = await response.json();
     googleClientId = config.googleClientId || "";
