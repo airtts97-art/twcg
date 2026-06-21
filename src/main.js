@@ -5194,8 +5194,8 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
     ctx.save();
     ctx.translate(centerX, centerY);
     ctx.rotate(Math.PI / 2);              // 90° 時計回り
-    // portrait card を中心から描画 (drawCard は通常座標系で動く)
-    drawCard(-cardH / 2, -cardW / 2, cardH, cardW, unit, {
+    // ローカル座標で描画すると worldWidth=cardH, worldHeight=cardW の横向きになる
+    drawCard(-cardW / 2, -cardH / 2, cardW, cardH, unit, {
       selected: isSelected,
       noHover: true,
       noRestOverlay: true,
