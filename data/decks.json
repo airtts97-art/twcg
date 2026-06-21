@@ -1,0 +1,396 @@
+{
+  "emailplayer@example.com": [
+    {
+      "id": "deck-mqn2sm2x",
+      "name": "対戦用テストデッキ",
+      "deck": {
+        "core": "frontierCore",
+        "main": [
+          "lightInfantry",
+          "smallFieldGunFuel",
+          "commonArmoredCar",
+          "antiArmorMageTeam328",
+          "lifeFairy",
+          "knowledgeFairy",
+          "fieldOrder",
+          "precisionStrike",
+          "hiddenSupply",
+          "grandMandate"
+        ],
+        "struct": [
+          "town",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell"
+        ]
+      },
+      "updatedAt": "2026-06-21T00:56:07.113Z"
+    },
+    {
+      "id": "deck-mqn2sm2v",
+      "name": "テストデッキ-1782003367111",
+      "deck": {
+        "core": "frontierCore",
+        "main": [
+          "lightInfantry",
+          "smallFieldGunFuel",
+          "commonArmoredCar",
+          "antiArmorMageTeam328",
+          "lifeFairy",
+          "knowledgeFairy",
+          "fieldOrder",
+          "precisionStrike",
+          "hiddenSupply",
+          "grandMandate",
+          "lightInfantry",
+          "lightInfantry"
+        ],
+        "struct": [
+          "town",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell"
+        ]
+      },
+      "updatedAt": "2026-06-21T00:56:07.111Z"
+    },
+    {
+      "id": "deckmaker-mqn2slni-1",
+      "name": "Deckmaker All Data Sample",
+      "deck": {
+        "core": "frontierCore",
+        "main": [
+          "lightInfantry",
+          "smallFieldGunFuel",
+          "commonArmoredCar",
+          "antiArmorMageTeam328",
+          "lifeFairy",
+          "knowledgeFairy",
+          "fieldOrder",
+          "precisionStrike",
+          "hiddenSupply",
+          "grandMandate",
+          "lightInfantry",
+          "lightInfantry",
+          "lifeFairy"
+        ],
+        "struct": [
+          "town",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell"
+        ]
+      },
+      "updatedAt": "2026-06-21T00:56:06.558Z"
+    },
+    {
+      "id": "deckmaker-mqn2sln7",
+      "name": "Deckmaker Sample",
+      "deck": {
+        "core": "frontierCore",
+        "main": [
+          "lightInfantry",
+          "hiddenSupply",
+          "precisionStrike"
+        ],
+        "struct": [
+          "town",
+          "grove"
+        ]
+      },
+      "updatedAt": "2026-06-21T00:56:06.547Z"
+    }
+  ],
+  "guestguestplayer": [
+    {
+      "id": "deck-mqj4qad8",
+      "name": "Guest Deck",
+      "deck": {
+        "core": "frontierCore",
+        "main": [
+          "lightInfantry",
+          "smallFieldGunFuel",
+          "commonArmoredCar",
+          "antiArmorMageTeam328",
+          "lifeFairy",
+          "knowledgeFairy",
+          "fieldOrder",
+          "precisionStrike",
+          "hiddenSupply",
+          "grandMandate"
+        ],
+        "struct": [
+          "town",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell"
+        ]
+      },
+      "updatedAt": "2026-06-18T06:39:13.148Z"
+    }
+  ],
+  "google107943001969772816811": [
+    {
+      "id": "deck-mqmb4i3w",
+      "name": "44枚デッキ",
+      "deck": {
+        "core": "frontierCore",
+        "main": [
+          "lightInfantry",
+          "smallFieldGunFuel",
+          "commonArmoredCar",
+          "lifeFairy",
+          "knowledgeFairy",
+          "fieldOrder",
+          "hiddenSupply",
+          "grandMandate",
+          "mysticCapture",
+          "mysticCapture",
+          "mysticCapture",
+          "mysticCapture",
+          "fieldOrder",
+          "fieldOrder",
+          "fieldOrder",
+          "knowledgeFairy",
+          "knowledgeFairy",
+          "knowledgeFairy",
+          "lifeFairy",
+          "lifeFairy",
+          "lifeFairy",
+          "commonArmoredCar",
+          "commonArmoredCar",
+          "commonArmoredCar",
+          "smallFieldGunFuel",
+          "smallFieldGunFuel",
+          "smallFieldGunFuel",
+          "lightInfantry",
+          "lightInfantry",
+          "lightInfantry",
+          "hiddenSupply",
+          "grandMandate",
+          "card_1753662603276",
+          "card_1753662603276",
+          "card_1753662603276",
+          "card_1753662603276",
+          "grandMandate",
+          "grandMandate",
+          "hiddenSupply",
+          "hiddenSupply",
+          "peoplesReconForce",
+          "peoplesReconForce",
+          "peoplesReconForce",
+          "peoplesReconForce"
+        ],
+        "struct": [
+          "town",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell",
+          "town",
+          "town",
+          "town",
+          "grove",
+          "grove",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell",
+          "powerPlant",
+          "card_1753683148866",
+          "card_1753683148866",
+          "card_1753683148866"
+        ]
+      },
+      "updatedAt": "2026-06-20T12:01:32.588Z"
+    },
+    {
+      "id": "deck-mqjeqafa",
+      "name": "40枚デッキ",
+      "deck": {
+        "core": "frontierCore",
+        "main": [
+          "lightInfantry",
+          "smallFieldGunFuel",
+          "commonArmoredCar",
+          "lifeFairy",
+          "knowledgeFairy",
+          "fieldOrder",
+          "hiddenSupply",
+          "grandMandate",
+          "mysticCapture",
+          "mysticCapture",
+          "mysticCapture",
+          "mysticCapture",
+          "fieldOrder",
+          "fieldOrder",
+          "fieldOrder",
+          "knowledgeFairy",
+          "knowledgeFairy",
+          "knowledgeFairy",
+          "lifeFairy",
+          "lifeFairy",
+          "lifeFairy",
+          "commonArmoredCar",
+          "commonArmoredCar",
+          "commonArmoredCar",
+          "smallFieldGunFuel",
+          "smallFieldGunFuel",
+          "smallFieldGunFuel",
+          "lightInfantry",
+          "lightInfantry",
+          "lightInfantry",
+          "hiddenSupply",
+          "grandMandate",
+          "card_1753662603276",
+          "card_1753662603276",
+          "card_1753662603276",
+          "card_1753662603276",
+          "grandMandate",
+          "grandMandate",
+          "hiddenSupply",
+          "hiddenSupply",
+          "peoplesReconForce",
+          "peoplesReconForce",
+          "peoplesReconForce",
+          "peoplesReconForce"
+        ],
+        "struct": [
+          "town",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell",
+          "town",
+          "town",
+          "town",
+          "grove",
+          "grove",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell",
+          "powerPlant",
+          "town",
+          "magicWell",
+          "mine"
+        ]
+      },
+      "updatedAt": "2026-06-18T13:42:20.779Z"
+    },
+    {
+      "id": "deck-mqj4qad8",
+      "name": "Guest Deck",
+      "deck": {
+        "core": "frontierCore",
+        "main": [
+          "lightInfantry",
+          "smallFieldGunFuel",
+          "commonArmoredCar",
+          "antiArmorMageTeam328",
+          "lifeFairy",
+          "knowledgeFairy",
+          "fieldOrder",
+          "precisionStrike",
+          "hiddenSupply",
+          "grandMandate"
+        ],
+        "struct": [
+          "town",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell"
+        ]
+      },
+      "updatedAt": "2026-06-18T06:39:13.148Z"
+    }
+  ],
+  "google106283491381279952050": [
+    {
+      "id": "deckmaker-mqmkad2z",
+      "name": "鉱魔ゴーレムコントロール",
+      "deck": {
+        "core": "card_1755670973607",
+        "main": [
+          "card_1753611194289",
+          "card_1753611194289",
+          "card_1753611194289",
+          "card_1753611194289",
+          "card_1753611179145",
+          "card_1753611179145",
+          "card_1753611179145",
+          "card_1753611179145",
+          "card_1753611186441",
+          "card_1753611186441",
+          "card_1753611186441",
+          "card_1753611186441",
+          "card_1753611167885",
+          "card_1753663497202",
+          "card_1753663497202",
+          "card_1753663497202",
+          "card_1753663497202",
+          "card_1753664708023",
+          "card_1753664708023",
+          "card_1753664708023",
+          "card_1753660970113",
+          "card_1753660970113",
+          "card_1753660970113",
+          "card_1753660970113",
+          "card_1753659473530",
+          "card_1753659473530",
+          "card_1753659473530",
+          "card_1753659473530",
+          "card_1753660736818",
+          "card_1753660736818",
+          "card_1753660736818",
+          "card_1753660736818",
+          "card_1753659571381",
+          "card_1753659571381",
+          "card_1753659571381",
+          "card_1753659571381",
+          "card_1753659700866",
+          "card_1753659700866",
+          "card_1753659700866",
+          "card_1753659700866"
+        ],
+        "struct": [
+          "card_1753682701261",
+          "card_1753682701261",
+          "card_1753682865389",
+          "card_1753682865389",
+          "card_1753682865389",
+          "card_1753682865389",
+          "card_1753683148866",
+          "card_1753683148866",
+          "card_1753683148866",
+          "card_1753683148866",
+          "card_1753683067735",
+          "card_1753661462969",
+          "card_1753661462969",
+          "card_1753683243290",
+          "card_1753683243290",
+          "card_1753664241159",
+          "card_1753661462969",
+          "card_1753661462969",
+          "card_1753682701261",
+          "card_1753682701261"
+        ]
+      },
+      "updatedAt": "2026-06-20T16:18:53.088Z"
+    }
+  ]
+}

@@ -1,0 +1,5934 @@
+import deckData from "./deck_data.js";
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width;
+const H = canvas.height;
+const ROWS = 4;
+const COLS = 5;
+const RESOURCE_KEYS = ["funds", "people", "nature", "ore", "fuel", "electric", "magic"];
+const CARD_TYPE_LABELS = {
+  all: "全種",
+  core: "コア",
+  unit: "ユニット",
+  tact: "指令",
+  wild: "Wild",
+  grand: "Grand",
+  struct: "施設",
+};
+const LIBRARY_TYPE_ORDER = ["all", "unit", "tact", "wild", "grand", "struct", "core"];
+const MAIN_DECK_SECTION_ORDER = ["unit", "tact", "wild", "grand"];
+const SEARCH_PRESETS = [
+  { id: "all", label: "全検索", term: "" },
+  { id: "attack", label: "攻撃", term: "攻撃" },
+  { id: "resource", label: "資源", term: "資源" },
+  { id: "draw", label: "ドロー", term: "ドロー" },
+];
+const SORT_OPTIONS = [
+  { id: "name", label: "名前" },
+  { id: "cost", label: "コスト" },
+  { id: "type", label: "種類" },
+];
+let googleClientId = "";
+let googleSignInEnabled = false;
+const ONLINE_WS_URL = (() => {
+  const params = new URLSearchParams(location.search);
+  if (params.has("ws")) return params.get("ws");
+  const protocol = location.protocol === "https:" ? "wss" : "ws";
+  const hostname = location.hostname || "127.0.0.1";
+  const host = location.port === "5173" ? `${hostname}:5174` : location.host || `${hostname}:5174`;
+  return `${protocol}://${host}/ws`;
+})();
+const RESOURCE_LABELS = {
+  funds: "資金",
+  people: "人",
+  nature: "自然",
+  ore: "鉱石",
+  fuel: "燃料",
+  electric: "電気",
+  magic: "魔法",
+};
+const KEYWORD_DEFINITIONS = {
+  armor: { label: "装甲", description: "Reduce incoming damage by the keyword value." },
+  pierce: { label: "貫通", description: "Ignore armor up to the keyword value." },
+  shock: { label: "衝撃", description: "When this unit deals attack damage, rest the damaged target." },
+  charge: { label: "帯電", description: "On attack, pay electric equal to total act cost and ignore armor." },
+  mobile: { label: "機動", description: "Once each turn, moving does not rest this unit." },
+  multiStrike: { label: "連撃", description: "Can attack this many times before resting." },
+  flying: { label: "航空", description: "Cannot be attacked or countered by non-flying units with ATK at or below the value." },
+  arc: { label: "曲射", description: "Can attack up to this many rows ahead without counterattack." },
+  legendary: { label: "伝説", description: "Only one copy should be put in a deck." },
+  alert: { label: "警戒", description: "Unrests at the end of its controller's turn." },
+  guard: { label: "守護", description: "Protects adjacent allied units from ordinary attacks." },
+  selfDestruct: { label: "自爆", description: "When destroyed, damages adjacent units by the keyword value." },
+  raid: { label: "奇襲", description: "May be summoned to the second row if that row is not enemy controlled." },
+  immobile: { label: "不動", description: "Cannot move." },
+  noAttack: { label: "不攻", description: "Cannot attack." },
+  soulPay: { label: "魂支払", description: "May exile dump cards to pay missing magic costs." },
+  cleave: { label: "巨撃", description: "Also damages units horizontally adjacent to the attack target." },
+};
+const PLAYERS = {
+  p1: { id: "p1", name: "Player 1", side: "bottom", forward: -1, summonRow: 3, coreRow: 4, directRow: 1 },
+  p2: { id: "p2", name: "Player 2", side: "top", forward: 1, summonRow: 0, coreRow: -1, directRow: 2 },
+};
+
+const DEFAULT_CORE_ID = "frontierCore";
+const DEFAULT_MAIN_DECK_IDS = [
+  "lightInfantry",
+  "smallFieldGunFuel",
+  "commonArmoredCar",
+  "antiArmorMageTeam328",
+  "lifeFairy",
+  "knowledgeFairy",
+  "fieldOrder",
+  "precisionStrike",
+  "hiddenSupply",
+  "grandMandate",
+];
+const DEFAULT_STRUCT_DECK_IDS = ["town", "grove", "mine", "refinery", "powerPlant", "magicWell"];
+const SAVED_DECK_KEY = "twcg.savedDeck.v1";
+const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
+const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
+const DECKMAKER_RESOURCE_KEYS = {
+  people: "human",
+  nature: "nature",
+  ore: "mineral",
+  funds: "gold",
+  electric: "electric",
+  fuel: "fuel",
+  magic: "magic",
+};
+const DECKMAKER_TO_RESOURCE_KEYS = {
+  human: "people",
+  people: "people",
+  nature: "nature",
+  natural: "nature",
+  food: "nature",
+  mineral: "ore",
+  ore: "ore",
+  gold: "funds",
+  funds: "funds",
+  electric: "electric",
+  fuel: "fuel",
+  magic: "magic",
+};
+const DECKMAKER_TYPE_LABELS = {
+  core: "コア",
+  unit: "ユニット",
+  tact: "タクト",
+  wild: "タクト",
+  grand: "グランド",
+  struct: "ストラクト",
+};
+
+const layout = {
+  board: { x: 320, y: 196, w: 800, h: 448 },
+  hand: { x: 284, y: 704, w: 872, h: 156 },
+  topHand: { x: 284, y: 36, w: 760, h: 112 },
+  left: { x: 34, y: 178, w: 238, h: 676 },
+  right: { x: 1168, y: 178, w: 238, h: 676 },
+};
+layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
+
+// --- Animation system ---
+const animations = [];
+let animFrameId = null;
+
+function cellCardPos(row, col) {
+  const visualRow = boardRowToVisualRow(row);
+  return {
+    x: layout.board.x + col * layout.cell.w + 18,
+    y: layout.board.y + visualRow * layout.cell.h + 34,
+    w: layout.cell.w - 36,
+    h: layout.cell.h - 48,
+  };
+}
+
+function easeInOut(t) {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+}
+
+function startAnimation(anim) {
+  anim.startTime = performance.now();
+  animations.push(anim);
+  if (!animFrameId) {
+    animFrameId = requestAnimationFrame(tickAnimations);
+  }
+}
+
+function tickAnimations() {
+  const now = performance.now();
+  let i = animations.length;
+  while (i--) {
+    if (now >= animations[i].startTime + animations[i].duration) animations.splice(i, 1);
+  }
+  render();
+  if (animations.length > 0) {
+    animFrameId = requestAnimationFrame(tickAnimations);
+  } else {
+    animFrameId = null;
+  }
+}
+
+function startMoveAnimation(card, fromRow, fromCol, toRow, toCol) {
+  const from = cellCardPos(fromRow, fromCol);
+  const to = cellCardPos(toRow, toCol);
+  startAnimation({ type: "move", card, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, w: from.w, h: from.h, duration: 280 });
+}
+
+function startAttackAnimation(card, fromRow, fromCol, toRow, toCol) {
+  const from = cellCardPos(fromRow, fromCol);
+  const to = cellCardPos(toRow, toCol);
+  startAnimation({ type: "attack", card, fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, w: from.w, h: from.h, duration: 340 });
+}
+
+function drawAnimations() {
+  const now = performance.now();
+  for (const anim of animations) {
+    const t = Math.min(1, (now - anim.startTime) / anim.duration);
+    let px, py;
+    if (anim.type === "move") {
+      const e = easeInOut(t);
+      px = anim.fromX + (anim.toX - anim.fromX) * e;
+      py = anim.fromY + (anim.toY - anim.fromY) * e;
+    } else {
+      // attack: lunge 40% toward target then return
+      const lunge = t < 0.5 ? easeInOut(t * 2) : easeInOut((1 - t) * 2);
+      px = anim.fromX + (anim.toX - anim.fromX) * 0.4 * lunge;
+      py = anim.fromY + (anim.toY - anim.fromY) * 0.4 * lunge;
+    }
+    ctx.save();
+    ctx.globalAlpha = t > 0.85 && anim.type === "move" ? 1 - (t - 0.85) / 0.15 : 1;
+    drawCard(px, py, anim.w, anim.h, anim.card, { selected: true });
+    ctx.restore();
+  }
+}
+// --- End animation system ---
+
+// --- Zone viewer state ---
+let zoneViewerState = null; // { playerId, zone: "dump"|"exile", scroll: 0 }
+// --- End zone viewer ---
+
+const abilityEffects = {
+  produceResource({ game, playerId, ability }) {
+    addResources(game.players[playerId], ability.resource, ability.amount);
+    log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
+  },
+  drawCards({ game, playerId, ability }) {
+    drawCards(game, playerId, ability.amount);
+  },
+  gainResource({ game, playerId, ability }) {
+    addResources(game.players[playerId], ability.resource, ability.amount);
+    log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
+  },
+  millCards({ game, playerId, ability }) {
+    const player = game.players[playerId];
+    const amount = ability.amount || 1;
+    for (let i = 0; i < amount; i++) {
+      const card = player.mainDeck.shift();
+      if (card) {
+        player.dump.push(card);
+        triggerAbilities(game, playerId, card, "onMill");
+      }
+    }
+    log(game, `${player.name}: デッキから${amount}枚墓地へ送る`);
+  },
+  destroyAll({ game }) {
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const unit = game.board[row][col];
+        if (unit) unit.currentHp = 0;
+      }
+    }
+    cleanupAllDestroyed();
+    for (const pid of ["p1", "p2"]) {
+      const player = game.players[pid];
+      while (player.tactZone.length) player.dump.push(player.tactZone.pop());
+      while (player.structs.length) player.dump.push(player.structs.pop());
+    }
+    log(game, "全ユニット・タクト・ストラクトを破壊");
+  },
+  searchSelfToHand({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const amount = ability.amount || 1;
+    let found = 0;
+    for (let i = 0; i < player.mainDeck.length && found < amount; i++) {
+      if (player.mainDeck[i].id === card.id) {
+        player.hand.push(player.mainDeck.splice(i, 1)[0]);
+        found++;
+        i--;
+      }
+    }
+    if (found) log(game, `${player.name}: 「${card.name}」を${found}枚手札に`);
+  },
+  destroyTargetStruct({ game, playerId }) {
+    const opponent = opponentOf(playerId);
+    const structs = game.players[opponent].structs;
+    if (!structs.length) return;
+    const removed = structs.splice(0, 1)[0];
+    game.players[opponent].dump.push(removed);
+    log(game, `${game.players[playerId].name}: 「${removed.name}」を破壊`);
+  },
+  summonSelfFromDump({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const dumpIdx = player.dump.findLastIndex((c) => c.id === card.id);
+    if (dumpIdx < 0) return;
+    player.dump.splice(dumpIdx, 1);
+    const summonRow = player.summonRow;
+    for (let col = 0; col < COLS; col++) {
+      if (!game.board[summonRow][col]) {
+        const unit = makeUnit(card.id, playerId, summonRow, col, { fromDump: true });
+        game.board[summonRow][col] = unit;
+        log(game, `${player.name}: 「${card.name}」が墓地から出た`);
+        triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
+        return;
+      }
+    }
+    player.dump.push(card);
+    log(game, `${player.name}: フィールドが満員のため「${card.name}」は場に出せない`);
+  },
+  buffTagUnitsAtk({ game, playerId, ability }) {
+    const tag = ability.tag;
+    let count = 0;
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const unit = game.board[row][col];
+        if (unit?.owner === playerId && (!tag || (unit.tags || []).includes(tag))) {
+          unit.atk += ability.amount || 1;
+          count++;
+        }
+      }
+    }
+    log(game, `${game.players[playerId].name}: ${tag ? `[${tag}]` : "味方"}ユニットATK +${ability.amount || 1}（${count}体）`);
+  },
+  buffFriendlyUnitsHp({ game, playerId, ability }) {
+    for (const row of game.board) {
+      for (const unit of row) {
+        if (unit?.owner === playerId) {
+          unit.maxHp += ability.amount;
+          unit.currentHp += ability.amount;
+        }
+      }
+    }
+    log(game, `${game.players[playerId].name}: 味方ユニットHP +${ability.amount}`);
+  },
+  buffFriendlyUnitsAtk({ game, playerId, ability }) {
+    for (const row of game.board) {
+      for (const unit of row) {
+        if (unit?.owner === playerId) unit.atk += ability.amount;
+      }
+    }
+    log(game, `${game.players[playerId].name}: 味方ユニットATK +${ability.amount}`);
+  },
+  descentEffect({ game, playerId }) {
+    if (!game.globalEffects) game.globalEffects = [];
+    game.globalEffects = game.globalEffects.filter(
+      (e) => !(e.type === "returnToHandOnDestroy" && e.playerId === playerId) &&
+             !(e.type === "healingHealOnTurnEnd" && e.playerId === playerId)
+    );
+    game.globalEffects.push({ type: "returnToHandOnDestroy", playerId });
+    game.globalEffects.push({ type: "healingHealOnTurnEnd", playerId });
+    log(game, `${game.players[playerId].name}: [降臨] 自分の全カードに「破壊時：手札に戻す」、全ユニットに「ターン終了時：治療数×2回復」を付与`);
+  },
+  searchUnitToCostHand({ game, playerId, ability }) {
+    const player = game.players[playerId];
+    const amount = ability.amount || 1;
+    const maxCost = ability.maxCost || 99;
+    const tag = ability.tag || null;
+    let found = 0;
+    for (let i = 0; i < player.mainDeck.length && found < amount; i++) {
+      const deckCard = player.mainDeck[i];
+      if (deckCard.type !== "unit") continue;
+      if (tag && !(deckCard.tags || []).includes(tag)) continue;
+      if (totalCostAmount(deckCard.cost || {}) > maxCost) continue;
+      player.hand.push(player.mainDeck.splice(i, 1)[0]);
+      found++;
+      i--;
+    }
+    if (found) log(game, `${player.name}: コスト${maxCost}以下${tag ? `[${tag}]` : ""}ユニットを${found}枚手札に`);
+  },
+  searchCardToHand({ game, playerId, ability }) {
+    const player = game.players[playerId];
+    const amount = ability.amount || 1;
+    let found = 0;
+    for (let i = 0; i < player.mainDeck.length && found < amount; i++) {
+      const deckCard = player.mainDeck[i];
+      const match = ability.cardName
+        ? (deckCard.name === ability.cardName || (deckCard.name || "").includes(ability.cardName))
+        : ability.tag
+          ? (deckCard.tags || []).includes(ability.tag)
+          : false;
+      if (match) {
+        player.hand.push(player.mainDeck.splice(i, 1)[0]);
+        found++;
+        i--;
+      }
+    }
+    if (found) log(game, `${player.name}: 「${ability.cardName || ability.tag}」を${found}枚手札に`);
+  },
+  summonSelfFromDumpMobile({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const dumpIdx = player.dump.findLastIndex((c) => c.id === card.id);
+    if (dumpIdx < 0) return;
+    player.dump.splice(dumpIdx, 1);
+    const summonRow = player.summonRow;
+    for (let col = 0; col < COLS; col++) {
+      if (!game.board[summonRow][col]) {
+        const unit = makeUnit(card.id, playerId, summonRow, col, { fromDump: true });
+        if (!unit.keywords) unit.keywords = [];
+        if (!unit.keywords.some((k) => k.id === "mobile")) unit.keywords.push({ id: "mobile" });
+        game.board[summonRow][col] = unit;
+        log(game, `${player.name}: 「${card.name}」が墓地から[機動]付きで出た`);
+        triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
+        return;
+      }
+    }
+    player.dump.push(card);
+  },
+  mysticCapture({ game, playerId, card, ability, source }) {
+    game.pendingChoice = {
+      type: "mysticCapture",
+      playerId,
+      cardName: card.name,
+      queueItem: { playerId, card, ability, source },
+      selectedHandIndexes: [],
+    };
+    game.selected = { kind: "choice", choice: "mysticCapture" };
+    game.message = "神秘捕縛: 神秘ユニットを選択してください。";
+    return "pending";
+  },
+  damageEnemyCore({ game, playerId, ability }) {
+    const opponent = opponentOf(playerId);
+    game.players[opponent].core.hp -= ability.amount;
+    log(game, `${game.players[playerId].name}: 敵コアに ${ability.amount} ダメージ`);
+    checkWinner(game);
+  },
+  damageTargetUnit({ game, target, ability }) {
+    if (!target) return;
+    target.currentHp -= ability.amount;
+    log(game, `${target.name}: ${ability.amount}ダメージ`);
+    cleanupAllDestroyed();
+  },
+  grantDestroyGain({ game, playerId, ability, target }) {
+    if (!target || target.owner !== playerId) return;
+    if (!target.abilities) target.abilities = [];
+    target.abilities.push({ trigger: "onDestroy", effect: "gainResource", resource: ability.resource, amount: ability.amount });
+    log(game, `${game.players[playerId].name}: 「${target.name}」に保険（破壊時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}）`);
+  },
+  chooseExchange({ game, card, ability }) {
+    if (!game.pendingStructPhase) return;
+    game.pendingStructPhase.pendingResourceChoice = {
+      costOptions: ability.costOptions,
+      produces: ability.produces,
+      cardName: card.name,
+    };
+    return "pending";
+  },
+};
+
+const cardCatalog = {
+  cores: {
+    frontierCore: {
+      id: "frontierCore",
+      type: "core",
+      name: "前線司令部",
+      faction: "ニュートラル",
+      flavor: "戦線を支える標準司令部。どの戦略にも適応しやすい。",
+      hp: 22,
+      initialHand: 4,
+      draw: 1,
+      handLimit: 7,
+      deckSize: "40\u301c60",
+      deckMin: 40,
+      deckMax: 60,
+      startResources: { funds: 3, people: 2, nature: 1, ore: 0, fuel: 0, electric: 0, magic: 0 },
+      income: { funds: 2, people: 1 },
+      specialRequirements: [],
+      text: "標準的なコア。毎ターン資金2・人的1を得る。",
+    },
+    tradeCityCore: {
+      id: "tradeCityCore",
+      type: "core",
+      name: "商業都市コア",
+      faction: "ニュートラル",
+      flavor: "交易と徴税で軍を動かす都市国家型コア。",
+      hp: 20,
+      initialHand: 4,
+      draw: 1,
+      handLimit: 7,
+      deckSize: "40\u301c60",
+      deckMin: 40,
+      deckMax: 60,
+      startResources: { funds: 4, people: 1, nature: 0, ore: 0, fuel: 0, electric: 0, magic: 0 },
+      income: { funds: 3 },
+      specialRequirements: ["資金コストを含むカードを4枚以上入れる"],
+      text: "資金供給に優れるがHPは低い。毎ターン資金3を得る。",
+    },
+    mobilizationCore: {
+      id: "mobilizationCore",
+      type: "core",
+      name: "動員司令部",
+      faction: "ニュートラル",
+      flavor: "人員を素早く集め、継戦能力で押し切る司令部。",
+      hp: 24,
+      initialHand: 5,
+      draw: 1,
+      handLimit: 8,
+      deckSize: "40\u301c60",
+      deckMin: 40,
+      deckMax: 60,
+      startResources: { funds: 2, people: 3, nature: 1, ore: 0, fuel: 0, electric: 0, magic: 0 },
+      income: { funds: 1, people: 2 },
+      specialRequirements: ["歩兵または純人間タグのカードを3枚以上入れる"],
+      text: "人的資源に優れる。毎ターン資金1・人的2を得る。",
+    },
+    arcaneReactorCore: {
+      id: "arcaneReactorCore",
+      type: "core",
+      name: "魔導炉心",
+      faction: "ニュートラル",
+      flavor: "魔力炉を中枢に据えた高出力だが脆いコア。",
+      hp: 18,
+      initialHand: 3,
+      draw: 2,
+      handLimit: 6,
+      deckSize: "40\u301c60",
+      deckMin: 40,
+      deckMax: 60,
+      startResources: { funds: 2, people: 1, nature: 0, ore: 0, fuel: 0, electric: 1, magic: 1 },
+      income: { funds: 1, electric: 1, magic: 1 },
+      specialRequirements: ["魔法または電気コストを含むカードを2枚以上入れる"],
+      text: "希少資源とドローに優れるが脆い。毎ターン資金1・電気1・魔法1を得る。",
+    },
+  },
+  main: {
+    lightInfantry: {
+      id: "lightInfantry",
+      type: "unit",
+      name: "軽歩兵",
+      faction: "ニュートラル",
+      tags: ["歩兵", "純人間"],
+      cost: { people: 1, funds: 1 },
+      actCost: {},
+      atk: 1,
+      hp: 2,
+      text: "もっとも安価な部類の歩兵、侮ることはできない。",
+      keywords: [{ id: "alert" }],
+      abilities: [],
+    },
+    smallFieldGunFuel: {
+      id: "smallFieldGunFuel",
+      type: "unit",
+      name: "小さな野戦砲",
+      faction: "ニュートラル",
+      tags: ["砲兵", "純人間", "機械"],
+      variant: "燃料牽引型",
+      cost: { ore: 1, funds: 1 },
+      actCost: { ore: 1, fuel: 1 },
+      atk: 1,
+      hp: 2,
+      text: "小さな野戦砲だが、砲としての機能はしっかり持ち合わせている。",
+      keywords: [{ id: "shock" }, { id: "arc", value: 1 }],
+      abilities: [],
+    },
+    commonArmoredCar: {
+      id: "commonArmoredCar",
+      type: "unit",
+      name: "ありふれた装甲車",
+      faction: "ニュートラル",
+      tags: ["機甲", "車両", "機械"],
+      cost: { ore: 1, funds: 1 },
+      actCost: { ore: 1, fuel: 1 },
+      atk: 3,
+      hp: 2,
+      text: "何処にでもあるような装甲車だが歩兵からすれば十分脅威だ",
+      keywords: [{ id: "armor", value: 1 }, { id: "mobile" }],
+      abilities: [],
+    },
+    antiArmorMageTeam328: {
+      id: "antiArmorMageTeam328",
+      type: "unit",
+      name: "328-野戦対装甲魔導士隊",
+      faction: "ユニフォール",
+      tags: ["歩兵", "純人間", "魔法"],
+      cost: { people: 2, funds: 1, nature: 1 },
+      actCost: { magic: 1 },
+      atk: 4,
+      hp: 2,
+      text: "強襲、攻撃、破壊、魔法により得られる可能性は大きい。",
+      keywords: [{ id: "raid" }, { id: "pierce", value: 1 }],
+      abilities: [],
+    },
+    peoplesReconForce: {
+      id: "peoplesReconForce",
+      type: "unit",
+      name: "人民威力偵察部隊",
+      faction: "ヘルメネアの大地",
+      tags: ["歩兵", "純人間", "魔法", "獣人"],
+      cost: { people: 2, funds: 2 },
+      actCost: { people: 1 },
+      atk: 2,
+      hp: 3,
+      text: "血を流し、人を消耗する、そして…次の作戦とその術が与えられる。",
+      keywords: [],
+      abilities: [
+        { trigger: "onDestroyEnemyUnit", effect: "drawCards", amount: 1 },
+        { trigger: "onDestroyEnemyUnit", effect: "gainResource", resource: "funds", amount: 3 },
+      ],
+    },
+    lifeFairy: {
+      id: "lifeFairy",
+      type: "unit",
+      name: "生命妖精",
+      faction: "ニュートラル",
+      tags: ["神秘", "妖精"],
+      cost: { magic: 1 },
+      actCost: {},
+      atk: 0,
+      hp: 1,
+      text: "生命の妖精は多くの命を強化する",
+      keywords: [],
+      abilities: [{ trigger: "onSummon", effect: "buffFriendlyUnitsHp", amount: 1 }],
+    },
+    knowledgeFairy: {
+      id: "knowledgeFairy",
+      type: "unit",
+      name: "知識妖精",
+      faction: "ニュートラル",
+      tags: ["神秘", "妖精"],
+      cost: { magic: 1 },
+      actCost: {},
+      atk: 0,
+      hp: 1,
+      text: "妖精でさえも知恵を貸してくれる",
+      keywords: [],
+      abilities: [{ trigger: "onSummon", effect: "drawCards", amount: 2 }],
+    },
+    militia: {
+      id: "militia",
+      type: "unit",
+      name: "民兵分隊",
+      fixture: true,
+      cost: { funds: 1, people: 1 },
+      actCost: { funds: 1 },
+      atk: 2,
+      hp: 4,
+      text: "基礎歩兵。低コストで前線を作る。",
+      abilities: [],
+    },
+    armoredCar: {
+      id: "armoredCar",
+      type: "unit",
+      name: "装甲車",
+      fixture: true,
+      cost: { funds: 2, people: 1, fuel: 1 },
+      actCost: { fuel: 1 },
+      atk: 4,
+      hp: 5,
+      text: "燃料で行動する軽装甲ユニット。",
+      keywords: [{ id: "armor", value: 1 }, { id: "mobile" }],
+      abilities: [],
+    },
+    mageBattery: {
+      id: "mageBattery",
+      type: "unit",
+      name: "魔導砲兵",
+      fixture: true,
+      tags: ["神秘", "砲兵", "魔法"],
+      cost: { funds: 2, people: 1, magic: 1 },
+      actCost: { magic: 1 },
+      atk: 5,
+      hp: 3,
+      text: "高火力だが魔法資源を要求する。",
+      keywords: [{ id: "arc", value: 2 }, { id: "cleave", value: 1 }],
+      abilities: [{ trigger: "onSummon", effect: "damageEnemyCore", amount: 1 }],
+    },
+    shockTrooper: {
+      id: "shockTrooper",
+      type: "unit",
+      name: "衝撃歩兵",
+      fixture: true,
+      cost: { funds: 2, people: 1, electric: 1 },
+      actCost: { funds: 1 },
+      atk: 3,
+      hp: 4,
+      text: "衝撃で与ダメージ時に対象をレストする。",
+      keywords: [{ id: "shock" }, { id: "pierce", value: 1 }],
+      abilities: [],
+    },
+    reconPlane: {
+      id: "reconPlane",
+      type: "unit",
+      name: "偵察機",
+      fixture: true,
+      cost: { funds: 2, fuel: 1 },
+      actCost: { fuel: 1 },
+      atk: 2,
+      hp: 3,
+      text: "航空を持つ偵察攻撃ユニット。",
+      keywords: [{ id: "flying", value: 3 }],
+      abilities: [],
+    },
+    guardian: {
+      id: "guardian",
+      type: "unit",
+      name: "戦列守備兵",
+      fixture: true,
+      cost: { funds: 2, people: 2 },
+      actCost: { funds: 1 },
+      atk: 2,
+      hp: 6,
+      text: "両隣の味方を通常攻撃から守る。",
+      keywords: [{ id: "guard" }, { id: "alert" }],
+      abilities: [],
+    },
+    raidBike: {
+      id: "raidBike",
+      type: "unit",
+      name: "奇襲バイク",
+      fixture: true,
+      cost: { funds: 1, people: 1, fuel: 1 },
+      actCost: { fuel: 1 },
+      atk: 2,
+      hp: 2,
+      text: "敵支配下でなければ第2行に出撃できる。",
+      keywords: [{ id: "raid" }, { id: "mobile" }],
+      abilities: [],
+    },
+    bombDrone: {
+      id: "bombDrone",
+      type: "unit",
+      name: "自爆ドローン",
+      fixture: true,
+      cost: { funds: 1, electric: 1 },
+      actCost: { electric: 1 },
+      atk: 1,
+      hp: 1,
+      text: "破壊時、隣接ユニットにダメージ。",
+      keywords: [{ id: "selfDestruct", value: 2 }, { id: "noAttack" }],
+      abilities: [],
+    },
+    chargedLancer: {
+      id: "chargedLancer",
+      type: "unit",
+      name: "帯電槍兵",
+      fixture: true,
+      cost: { funds: 2, people: 1, electric: 1 },
+      actCost: { funds: 1 },
+      atk: 3,
+      hp: 4,
+      text: "帯電攻撃で装甲を無視する。",
+      keywords: [{ id: "charge" }],
+      abilities: [],
+    },
+    rapidGunner: {
+      id: "rapidGunner",
+      type: "unit",
+      name: "連撃射手",
+      fixture: true,
+      cost: { funds: 2, people: 1 },
+      actCost: { funds: 1 },
+      atk: 1,
+      hp: 3,
+      text: "2回攻撃してからレストする。",
+      keywords: [{ id: "multiStrike", value: 2 }],
+      abilities: [],
+    },
+    bunker: {
+      id: "bunker",
+      type: "unit",
+      name: "掩体壕",
+      fixture: true,
+      cost: { funds: 2, ore: 1 },
+      actCost: { funds: 1 },
+      atk: 2,
+      hp: 7,
+      text: "移動できない防衛ユニット。",
+      keywords: [{ id: "immobile" }, { id: "armor", value: 2 }],
+      abilities: [],
+    },
+    soulMage: {
+      id: "soulMage",
+      type: "unit",
+      name: "魂術師",
+      fixture: true,
+      tags: ["神秘", "魔法"],
+      cost: { funds: 1, magic: 2 },
+      actCost: { magic: 1 },
+      atk: 3,
+      hp: 3,
+      text: "不足した魔法資源を墓地除外で支払える。",
+      keywords: [{ id: "soulPay" }],
+      abilities: [],
+    },
+    legendaryAce: {
+      id: "legendaryAce",
+      type: "unit",
+      name: "伝説のエース",
+      fixture: true,
+      cost: { funds: 3, people: 1, fuel: 1 },
+      actCost: { fuel: 1 },
+      atk: 5,
+      hp: 5,
+      text: "デッキに1枚しか入れられない伝説ユニット。",
+      keywords: [{ id: "legendary" }, { id: "flying", value: 4 }],
+      abilities: [],
+    },
+    fieldOrder: {
+      id: "fieldOrder",
+      type: "tact",
+      name: "野戦命令",
+      cost: { funds: 1 },
+      text: "カードを1枚引く。使用後墓地へ。",
+      abilities: [{ trigger: "onPlay", effect: "drawCards", amount: 1 }],
+    },
+    precisionStrike: {
+      id: "precisionStrike",
+      type: "tact",
+      name: "精密攻撃",
+      cost: { funds: 1, electric: 1 },
+      text: "敵ユニット1体に2ダメージ。対象を選択する。",
+      abilities: [{ trigger: "onPlay", effect: "damageTargetUnit", target: "enemyUnit", amount: 2 }],
+    },
+    mysticCapture: {
+      id: "mysticCapture",
+      type: "tact",
+      name: "神秘捕縛",
+      faction: "万神世界",
+      cost: { electric: 1 },
+      text: "手札から神秘タグを持つユニットを好きなだけ捨て、その登場時効果を発動する。追加で除外し、もう一度その効果を発動する。各カードの呼び出しコスト合計を電気で支払う。不足分は自分のコアがダメージを受ける。",
+      abilities: [{ trigger: "onPlay", effect: "mysticCapture" }],
+    },
+    hiddenSupply: {
+      id: "hiddenSupply",
+      type: "wild",
+      name: "隠匿補給",
+      cost: { funds: 2 },
+      text: "このカードを Wild Zone に裏側で配置する。補給としてカードを1枚引き、自然2と燃料1を得る。",
+      abilities: [
+        { trigger: "onPlay", effect: "drawCards", amount: 1 },
+        { trigger: "onPlay", effect: "gainResource", resource: "nature", amount: 2 },
+        { trigger: "onPlay", effect: "gainResource", resource: "fuel", amount: 1 },
+      ],
+    },
+    grandMandate: {
+      id: "grandMandate",
+      type: "grand",
+      name: "大号令",
+      cost: { funds: 4, people: 2 },
+      text: "このカードを Grand Zone に表側で配置する。味方ユニット全体のATKとHPを+1し、カードを1枚引く。",
+      abilities: [
+        { trigger: "onPlay", effect: "buffFriendlyUnitsAtk", amount: 1 },
+        { trigger: "onPlay", effect: "buffFriendlyUnitsHp", amount: 1 },
+        { trigger: "onPlay", effect: "drawCards", amount: 1 },
+      ],
+    },
+  },
+  structs: {
+    town: {
+      id: "town",
+      type: "struct",
+      name: "町",
+      cost: { funds: 1 },
+      text: "Structure Phase: 人的資源 +1",
+      abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "people", amount: 1 }],
+    },
+    grove: {
+      id: "grove",
+      type: "struct",
+      name: "資源林",
+      cost: { funds: 1 },
+      text: "Structure Phase: 自然資源 +1",
+      abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "nature", amount: 1 }],
+    },
+    mine: {
+      id: "mine",
+      type: "struct",
+      name: "鉱山",
+      cost: { funds: 1, people: 1 },
+      text: "Structure Phase: 鉱石 +1",
+      abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "ore", amount: 1 }],
+    },
+    refinery: {
+      id: "refinery",
+      type: "struct",
+      name: "精製所",
+      cost: { funds: 2, ore: 1 },
+      text: "Structure Phase: 燃料 +2",
+      abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "fuel", amount: 2 }],
+    },
+    powerPlant: {
+      id: "powerPlant",
+      type: "struct",
+      name: "発電所",
+      cost: { funds: 3, ore: 1 },
+      text: "Structure Phase: 電気 +2",
+      abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "electric", amount: 2 }],
+    },
+    magicWell: {
+      id: "magicWell",
+      type: "struct",
+      name: "魔力井戸",
+      cost: { funds: 3, nature: 2 },
+      text: "Structure Phase: 魔法 +1",
+      abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 }],
+    },
+  },
+};
+
+let nextInstanceId = 1;
+const hitRegions = [];
+const hoverRegions = [];
+const wheelRegions = [];
+let appHoveredCard = null;
+const cardImageCache = new Map();
+let onlineSocket = null;
+let onlineOpenCallbacks = [];
+let applyingRemoteState = false;
+let nextOnlineOpId = 1;
+let queuedOnlineAction = null;
+loadCustomCardsIntoCatalog();
+loadBundledDeckData();
+const app = createAppState();
+const state = createGame(app.deck.main, app.deck.struct);
+
+// Hidden input for deck builder text search
+const HIDDEN_INPUT_CSS = "position:fixed;left:-9999px;top:0;width:200px;height:24px;opacity:0;pointer-events:none;";
+
+const searchInput = document.createElement("input");
+searchInput.type = "text";
+searchInput.id = "deck-search-input";
+searchInput.name = "deck-search-input";
+searchInput.autocomplete = "off";
+searchInput.style.cssText = HIDDEN_INPUT_CSS;
+document.body.appendChild(searchInput);
+searchInput.addEventListener("input", () => {
+  app.deckBuilder.searchText = searchInput.value;
+  app.deckBuilder.libraryScroll = 0;
+  render();
+});
+searchInput.addEventListener("blur", () => {
+  app.deckBuilder.searchFocused = false;
+  render();
+});
+
+const roomCodeInput = document.createElement("input");
+roomCodeInput.type = "text";
+roomCodeInput.id = "room-code-input";
+roomCodeInput.name = "room-code-input";
+roomCodeInput.autocomplete = "off";
+roomCodeInput.style.cssText = HIDDEN_INPUT_CSS;
+document.body.appendChild(roomCodeInput);
+roomCodeInput.addEventListener("input", () => {
+  app.match.roomCode = roomCodeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  render();
+});
+roomCodeInput.addEventListener("blur", () => {
+  app.match.roomCodeFocused = false;
+  render();
+});
+
+function normalizeResourceObject(resources = {}) {
+  const normalized = emptyResources();
+  for (const [rawKey, rawAmount] of Object.entries(resources || {})) {
+    const amount = Number(rawAmount) || 0;
+    if (!amount) continue;
+    const mappedKey = rawKey === "food" ? "nature" : rawKey;
+    if (RESOURCE_KEYS.includes(mappedKey)) normalized[mappedKey] += amount;
+  }
+  return normalized;
+}
+
+function normalizeCardResources(card) {
+  if (!card || typeof card !== "object") return card;
+  card.cost = normalizeResourceObject(card.cost || {});
+  card.actCost = normalizeResourceObject(card.actCost || {});
+  if (card.type === "core") applyCoreDefaults(card);
+  if (card.startResources) card.startResources = normalizeResourceObject(card.startResources);
+  if (card.income) card.income = normalizeResourceObject(card.income);
+  for (const ability of card.abilities || []) {
+    if (ability.resource === "food") ability.resource = "nature";
+  }
+  return card;
+}
+
+function applyCoreDefaults(core) {
+  const fallback = cardCatalog?.cores?.[DEFAULT_CORE_ID] || {};
+  const hasResourceValue = (resources) => Object.values(resources || {}).some((amount) => Number(amount));
+  core.hp = Number(core.hp) || Number(fallback.hp) || 20;
+  core.initialHand = Number(core.initialHand) || Number(fallback.initialHand) || 4;
+  core.draw = Number(core.draw ?? core.drawCount ?? core.drawPerTurn) || Number(fallback.draw) || 1;
+  core.handLimit = Number(core.handLimit ?? core.maxHandSize ?? core.handMax) || Number(fallback.handLimit) || 7;
+  core.deckSize = core.deckSize || fallback.deckSize || "40\u301c60";
+  core.deckMin = Number(core.deckMin) || Number(fallback.deckMin) || 40;
+  core.deckMax = Number(core.deckMax) || Number(fallback.deckMax) || 60;
+  core.startResources = normalizeResourceObject(hasResourceValue(core.startResources) ? core.startResources : fallback.startResources || {});
+  core.income = normalizeResourceObject(hasResourceValue(core.income) ? core.income : fallback.income || {});
+  core.specialRequirements = Array.isArray(core.specialRequirements) ? core.specialRequirements : [];
+  core.flavor = core.flavor || core.text || fallback.flavor || "";
+  return core;
+}
+
+function normalizeGameResources(gameState) {
+  for (const player of Object.values(gameState?.players || {})) {
+    player.resources = normalizeResourceObject(player.resources || {});
+    normalizeCardResources(player.core);
+    for (const group of ["mainDeck", "structDeck", "hand", "structs", "tactZone", "wildZone", "grandZone", "dump", "exileZone"]) {
+      for (const card of player[group] || []) normalizeCardResources(card);
+    }
+  }
+  for (const row of gameState?.board || []) {
+    for (const unit of row || []) normalizeCardResources(unit);
+  }
+  return gameState;
+}
+
+function loadCustomCardsIntoCatalog() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_CARD_STORE_KEY);
+    if (!raw) return 0;
+    const groups = JSON.parse(raw);
+    return registerImportedCards(groups);
+  } catch {
+    return 0;
+  }
+}
+
+function loadBundledDeckData() {
+  const cards = Array.isArray(deckData?.cards) ? deckData.cards : [];
+  for (const deckmakerCard of cards) {
+    const card = fromDeckmakerCard(deckmakerCard);
+    if (!card) continue;
+    const group = catalogGroupForCard(card);
+    // Bundled cards usually don't overwrite user-customized versions already in catalog.
+    // Core cards are refreshed from Deckmaker source so corrected initialResources
+    // migrate even when an older imported copy is still stored in localStorage.
+    if (!cardCatalog[group][card.id] || (group === "cores" && deckmakerCard.initialResources)) {
+      cardCatalog[group][card.id] = card;
+    }
+  }
+}
+
+function persistCustomCards(groups) {
+  try {
+    localStorage.setItem(CUSTOM_CARD_STORE_KEY, JSON.stringify(groups));
+  } catch (e) {
+    console.warn("persistCustomCards: localStorage quota exceeded, clearing old data and retrying", e);
+    try {
+      localStorage.removeItem(CUSTOM_CARD_STORE_KEY);
+      localStorage.setItem(CUSTOM_CARD_STORE_KEY, JSON.stringify(groups));
+    } catch {
+      // give up silently — cards are still in memory for this session
+    }
+  }
+}
+
+function catalogGroupForCard(card) {
+  if (card.type === "core") return "cores";
+  if (card.type === "struct") return "structs";
+  return "main";
+}
+
+function registerImportedCards(groups = {}) {
+  let count = 0;
+  for (const group of ["cores", "main", "structs"]) {
+    for (const card of Object.values(groups[group] || {})) {
+      if (!card?.id) continue;
+      cardCatalog[group][card.id] = normalizeCardResources(card);
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function persistedCustomCardGroups() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_CARD_STORE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return {
+      cores: parsed.cores || {},
+      main: parsed.main || {},
+      structs: parsed.structs || {},
+    };
+  } catch {
+    return { cores: {}, main: {}, structs: {} };
+  }
+}
+
+function deckmakerTypeToLocal(cardOrType) {
+  const type = typeof cardOrType === "object" ? cardOrType?.type : cardOrType;
+  const value = String(type || "").trim().toLowerCase();
+  if (["core", "コア"].includes(value)) return "core";
+  if (["unit", "ユニット"].includes(value)) return "unit";
+  if (["tact", "tactic", "command", "指令", "タクト"].includes(value)) return "tact";
+  if (["wild"].includes(value)) return "wild";
+  if (["grand", "グランド"].includes(value)) return "grand";
+  if (["struct", "structure", "施設", "ストラクト"].includes(value)) return "struct";
+  if (typeof cardOrType === "object") {
+    if (cardOrType.attack != null || cardOrType.defense != null) return "unit";
+    if (Object.values(cardOrType.generates || {}).some((amount) => Number(amount))) return "struct";
+  }
+  return "tact";
+}
+
+function fromDeckmakerCosts(costs = {}) {
+  const result = emptyResources();
+  for (const [deckmakerKey, amount] of Object.entries(costs || {})) {
+    const localKey = DECKMAKER_TO_RESOURCE_KEYS[deckmakerKey] || deckmakerKey;
+    if (RESOURCE_KEYS.includes(localKey)) result[localKey] += Number(amount) || 0;
+  }
+  return Object.fromEntries(Object.entries(result).filter(([, amount]) => amount));
+}
+
+function parseDeckmakerKeywordValue(raw = "") {
+  const text = String(raw);
+  const match = text.match(/[0-9０-９①②③④⑤⑥⑦⑧⑨]+/);
+  if (!match) return undefined;
+  const token = match[0];
+  const circled = { "①": 1, "②": 2, "③": 3, "④": 4, "⑤": 5, "⑥": 6, "⑦": 7, "⑧": 8, "⑨": 9 };
+  if (circled[token]) return circled[token];
+  return Number(token.replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))) || undefined;
+}
+
+function parseDeckmakerKeywords(card) {
+  const text = `${card.description || ""}\n${(card.keywords || []).join(" ")}`;
+  const patterns = [
+    ["armor", /装甲[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["pierce", /貫通[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["shock", /衝撃/g],
+    ["charge", /帯電/g],
+    ["mobile", /機動/g],
+    ["multiStrike", /連撃[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["flying", /航空[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["arc", /曲射[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["legendary", /伝説/g],
+    ["alert", /警戒/g],
+    ["guard", /守護/g],
+    ["selfDestruct", /自爆[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["raid", /奇襲/g],
+    ["immobile", /不動/g],
+    ["noAttack", /不攻/g],
+    ["soulPay", /魂/g],
+    ["cleave", /巨撃[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+  ];
+  const keywords = [];
+  const seen = new Set();
+  for (const [id, regex] of patterns) {
+    for (const match of text.matchAll(regex)) {
+      const key = `${id}:${match[0]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const value = parseDeckmakerKeywordValue(match[0]);
+      keywords.push(value ? { id, value } : { id });
+    }
+  }
+  return keywords;
+}
+
+function parseDeckmakerAbilities(card, localType) {
+  const abilities = [];
+  const generates = fromDeckmakerCosts(card.generates || {});
+  const negEntries = Object.entries(generates).filter(([, a]) => a < 0);
+  const posEntries = Object.entries(generates).filter(([, a]) => a > 0);
+  if (negEntries.length > 1 && posEntries.length > 0) {
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "chooseExchange",
+      costOptions: negEntries.map(([resource, amount]) => ({ resource, amount: Math.abs(amount) })),
+      produces: Object.fromEntries(posEntries),
+    });
+  } else {
+    for (const [resource, amount] of Object.entries(generates)) {
+      abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource, amount });
+    }
+  }
+  const text = String(card.description || "");
+  const baseTrigger = localType === "unit" ? "onSummon" : "onPlay";
+
+  // Draw patterns: "カードをX枚引く", "デッキからX枚ドロー", "X枚ドロー"
+  const drawMatch = text.match(/(?:カードを|デッキから)([0-9０-９一二三四五六七八九]+)枚(?:引く|ドロー)/);
+  if (drawMatch) {
+    const amount = parseDeckmakerKeywordValue(drawMatch[1]) || 1;
+    abilities.push({ trigger: baseTrigger, effect: "drawCards", amount });
+  }
+
+  // Mill pattern: "デッキの上からX枚を墓地へ送る" (出撃時 or baseTrigger)
+  const millOnSummonMatch = text.match(/出撃時[：:].*?デッキの上から([0-9０-９①②③④⑤⑖⑦⑧⑨一二三四五六七八九]+)枚を墓地へ送る/s);
+  if (millOnSummonMatch) {
+    abilities.push({ trigger: "onSummon", effect: "millCards", amount: parseDeckmakerKeywordValue(millOnSummonMatch[1]) || 1 });
+  } else {
+    const millMatch = text.match(/デッキの上から([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚を墓地へ送る/);
+    if (millMatch && !/破壊された時/.test(text)) {
+      abilities.push({ trigger: baseTrigger, effect: "millCards", amount: parseDeckmakerKeywordValue(millMatch[1]) || 1 });
+    }
+  }
+
+  // On-destroy mill: "破壊された時：デッキの上からX枚を墓地へ送る"
+  const onDestroyMillMatch = text.match(/破壊された時[：:].*?デッキの上から([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚を墓地へ送る/s);
+  if (onDestroyMillMatch) {
+    abilities.push({ trigger: "onDestroy", effect: "millCards", amount: parseDeckmakerKeywordValue(onDestroyMillMatch[1]) || 1 });
+  }
+
+  // On-mill summon self: "デッキから墓地へ送られた時：このカードを場に出す"
+  if (/デッキから墓地へ送られた時[：:].*場に出す/.test(text)) {
+    abilities.push({ trigger: "onMill", effect: "summonSelfFromDump" });
+  }
+
+  // Destroy all: "場のすべてのユニット・タクト・ストラクトを破壊"
+  if (/すべてのユニット.*タクト.*ストラクトを破壊/.test(text) || /すべてのユニット.*破壊する/.test(text)) {
+    abilities.push({ trigger: baseTrigger, effect: "destroyAll" });
+  }
+
+  // Search self to hand: "デッキから「<self>」をX枚まで手札に加える"
+  const searchSelfMatch = text.match(/デッキから「(.+?)」を([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚まで手札に加える/);
+  if (searchSelfMatch && card.name) {
+    const searched = searchSelfMatch[1].trim();
+    const cardName = String(card.name).trim();
+    if (cardName === searched || cardName.startsWith(searched) || cardName.includes(searched)) {
+      abilities.push({ trigger: "onSummon", effect: "searchSelfToHand", amount: parseDeckmakerKeywordValue(searchSelfMatch[2]) || 1 });
+    }
+  }
+
+  // Destroy target enemy struct: "フィールドの相手の施設カードを1枚選び、破壊する"
+  if (/相手.*施設.*破壊/.test(text) || /フィールドの相手.*施設/.test(text)) {
+    abilities.push({ trigger: baseTrigger, effect: "destroyTargetStruct" });
+  }
+
+  // Buff tag units ATK: "X[タグ]ユニット全ては+Y/±0の修正"
+  const buffTagMatch = text.match(/\[([^\]]+)\]ユニット全ては[＋+]([0-9０-９①②③④⑤⑥⑦⑧⑨]+)\/[±＋+0０][0-9]*/);
+  if (buffTagMatch) {
+    const amount = parseDeckmakerKeywordValue(buffTagMatch[2]) || 1;
+    abilities.push({ trigger: baseTrigger, effect: "buffTagUnitsAtk", tag: buffTagMatch[1], amount });
+  }
+
+  // "「破壊された時：金③を得る」を与える" → grant onDestroy gainResource to target unit
+  const DESC_RESOURCE_MAP_LOCAL = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+  const grantDestroyGainMatch = text.match(/「破壊された時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る」を与える/);
+  if (grantDestroyGainMatch) {
+    const resource = DESC_RESOURCE_MAP_LOCAL[grantDestroyGainMatch[1]] || "funds";
+    const amount = parseDeckmakerKeywordValue(grantDestroyGainMatch[2]) || 1;
+    abilities.push({ trigger: "onPlay", effect: "grantDestroyGain", target: "friendlyUnit", resource, amount });
+  }
+
+  // Simple resource gain for non-struct tact/unit cards (exclude quoted ability grants)
+  if (localType !== "struct" && localType !== "core") {
+    const textForGain = text.replace(/「[^」]*」を与える/g, "");
+    const resourceGainPatterns = [
+      [/金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
+      [/人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
+      [/自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
+      [/鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
+      [/燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
+      [/電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
+      [/魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+    ];
+    for (const [pattern, resource] of resourceGainPatterns) {
+      const match = textForGain.match(pattern);
+      if (match) {
+        const amount = parseDeckmakerKeywordValue(match[1]) || 1;
+        abilities.push({ trigger: baseTrigger, effect: "gainResource", resource, amount });
+      }
+    }
+  }
+
+  // onDestroyEnemyUnit resource gain (structs and units): "相手ユニットを破壊するたび"
+  const destroyGainPatterns = [
+    [/相手.*?破壊.*?人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
+    [/相手.*?破壊.*?金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
+    [/相手.*?破壊.*?自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
+    [/相手.*?破壊.*?鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
+    [/相手.*?破壊.*?電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
+    [/相手.*?破壊.*?魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+  ];
+  for (const [pattern, resource] of destroyGainPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const amount = parseDeckmakerKeywordValue(match[1]) || 1;
+      abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource, amount });
+    }
+  }
+
+  // [降臨]: treat as onSummon trigger + descentEffect
+  if (/\[降臨\]/.test(text)) {
+    abilities.push({ trigger: "onSummon", effect: "descentEffect" });
+  }
+
+  // Search other card by name to hand: "デッキから「X」を1枚まで手札に加える" (not self)
+  const searchOtherMatch = text.match(/デッキから「(.+?)」を([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚まで手札に加える/);
+  if (searchOtherMatch && card.name) {
+    const searched = searchOtherMatch[1].trim();
+    const cardName = String(card.name).trim();
+    if (cardName !== searched && !cardName.startsWith(searched) && !cardName.includes(searched)) {
+      abilities.push({ trigger: baseTrigger, effect: "searchCardToHand", cardName: searched, amount: parseDeckmakerKeywordValue(searchOtherMatch[2]) || 1 });
+    }
+  }
+
+  // Search by cost limit to hand: "デッキからコスト総量X以下の[タグ]ユニットカードを手札に加える"
+  const searchCostMatch = text.match(/デッキからコスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)以下(?:の\[([^\]]+)\])?ユニット.*手札に加える/);
+  if (searchCostMatch) {
+    const maxCost = parseDeckmakerKeywordValue(searchCostMatch[1]) || 1;
+    const tag = searchCostMatch[2] || null;
+    abilities.push({ trigger: baseTrigger, effect: "searchUnitToCostHand", maxCost, tag, amount: 1 });
+  }
+
+  // onMill summonSelfFromDumpMobile: "デッキから墓地へ送られた時：…[機動]を得る"
+  if (/デッキから墓地へ送られた時[：:].*場に出す/.test(text) && /\[機動\]/.test(text)) {
+    const existingMill = abilities.findIndex((a) => a.trigger === "onMill" && a.effect === "summonSelfFromDump");
+    if (existingMill >= 0) abilities.splice(existingMill, 1);
+    abilities.push({ trigger: "onMill", effect: "summonSelfFromDumpMobile" });
+  }
+
+  return abilities;
+}
+
+function fromDeckmakerCard(card) {
+  if (!card?.id || !card?.name) return null;
+  const localType = deckmakerTypeToLocal(card);
+  const base = {
+    id: String(card.id),
+    type: localType,
+    name: String(card.name),
+    faction: card.world || "ニュートラル",
+    tags: Array.isArray(card.tags) ? card.tags.filter(Boolean) : [],
+    cost: fromDeckmakerCosts(card.costs?.play || card.cost || {}),
+    actCost: fromDeckmakerCosts(card.costs?.act || card.actCost || {}),
+    text: card.description || "",
+    flavor: card.flavorText || card.flavor || card.description || "—",
+    imageUrl: typeof card.imageUrl === "string" && !card.imageUrl.startsWith("data:") ? card.imageUrl : (card.id ? `assets/cards/${card.id}.png` : ""),
+    keywords: parseDeckmakerKeywords(card),
+    abilities: parseDeckmakerAbilities(card, localType),
+  };
+  if (localType === "unit") {
+    base.atk = Number(card.attack) || 0;
+    base.hp = Number(card.defense) || 1;
+  }
+  if (localType === "core") {
+    base.hp = Number(card.defense || card.hp) || 20;
+    base.initialHand = Number(card.initialHand) || 4;
+    base.draw = Number(card.draw ?? card.drawCount ?? card.drawPerTurn) || 1;
+    base.handLimit = Number(card.handLimit ?? card.maxHandSize ?? card.handMax) || 7;
+    base.deckSize = card.deckSize || "40\u301c60";
+    base.deckMin = Number(card.deckMin) || 40;
+    base.deckMax = Number(card.deckMax) || 60;
+    base.startResources = fromDeckmakerCosts(card.startResources || card.initialResources || {});
+    base.income = fromDeckmakerCosts(card.income || card.generates || {});
+    base.specialRequirements = Array.isArray(card.specialRequirements) ? card.specialRequirements : [];
+  }
+  return normalizeCardResources(base);
+}
+
+function importDeckmakerAllData(payload) {
+  const isDeck = payload?.mainDeckCardIds != null || payload?.structDeckCardIds != null || payload?.coreCardId != null;
+  const cards = isDeck ? [] : Array.isArray(payload?.cards) ? payload.cards : payload?.id && payload?.name ? [payload] : [];
+  if (!cards.length) return importDeckmakerDeckData(payload);
+
+  const groups = persistedCustomCardGroups();
+  let importedCards = 0;
+  for (const deckmakerCard of cards) {
+    const card = fromDeckmakerCard(deckmakerCard);
+    if (!card) continue;
+    const group = catalogGroupForCard(card);
+    groups[group][card.id] = card;
+    cardCatalog[group][card.id] = card;
+    importedCards += 1;
+  }
+  persistCustomCards(groups);
+
+  let importedDecks = 0;
+  const importedSavedDecks = [];
+  for (const deck of Array.isArray(payload?.decks) ? payload.decks : []) {
+    const result = convertDeckmakerDeck(deck);
+    if (!result.ok || !result.deck) continue;
+    importedDecks += 1;
+    importedSavedDecks.push({
+      id: `deckmaker-${Date.now().toString(36)}-${importedDecks}`,
+      name: result.name,
+      deck: result.deck,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  if (importedSavedDecks.length) {
+    app.savedDecks = [...importedSavedDecks, ...app.savedDecks.filter((entry) => !importedSavedDecks.some((deck) => deck.name === entry.name))].slice(0, 8);
+    app.deck = importedSavedDecks[0].deck;
+    app.deckName = importedSavedDecks[0].name;
+    localStorage.setItem(SAVED_DECK_KEY, JSON.stringify(currentDeckPayload()));
+    persistSavedDeckLibrary();
+  }
+  app.deckBuilder.deckScroll = 0;
+  app.deckBuilder.selectedCardId = null;
+  app.deckBuilder.message = `Deckmaker全データ読込: カード${importedCards}枚 / デッキ${importedDecks}個`;
+  return true;
+}
+
+function createAppState() {
+  const savedDeck = loadSavedDeck();
+  const savedDecks = loadSavedDeckLibrary();
+  return {
+    screen: "login",
+    auth: { provider: null, signedIn: false, name: "未ログイン", email: null },
+    deckName: savedDecks[0]?.name || "未保存デッキ",
+    savedDecks,
+    deck: {
+      core: savedDeck?.core || DEFAULT_CORE_ID,
+      main: savedDeck?.main || [...DEFAULT_MAIN_DECK_IDS],
+      struct: savedDeck?.struct || [...DEFAULT_STRUCT_DECK_IDS],
+    },
+    deckBuilder: {
+      selectedCardId: null,
+      libraryType: "all",
+      libraryScroll: 0,
+      deckScroll: 0,
+      searchPreset: "all",
+      searchText: "",
+      searchFocused: false,
+      tagFilter: "all",
+      tagScroll: 0,
+      sortBy: "name",
+      testDraw: [],
+      detailOpen: false,
+      coreDropdownOpen: false,
+      message: "カードを選んでデッキを調整できます。",
+    },
+    match: {
+      status: "offline",
+      mode: "未開始",
+      roomCode: "",
+      role: "host",
+      connection: "offline",
+      message: "オンライン対戦は未接続です。",
+      players: [],
+      selectedDeckId: null,
+    },
+    dismissedCardRevealIds: [],
+    localCardPopup: null,
+    lastFieldClick: null,
+    structDeckScroll: 0,
+  };
+}
+
+function loadSavedDeck() {
+  try {
+    const raw = localStorage.getItem(SAVED_DECK_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return normalizeDeckData(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDeckData(deck) {
+  if (!deck || !Array.isArray(deck.main) || !Array.isArray(deck.struct)) return null;
+  return {
+    core: cardCatalog.cores[deck.core] ? deck.core : DEFAULT_CORE_ID,
+    main: deck.main.filter((id) => cardCatalog.main[id] && !cardCatalog.main[id].fixture),
+    struct: deck.struct.filter((id) => cardCatalog.structs[id]),
+  };
+}
+
+function deckmakerCardLookup(type) {
+  const catalog = type === "struct" ? cardCatalog.structs : type === "core" ? cardCatalog.cores : cardCatalog.main;
+  const byId = new Map();
+  const byName = new Map();
+  for (const [id, card] of Object.entries(catalog)) {
+    if (card.fixture) continue;
+    byId.set(id, id);
+    byName.set(String(card.name || "").trim(), id);
+  }
+  return { byId, byName };
+}
+
+function resolveDeckmakerCardId(value, type) {
+  const raw = typeof value === "string" ? value : value?.id || value?.cardId || value?.name;
+  if (!raw) return null;
+  const key = String(raw).trim();
+  const lookup = deckmakerCardLookup(type);
+  return lookup.byId.get(key) || lookup.byName.get(key) || null;
+}
+
+function extractDeckmakerDeck(payload) {
+  if (!payload) return null;
+  if (payload.deckData) return extractDeckmakerDeck(payload.deckData);
+  if (Array.isArray(payload.decks)) return payload.decks[0] || null;
+  if (payload.currentDeck) return payload.currentDeck;
+  if (payload.coreCardId || payload.mainDeckCardIds || payload.structDeckCardIds) return payload;
+  if (payload.deck) return extractDeckmakerDeck(payload.deck);
+  return null;
+}
+
+function convertDeckmakerDeck(payload) {
+  const deck = extractDeckmakerDeck(payload);
+  if (!deck) return { ok: false, message: "DeckmakerのデッキJSONを見つけられませんでした。" };
+
+  const coreSource = deck.coreCardId || deck.core || deck.coreId;
+  const mainSource = deck.mainDeckCardIds || deck.main || deck.mainDeck || [];
+  const structSource = deck.structDeckCardIds || deck.struct || deck.structDeck || [];
+  const main = Array.isArray(mainSource) ? mainSource.map((item) => resolveDeckmakerCardId(item, "main")).filter(Boolean) : [];
+  const struct = Array.isArray(structSource) ? structSource.map((item) => resolveDeckmakerCardId(item, "struct")).filter(Boolean) : [];
+  const core = resolveDeckmakerCardId(coreSource, "core") || DEFAULT_CORE_ID;
+
+  const missingMain = Array.isArray(mainSource) ? mainSource.length - main.length : 0;
+  const missingStruct = Array.isArray(structSource) ? structSource.length - struct.length : 0;
+  return {
+    ok: true,
+    name: deck.name || deck.deckName || "Deckmaker読込デッキ",
+    deck: normalizeDeckData({ core, main, struct }),
+    missingMain,
+    missingStruct,
+  };
+}
+
+function importDeckmakerDeckData(payload) {
+  const result = convertDeckmakerDeck(payload);
+  if (!result.ok || !result.deck) {
+    app.deckBuilder.message = result.message || "Deckmakerデッキを読み込めませんでした。";
+    return false;
+  }
+  app.deck = result.deck;
+  app.deckName = result.name;
+  app.deckBuilder.deckScroll = 0;
+  app.deckBuilder.selectedCardId = null;
+
+  const newEntry = {
+    id: `deckmaker-${Date.now().toString(36)}`,
+    name: result.name,
+    deck: result.deck,
+    updatedAt: new Date().toISOString(),
+  };
+  app.savedDecks = [newEntry, ...app.savedDecks.filter((d) => d.name !== result.name)].slice(0, 8);
+  persistSavedDeckLibrary();
+
+  app.deckBuilder.message =
+    `Deckmakerから "${app.deckName}" を読込・保存: メイン${app.deck.main.length}枚 / 施設${app.deck.struct.length}枚` +
+    (result.missingMain || result.missingStruct ? `（未登録: メイン${result.missingMain} / 施設${result.missingStruct}）` : "");
+  localStorage.setItem(SAVED_DECK_KEY, JSON.stringify(currentDeckPayload()));
+  return true;
+}
+
+function importDeckmakerDeckFile() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json,application/json";
+  input.onchange = () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const payload = JSON.parse(String(reader.result || ""));
+        importDeckmakerAllData(payload);
+      } catch (e) {
+        console.error("Deckmaker import error:", e);
+        app.deckBuilder.message = `読込エラー: ${e.message || "JSONの解析に失敗しました。"}`;
+      }
+      render();
+    };
+    reader.readAsText(file, "utf-8");
+  };
+  input.click();
+}
+
+function safeDeckmakerId(card) {
+  return String(card.id || card.name || "card")
+    .trim()
+    .replace(/[^A-Za-z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 80);
+}
+
+function toDeckmakerCosts(cost = {}) {
+  const mapped = {};
+  const unsupported = [];
+  for (const [key, amount] of Object.entries(cost || {})) {
+    if (!amount) continue;
+    const deckmakerKey = DECKMAKER_RESOURCE_KEYS[key];
+    if (deckmakerKey) mapped[deckmakerKey] = (mapped[deckmakerKey] || 0) + amount;
+    else unsupported.push(`${RESOURCE_LABELS[key] || key}${amount}`);
+  }
+  return { mapped, unsupported };
+}
+
+function toDeckmakerCard(card) {
+  const play = toDeckmakerCosts(card.cost || {});
+  const act = toDeckmakerCosts(card.actCost || {});
+  const keywordText = keywordLabels(card).join(" / ");
+  const ability = abilityText(card);
+  const notes = [];
+  if (card.type === "wild") notes.push("元種別: Wild");
+  if (play.unsupported.length) notes.push(`未対応プレイコスト: ${play.unsupported.join(" ")}`);
+  if (act.unsupported.length) notes.push(`未対応アクトコスト: ${act.unsupported.join(" ")}`);
+  if (keywordText) notes.push(`キーワード: ${keywordText}`);
+  if (ability) notes.push(`処理: ${ability}`);
+  const description = [card.text || "", ...notes].filter(Boolean).join("\n");
+  return {
+    id: safeDeckmakerId(card),
+    name: card.name,
+    type: DECKMAKER_TYPE_LABELS[card.type] || "タクト",
+    rarity: hasKeyword(card, "legendary") ? "伝説" : "通常",
+    world: card.faction || "ニュートラル",
+    tags: tagLabels(card),
+    roles: [],
+    costs: {
+      play: play.mapped,
+      act: act.mapped,
+      choice: [],
+      choiceAct: [],
+    },
+    attack: card.type === "unit" ? card.atk || 0 : 0,
+    defense: card.type === "unit" ? card.hp || card.maxHp || 0 : 0,
+    description,
+    flavorText: card.flavor || "",
+    imageUrl: cardImageSource(card) || "",
+  };
+}
+
+function currentDeckToDeckmaker() {
+  return {
+    id: `twcg-${Date.now().toString(36)}`,
+    name: app.deckName || "TWCG Export Deck",
+    description: "Threads World Card Game からDeckmaker形式で出力",
+    worlds: [],
+    coreCardId: safeDeckmakerId(cardCatalog.cores[app.deck.core] || { id: app.deck.core }),
+    mainDeckCardIds: app.deck.main.map((id) => safeDeckmakerId(cardCatalog.main[id] || { id })),
+    structDeckCardIds: app.deck.struct.map((id) => safeDeckmakerId(cardCatalog.structs[id] || { id })),
+  };
+}
+
+function deckmakerAllDataPayload() {
+  const cards = [
+    ...Object.values(cardCatalog.cores),
+    ...Object.values(cardCatalog.main).filter((card) => !card.fixture),
+    ...Object.values(cardCatalog.structs),
+  ].map(toDeckmakerCard);
+  const worlds = [...new Set(cards.map((card) => card.world || "ニュートラル"))].map((name) => ({ id: safeDeckmakerId({ id: name }), name, description: "" }));
+  return { cards, decks: [currentDeckToDeckmaker()], worlds };
+}
+
+function downloadJsonFile(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportDeckmakerAllData() {
+  const payload = deckmakerAllDataPayload();
+  downloadJsonFile(payload, "twcg_deckmaker_data.json");
+  app.deckBuilder.message = `Deckmaker用JSONを出力しました。カード${payload.cards.length}枚 / デッキ${payload.decks.length}個`;
+}
+
+function currentDeckPayload() {
+  return {
+    core: app.deck.core,
+    main: [...app.deck.main],
+    struct: [...app.deck.struct],
+  };
+}
+
+function loadSavedDeckLibrary() {
+  try {
+    const raw = localStorage.getItem(SAVED_DECK_LIBRARY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => ({ ...entry, deck: normalizeDeckData(entry.deck) }))
+      .filter((entry) => entry.id && entry.name && entry.deck)
+      .slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedDeckLibrary() {
+  localStorage.setItem(SAVED_DECK_LIBRARY_KEY, JSON.stringify(app.savedDecks));
+}
+
+function deckServerUserKey() {
+  if (!app.auth?.signedIn) return "";
+  if (app.auth.sub) return `google:${app.auth.sub}`;
+  if (app.auth.email) return `email:${app.auth.email}`;
+  return `${app.auth.provider || "guest"}:${app.auth.name || "guest"}`;
+}
+
+async function syncDecksFromServer() {
+  const userKey = deckServerUserKey();
+  if (!userKey) return false;
+  try {
+    const response = await fetch(`/api/decks?user=${encodeURIComponent(userKey)}`);
+    if (!response.ok) return false;
+    const payload = await response.json();
+    const decks = (payload.decks || []).map((entry) => ({ ...entry, deck: normalizeDeckData(entry.deck) })).filter((entry) => entry.deck);
+    if (decks.length) {
+      app.savedDecks = decks;
+      persistSavedDeckLibrary();
+      app.deckBuilder.message = "サーバー保存デッキを読み込みました。";
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function persistDecksToServer() {
+  const userKey = deckServerUserKey();
+  if (!userKey) return false;
+  try {
+    const response = await fetch(`/api/decks?user=${encodeURIComponent(userKey)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decks: app.savedDecks }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function saveDeck(name) {
+  const deckName = typeof name === "string" ? name.trim() : prompt("デッキ名", app.deckName || "新規デッキ")?.trim();
+  if (!deckName) {
+    app.deckBuilder.message = "デッキ保存をキャンセルしました。";
+    return false;
+  }
+  app.deckName = deckName;
+  const payload = currentDeckPayload();
+  localStorage.setItem(SAVED_DECK_KEY, JSON.stringify(payload));
+  const existing = app.savedDecks.find((entry) => entry.name === deckName);
+  if (existing) {
+    existing.deck = payload;
+    existing.updatedAt = new Date().toISOString();
+    app.match.selectedDeckId = existing.id;
+  } else {
+    const entry = {
+      id: `deck-${Date.now().toString(36)}`,
+      name: deckName,
+      deck: payload,
+      updatedAt: new Date().toISOString(),
+    };
+    app.savedDecks.unshift(entry);
+    app.match.selectedDeckId = entry.id;
+    app.savedDecks = app.savedDecks.slice(0, 8);
+  }
+  persistSavedDeckLibrary();
+  app.deckBuilder.message = `${deckName} を保存しました。`;
+  persistDecksToServer().then((ok) => {
+    app.deckBuilder.message = ok ? `${deckName} をサーバーにも保存しました。` : `${deckName} をブラウザに保存しました。サーバー保存は未同期です。`;
+    render();
+  });
+  return true;
+}
+
+function loadNamedDeck(deckId) {
+  const entry = app.savedDecks.find((item) => item.id === deckId);
+  if (!entry) return false;
+  const deck = normalizeDeckData(entry.deck);
+  if (!deck) return false;
+  app.deck = deck;
+  app.deckName = entry.name;
+  localStorage.setItem(SAVED_DECK_KEY, JSON.stringify(deck));
+  app.deckBuilder.deckScroll = 0;
+  app.deckBuilder.message = `${entry.name} を読み込みました。`;
+  return true;
+}
+
+function selectMatchDeck(deckId) {
+  const loaded = loadNamedDeck(deckId);
+  if (!loaded) {
+    app.match.message = "保存済みデッキを読み込めませんでした。";
+    return false;
+  }
+  app.match.selectedDeckId = deckId;
+  app.match.message = `${app.deckName} を使用デッキに選択しました。`;
+  return true;
+}
+
+async function loadServerConfig() {
+  try {
+    const response = await fetch("/config");
+    if (!response.ok) return;
+    const config = await response.json();
+    googleClientId = config.googleClientId || "";
+    googleSignInEnabled = Boolean(config.googleSignInEnabled);
+    render();
+  } catch {
+    googleSignInEnabled = false;
+  }
+}
+
+let googleInitialized = false;
+function signInWithGoogle() {
+  if (googleSignInEnabled && googleClientId && window.google?.accounts?.id) {
+    if (!googleInitialized) {
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: handleGoogleCredential,
+      });
+      googleInitialized = true;
+    }
+    window.google.accounts.id.prompt();
+    return;
+  }
+  app.auth = {
+    provider: null,
+    signedIn: false,
+    name: "未ログイン",
+    email: null,
+    message: "Googleログインにはサーバー環境変数 GOOGLE_CLIENT_ID の設定が必要です。",
+  };
+  render();
+}
+
+async function handleGoogleCredential(response) {
+  try {
+    const verified = await verifyGoogleCredential(response.credential);
+    if (!verified.ok) {
+      app.auth = { ...app.auth, message: verified.message || "Googleログインに失敗しました。" };
+      render();
+      return;
+    }
+    app.auth = verified.user;
+    app.screen = "home";
+    await syncDecksFromServer();
+  } catch {
+    app.auth = { ...app.auth, message: "Googleログイン検証に失敗しました。" };
+  }
+  render();
+}
+
+async function verifyGoogleCredential(credential) {
+  const serverResult = await fetch("/api/auth/google", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ credential }),
+  });
+  const payload = await serverResult.json();
+  if (serverResult.ok && payload.ok) return payload;
+  return { ok: false, message: payload.message || "Google IDトークンを検証できませんでした。" };
+}
+
+function parseJwtPayload(token) {
+  try {
+    const base64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(decodeURIComponent(escape(atob(base64))));
+  } catch {
+    return null;
+  }
+}
+
+function signInWithGoogleDemo() {
+  app.auth = { provider: "google", signedIn: true, name: "Google Player", email: "player@example.com", demo: true };
+  app.screen = "home";
+  syncDecksFromServer();
+}
+
+function signInAsGuest() {
+  app.auth = { provider: "guest", signedIn: true, name: "Guest Player", email: null };
+  app.screen = "home";
+  syncDecksFromServer();
+}
+
+function signOut() {
+  app.auth = { provider: null, signedIn: false, name: "未ログイン", email: null };
+  app.screen = "login";
+}
+
+function openDeckBuilder() {
+  app.screen = "deckBuilder";
+  app.deckBuilder.message = "カードを選んでデッキを調整できます。";
+}
+
+function openMatchLobby() {
+  app.screen = "matchLobby";
+}
+
+function resetMatchGame(p2Deck) {
+  const d2 = p2Deck || app.deck;
+  Object.assign(state, createGame(
+    app.deck.main, app.deck.struct, app.deck.core,
+    {},
+    d2.main, d2.struct, d2.core,
+  ));
+  nextInstanceId = 1;
+  queuedOnlineAction = null;
+  app.match.pendingOpId = null;
+}
+
+function startLocalMatch() {
+  const selectedDeckId = app.match.selectedDeckId;
+  resetMatchGame();
+  app.match = { status: "local", mode: "ローカル対戦", roomCode: "", role: "host", connection: "offline", message: "同じブラウザ内で対戦中です。", players: [], selectedDeckId };
+  app.screen = "game";
+}
+
+function createRoomMatch() {
+  if (!prepareSelectedDeckForMatch()) return;
+  const roomCode = makeRoomCode();
+  const hostDeck = normalizeDeckData(currentDeckPayload());
+  const selectedDeckId = app.match.selectedDeckId || null;
+  app.match = {
+    status: "connecting",
+    mode: "??????????",
+    roomCode,
+    role: "host",
+    connection: "connecting",
+    message: "??????????????????",
+    players: [],
+    selectedDeckId,
+    hostDeck,
+  };
+  app.screen = "matchLobby";
+  connectOnline(() =>
+    sendOnline({
+      type: "create",
+      roomCode,
+      playerName: app.auth.name,
+      deck: hostDeck || app.deck,
+    }),
+  );
+}
+
+function joinRoomMatch() {
+  const requestedCode = (app.match.roomCode || "").trim().toUpperCase();
+  if (!requestedCode) {
+    app.match.message = "????????????????????????????";
+    app.match.roomCodeFocused = true;
+    roomCodeInput.value = "";
+    setTimeout(() => roomCodeInput.focus(), 0);
+    render();
+    return;
+  }
+  if (!prepareSelectedDeckForMatch()) return;
+  const guestDeck = normalizeDeckData(currentDeckPayload());
+  const selectedDeckId = app.match.selectedDeckId || null;
+  app.match = {
+    status: "connecting",
+    mode: "??????????",
+    roomCode: requestedCode,
+    role: "guest",
+    connection: "connecting",
+    message: "??????????????????",
+    players: [],
+    selectedDeckId,
+    guestDeck,
+  };
+  app.screen = "matchLobby";
+  connectOnline(() =>
+    sendOnline({
+      type: "join",
+      roomCode: requestedCode,
+      playerName: app.auth.name,
+      deck: guestDeck || app.deck,
+    }),
+  );
+}
+
+function makeRoomCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+async function copyRoomCode() {
+  const code = app.match.roomCode;
+  if (!code) {
+    app.match.message = "コピーできるルームコードがありません。";
+    return false;
+  }
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+    await navigator.clipboard.writeText(code);
+    app.match.message = `ルームコード ${code} をコピーしました。`;
+    return true;
+  } catch {
+    const copied = copyTextLegacy(code);
+    if (!copied) {
+      try {
+        window.prompt("ルームコードをコピーしてください", code);
+      } catch {
+        // Some embedded browser test surfaces disable prompt(); the message still exposes the code.
+      }
+    }
+    app.match.message = copied ? `ルームコード ${code} をコピーしました。` : `ルームコード: ${code}`;
+    return copied;
+  }
+}
+
+function copyTextLegacy(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.appendChild(area);
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  document.body.removeChild(area);
+  return copied;
+}
+
+function connectOnline(onOpen) {
+  if (!window.WebSocket) {
+    app.match.connection = "unsupported";
+    app.match.message = "このブラウザはWebSocketに対応していません。";
+    return;
+  }
+  if (onlineSocket?.readyState === WebSocket.OPEN) {
+    onOpen?.();
+    return;
+  }
+  if (onOpen) onlineOpenCallbacks.push(onOpen);
+  if (onlineSocket?.readyState === WebSocket.CONNECTING) return;
+
+  onlineSocket = new WebSocket(ONLINE_WS_URL);
+  onlineSocket.addEventListener("open", () => {
+    app.match.connection = "connected";
+    app.match.message = "オンラインサーバーに接続しました。";
+    const callbacks = onlineOpenCallbacks;
+    onlineOpenCallbacks = [];
+    callbacks.forEach((callback) => callback());
+    render();
+  });
+  onlineSocket.addEventListener("message", (event) => {
+    try {
+      handleOnlineMessage(JSON.parse(event.data));
+    } catch {
+      app.match.message = "オンラインメッセージの解析に失敗しました。";
+    }
+    render();
+  });
+  onlineSocket.addEventListener("close", () => {
+    if (app.match.status === "online" || app.match.status === "connecting") {
+      app.match.connection = "disconnected";
+      app.match.message = "オンラインサーバーから切断されました。";
+    }
+    onlineSocket = null;
+    onlineOpenCallbacks = [];
+    render();
+  });
+  onlineSocket.addEventListener("error", () => {
+    app.match.connection = "error";
+    app.match.message = `オンラインサーバーに接続できません。${ONLINE_WS_URL} を確認してください。`;
+    render();
+  });
+}
+
+function sendOnline(payload) {
+  if (onlineSocket?.readyState !== WebSocket.OPEN) {
+    app.match.message = "オンラインサーバーへ未接続です。";
+    return false;
+  }
+  const str = JSON.stringify(payload);
+  const byteLen = new TextEncoder().encode(str).byteLength;
+  console.log("[sendOnline]", payload.type, payload.reason || "-", "strLen=", str.length, "byteLen=", byteLen);
+  onlineSocket.send(str);
+  return true;
+}
+
+function sendOnlineStateSnapshot(reason = "action", opId = null) {
+  return sendOnline({
+    type: "state",
+    roomCode: app.match.roomCode,
+    reason,
+    opId,
+    state: serializeGameState(),
+  });
+}
+
+function requestOnlineStateSync(reason = "manual") {
+  if (app.match.status !== "online" || !app.match.roomCode) return false;
+  return sendOnline({ type: "syncRequest", roomCode: app.match.roomCode, reason });
+}
+
+setInterval(() => {
+  if (app.screen !== "game" || app.match.status !== "online") return;
+  requestOnlineStateSync("poll");
+}, 2500);
+
+function handleOnlineMessage(message) {
+  if (message.type === "room") {
+    app.match.status = "online";
+    app.match.mode = message.role === "host" ? "????????" : "????????";
+    app.match.roomCode = message.roomCode;
+    app.match.role = message.role;
+    app.match.connection = "connected";
+    app.match.players = message.players || [];
+    syncMatchDecksFromPlayers(app.match.players);
+    app.match.message = message.message || "???????????";
+    if (message.state) {
+      if (message.players) app.match.players = message.players;
+      syncMatchDecksFromPlayers(app.match.players);
+      if (shouldApplyOnlineState(message.version)) {
+        applyRemoteGameState(message.state);
+        markOnlineStateApplied(message.version);
+        applyOnlinePlayerNames();
+        app.screen = "game";
+        app.match.mode = "???????";
+      }
+      render();
+    }
+    return;
+  }
+  if (message.type === "presence") {
+    app.match.players = message.players || app.match.players;
+    syncMatchDecksFromPlayers(app.match.players);
+    app.match.message = app.match.players.length >= 2 ? "????????????" : "????????????";
+    if (app.screen === "game") applyOnlinePlayerNames();
+    render();
+    return;
+  }
+  if (message.type === "start") {
+    if (message.players) app.match.players = message.players;
+    syncMatchDecksFromPlayers(app.match.players);
+    if (!shouldApplyOnlineState(message.version, message.reason === "syncRequest")) return;
+    applyRemoteGameState(message.state);
+    markOnlineStateApplied(message.version);
+    applyOnlinePlayerNames();
+    app.match.status = "online";
+    app.match.mode = "???????";
+    app.screen = "game";
+    render();
+    return;
+  }
+  if (message.type === "state") {
+    app.match.lastStateMessage = { reason: message.reason || "sync", version: message.version || 0, activePlayer: message.state?.activePlayer, turn: message.state?.turn };
+    if (message.players) {
+      app.match.players = message.players;
+      syncMatchDecksFromPlayers(app.match.players);
+    }
+    // Clear queued action before version check: a syncRequest poll can advance lastStateVersion
+    // to the same version as the action echo, causing the echo to fail shouldApplyOnlineState.
+    if (message.opId && queuedOnlineAction?.opId === message.opId) {
+      if (queuedOnlineAction.localPopup) app.localCardPopup = queuedOnlineAction.localPopup;
+      queuedOnlineAction = null;
+      app.match.pendingOpId = null;
+    }
+    if (!shouldApplyOnlineState(message.version, message.reason === "syncRequest")) {
+      render();
+      return;
+    }
+    applyRemoteGameState(message.state);
+    markOnlineStateApplied(message.version);
+    applyOnlinePlayerNames();
+    render();
+    return;
+  }
+  if (message.type === "error") {
+    app.match.message = message.message || "????????????????";
+  }
+}
+
+function shouldApplyOnlineState(version, allowEqual = false) {
+  if (!Number.isFinite(Number(version)) || Number(version) <= 0) return true;
+  const current = Number(app.match.lastStateVersion) || 0;
+  return allowEqual ? Number(version) >= current : Number(version) > current;
+}
+
+function markOnlineStateApplied(version) {
+  if (!Number.isFinite(Number(version)) || Number(version) <= 0) return;
+  app.match.lastStateVersion = Number(version);
+}
+
+
+function syncMatchDecksFromPlayers(players = app.match.players) {
+  if (!Array.isArray(players)) return;
+  const host = players.find((player) => player.role === "host");
+  const guest = players.find((player) => player.role === "guest");
+  const hostDeck = normalizeDeckData(host?.deck);
+  const guestDeck = normalizeDeckData(guest?.deck);
+  if (hostDeck) app.match.hostDeck = hostDeck;
+  if (guestDeck) app.match.guestDeck = guestDeck;
+}
+
+function startMatchFromLobby() {
+  if (!prepareSelectedDeckForMatch()) return;
+  if (app.match.status === "online" || app.match.status === "connecting") {
+    if ((app.match.players || []).length < 2) {
+      app.match.message = "対戦相手が接続するまで開始できません。";
+      return;
+    }
+    startOnlineMatch();
+    return;
+  }
+  startLocalMatch();
+}
+
+function prepareSelectedDeckForMatch() {
+  if (!app.match.selectedDeckId) {
+    const deck = normalizeDeckData(currentDeckPayload());
+    if (!deck) {
+      app.match.message = "????????????????????????????????????";
+      return false;
+    }
+    app.deck = deck;
+    app.deckName = app.deckName || "??????";
+    app.match.selectedDeckId = null;
+    app.match.message = String(app.deckName) + " ????????????????";
+    return true;
+  }
+
+  const selectedId = app.match.selectedDeckId;
+  if (!selectedId || !selectMatchDeck(selectedId)) {
+    const deck = normalizeDeckData(currentDeckPayload());
+    if (!deck) {
+      app.match.message = "??????????????????????";
+      return false;
+    }
+    app.deck = deck;
+    app.match.selectedDeckId = null;
+    app.match.message = String(app.deckName) + " ????????????????";
+    return true;
+  }
+  return true;
+}
+
+function startOnlineMatch() {
+  syncMatchDecksFromPlayers();
+  const hostDeck = normalizeDeckData(app.match.hostDeck || currentDeckPayload());
+  const guestDeck = normalizeDeckData(app.match.guestDeck);
+
+  // Require both players to have published decks before starting an online match.
+  if (!hostDeck || !guestDeck) {
+    app.match.message = "対戦相手のデッキが揃うまで開始できません。";
+    return;
+  }
+
+  if (hostDeck) app.deck = hostDeck;
+  resetMatchGame(guestDeck || null);
+  applyOnlinePlayerNames();
+  const snapshot = serializeGameState();
+  if (!sendOnline({
+    type: "start",
+    roomCode: app.match.roomCode,
+    state: snapshot,
+  })) return;
+  applyRemoteGameState(snapshot);
+  app.match.status = "online";
+  app.match.mode = "???????";
+  app.match.message = "???????????????";
+  app.screen = "game";
+}
+
+function stripImageUrls(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(stripImageUrls);
+  const result = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === "imageUrl" || k === "image") result[k] = "";
+    else result[k] = stripImageUrls(v);
+  }
+  return result;
+}
+
+function serializeGameState() {
+  return stripImageUrls(JSON.parse(JSON.stringify(state)));
+}
+
+function applyRemoteGameState(remoteState) {
+  if (!remoteState) return;
+  applyingRemoteState = true;
+  try {
+    Object.assign(state, normalizeGameResources(JSON.parse(JSON.stringify(remoteState))));
+    nextInstanceId = Math.max(nextInstanceId, highestInstanceId(state) + 1);
+  } finally {
+    applyingRemoteState = false;
+  }
+}
+
+function applyOnlinePlayerNames(targetState = state, players = app.match.players) {
+  if (!targetState?.players || !Array.isArray(players)) return;
+  const host = players.find((player) => player.role === "host");
+  const guest = players.find((player) => player.role === "guest");
+  if (host?.name) targetState.players.p1.name = host.name;
+  if (guest?.name) targetState.players.p2.name = guest.name;
+}
+
+function highestInstanceId(value) {
+  if (!value || typeof value !== "object") return 0;
+  let max = Number(value.instanceId) || 0;
+  if (Array.isArray(value)) {
+    for (const item of value) max = Math.max(max, highestInstanceId(item));
+    return max;
+  }
+  for (const item of Object.values(value)) max = Math.max(max, highestInstanceId(item));
+  return max;
+}
+
+function broadcastOnlineState(reason = "action", senderPlayerId = state.activePlayer) {
+  if (applyingRemoteState || app.screen !== "game" || app.match.status !== "online") return false;
+  // Only the side that performed the action sends state, preventing stale overwrites.
+  if (controlledPlayerId() !== senderPlayerId) return false;
+  return sendOnlineStateSnapshot(reason);
+}
+
+function syncOnlineAction(reason, playerId = state.activePlayer) {
+  if (applyingRemoteState) { console.warn("[sync] blocked: applyingRemoteState", reason); return false; }
+  if (app.screen !== "game") { console.warn("[sync] blocked: screen=", app.screen, reason); return false; }
+  if (app.match.status !== "online") { console.warn("[sync] blocked: status=", app.match.status, reason); return false; }
+  if (controlledPlayerId() !== playerId) { console.warn("[sync] blocked: controlled=", controlledPlayerId(), "playerId=", playerId, reason); return false; }
+  const opId = `${app.match.role || "local"}-${Date.now().toString(36)}-${nextOnlineOpId++}`;
+  queuedOnlineAction = { opId, reason, playerId };
+  app.match.pendingOpId = opId;
+  const sent = sendOnlineStateSnapshot(reason, opId);
+  if (!sent) console.warn("[sync] sendOnline failed", reason, opId);
+  else console.log("[sync] sent", reason, opId);
+  return sent;
+}
+
+function attachPendingLocalPopup(playerId, card, source) {
+  if (!queuedOnlineAction || !card) return;
+  queuedOnlineAction.localPopup = buildCardRevealPayload(playerId, card, source, `local-${queuedOnlineAction.opId}`);
+}
+
+function addDeckCard(cardId) {
+  const card = cardCatalog.main[cardId];
+  if (!card || card.fixture) return;
+  const currentCount = app.deck.main.filter((id) => id === cardId).length;
+  const maxCopies = hasKeyword(card, "legendary") ? 1 : 4;
+  if (currentCount >= maxCopies) {
+    app.deckBuilder.message = `${card.name} は ${maxCopies}枚までです。`;
+    return;
+  }
+  app.deck.main.push(cardId);
+  app.deckBuilder.selectedCardId = cardId;
+  app.deckBuilder.message = `${card.name} をメインデッキに追加しました。`;
+}
+
+function removeDeckCard(index) {
+  const [cardId] = app.deck.main.splice(index, 1);
+  const card = cardCatalog.main[cardId];
+  app.deckBuilder.message = `${card?.name || "カード"} をメインデッキから外しました。`;
+}
+
+function removeDeckCardById(cardId) {
+  const index = app.deck.main.lastIndexOf(cardId);
+  if (index >= 0) removeDeckCard(index);
+}
+
+function addStructDeckCard(cardId) {
+  const card = cardCatalog.structs[cardId];
+  if (!card) return;
+  app.deck.struct.push(cardId);
+  app.deckBuilder.selectedCardId = cardId;
+  app.deckBuilder.message = `${card.name} をストラクトデッキに追加しました。`;
+}
+
+function removeStructDeckCard(index) {
+  const [cardId] = app.deck.struct.splice(index, 1);
+  const card = cardCatalog.structs[cardId];
+  app.deckBuilder.message = `${card?.name || "カード"} をストラクトデッキから外しました。`;
+}
+
+function removeStructDeckCardById(cardId) {
+  const index = app.deck.struct.lastIndexOf(cardId);
+  if (index >= 0) removeStructDeckCard(index);
+}
+
+function setDeckBuilderLibrary(type) {
+  if (!LIBRARY_TYPE_ORDER.includes(type)) return;
+  app.deckBuilder.libraryType = type;
+  app.deckBuilder.libraryScroll = 0;
+  app.deckBuilder.message = `${CARD_TYPE_LABELS[type]}カードを表示しています。`;
+}
+
+function setDeckBuilderSearchPreset(presetId) {
+  if (!SEARCH_PRESETS.some((preset) => preset.id === presetId)) return;
+  app.deckBuilder.searchPreset = presetId;
+  app.deckBuilder.libraryScroll = 0;
+  app.deckBuilder.message = `検索プリセット: ${SEARCH_PRESETS.find((preset) => preset.id === presetId).label}`;
+}
+
+function setDeckBuilderTagFilter(tag) {
+  app.deckBuilder.tagFilter = tag;
+  app.deckBuilder.libraryScroll = 0;
+  app.deckBuilder.message = tag === "all" ? "タグフィルタを解除しました。" : `タグ: ${tag}`;
+}
+
+function changeTagScroll(delta) {
+  const tags = ["all", ...popularLibraryTags()];
+  const visibleCols = 4;
+  const maxScroll = Math.max(0, tags.length - visibleCols);
+  app.deckBuilder.tagScroll = Math.max(0, Math.min(maxScroll, (app.deckBuilder.tagScroll || 0) + delta));
+}
+
+function cycleDeckBuilderSort() {
+  const currentIndex = SORT_OPTIONS.findIndex((option) => option.id === app.deckBuilder.sortBy);
+  const next = SORT_OPTIONS[(currentIndex + 1) % SORT_OPTIONS.length];
+  app.deckBuilder.sortBy = next.id;
+  app.deckBuilder.libraryScroll = 0;
+  app.deckBuilder.message = `並び替え: ${next.label}`;
+}
+
+function changeLibraryScroll(deltaRows) {
+  const cards = filteredLibraryCards();
+  const visibleRows = 6;
+  const totalRows = Math.max(1, Math.ceil(cards.length / 2));
+  const maxScroll = Math.max(0, totalRows - visibleRows);
+  app.deckBuilder.libraryScroll = Math.max(0, Math.min(maxScroll, app.deckBuilder.libraryScroll + deltaRows));
+}
+
+function changeLibraryPage(delta) {
+  changeLibraryScroll(delta * 4);
+}
+
+function deckListRows() {
+  const rows = [];
+  for (const type of MAIN_DECK_SECTION_ORDER) {
+    const ids = mainDeckIdsByType(type);
+    rows.push({ kind: "mainHeader", type, count: ids.length });
+    for (const entry of groupedCardEntries(ids, cardCatalog.main)) {
+      rows.push({ kind: "mainCard", entry });
+    }
+  }
+  rows.push({ kind: "structHeader", count: app.deck.struct.length });
+  for (const entry of groupedCardEntries(app.deck.struct, cardCatalog.structs)) {
+    rows.push({ kind: "structCard", entry });
+  }
+  return rows;
+}
+
+function changeDeckScroll(deltaRows) {
+  const visibleRows = 10;
+  const maxScroll = Math.max(0, deckListRows().length - visibleRows);
+  app.deckBuilder.deckScroll = Math.max(0, Math.min(maxScroll, app.deckBuilder.deckScroll + deltaRows));
+}
+
+function testDrawDeck() {
+  const core = cardCatalog.cores[app.deck.core] || cardCatalog.cores[DEFAULT_CORE_ID];
+  const deck = makeDeck(app.deck.main);
+  app.deckBuilder.testDraw = deck.slice(0, core.initialHand || 4).map((card) => card.name);
+  app.deckBuilder.message = `テストドロー: ${app.deckBuilder.testDraw.join(" / ") || "カードなし"}`;
+}
+
+function exportDeck() {
+  const payload = JSON.stringify(
+    {
+      core: app.deck.core,
+      main: app.deck.main,
+      struct: app.deck.struct,
+      exportedAt: new Date().toISOString(),
+    },
+    null,
+    2,
+  );
+  const blob = new Blob([payload], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "twcg_deck.json";
+  link.click();
+  URL.revokeObjectURL(link.href);
+  app.deckBuilder.message = "デッキをJSONとしてエクスポートしました。";
+}
+
+function groupedCardEntries(ids, catalog) {
+  const counts = new Map();
+  for (const id of ids) counts.set(id, (counts.get(id) || 0) + 1);
+  return [...counts.entries()].map(([id, count]) => ({ id, count, card: catalog[id] })).filter((entry) => entry.card);
+}
+
+function allLibraryCards() {
+  return [
+    ...Object.values(cardCatalog.cores),
+    ...Object.values(cardCatalog.main).filter((card) => !card.fixture),
+    ...Object.values(cardCatalog.structs),
+  ];
+}
+
+function filteredLibraryCards() {
+  const type = app.deckBuilder.libraryType;
+  const preset = SEARCH_PRESETS.find((item) => item.id === app.deckBuilder.searchPreset) || SEARCH_PRESETS[0];
+  const presetTerm = preset.term.toLowerCase();
+  const freeText = (app.deckBuilder.searchText || "").toLowerCase().trim();
+  const tag = app.deckBuilder.tagFilter;
+  return allLibraryCards()
+    .filter((card) => type === "all" || card.type === type)
+    .filter((card) => tag === "all" || tagLabels(card).includes(tag))
+    .filter((card) => {
+      const haystack = [card.name, card.text, card.flavor, ...(tagLabels(card) || []), ...(keywordLabels(card) || [])]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (presetTerm && !haystack.includes(presetTerm)) return false;
+      if (freeText && !haystack.includes(freeText)) return false;
+      return true;
+    })
+    .sort(compareLibraryCards);
+}
+
+function compareLibraryCards(a, b) {
+  if (app.deckBuilder.sortBy === "cost") {
+    return totalCostAmount(a.cost || {}) - totalCostAmount(b.cost || {}) || a.name.localeCompare(b.name, "ja");
+  }
+  if (app.deckBuilder.sortBy === "type") {
+    return String(a.type).localeCompare(String(b.type)) || a.name.localeCompare(b.name, "ja");
+  }
+  return a.name.localeCompare(b.name, "ja");
+}
+
+function popularLibraryTags() {
+  const counts = {};
+  for (const card of allLibraryCards()) {
+    for (const tag of tagLabels(card)) counts[tag] = (counts[tag] || 0) + 1;
+  }
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ja"))
+    .map(([tag]) => tag);
+}
+
+function addCardFromLibrary(card) {
+  selectCardForDetail(card);
+  if (card.type === "core") return selectCoreCard(card.id);
+  if (card.type === "struct") return addStructDeckCard(card.id);
+  return addDeckCard(card.id);
+}
+
+function selectCardForDetail(cardOrId) {
+  const card = typeof cardOrId === "string" ? findCatalogCard(cardOrId) : cardOrId;
+  if (!card) return null;
+  app.deckBuilder.selectedCardId = card.id;
+  app.deckBuilder.detailOpen = false;
+  return card;
+}
+
+function findCatalogCard(cardId) {
+  return cardCatalog.main[cardId] || cardCatalog.structs[cardId] || cardCatalog.cores[cardId] || null;
+}
+
+function mainDeckIdsByType(type) {
+  return app.deck.main.filter((id) => cardCatalog.main[id]?.type === type);
+}
+
+function resetDeckBuilder() {
+  app.deck.core = DEFAULT_CORE_ID;
+  app.deck.main = [...DEFAULT_MAIN_DECK_IDS];
+  app.deck.struct = [...DEFAULT_STRUCT_DECK_IDS];
+  app.deckName = "未保存デッキ";
+  app.deckBuilder.testDraw = [];
+  app.deckBuilder.message = "デフォルトデッキに戻しました。";
+}
+
+function selectCoreCard(coreId) {
+  const core = cardCatalog.cores[coreId];
+  if (!core) return;
+  selectCardForDetail(core);
+  app.deck.core = coreId;
+  app.deckBuilder.message = `${core.name} をコアに設定しました。`;
+}
+
+function createGame(
+  mainDeckIds = DEFAULT_MAIN_DECK_IDS, structDeckIds = DEFAULT_STRUCT_DECK_IDS, coreId = DEFAULT_CORE_ID,
+  options = {},
+  p2MainDeckIds, p2StructDeckIds, p2CoreId,
+) {
+  const shuffleMainDeck = options.shuffleMainDeck !== false;
+  const game = {
+    activePlayer: "p1",
+    phase: "main",
+    turn: 1,
+    winner: null,
+    selected: null,
+    effectQueue: [],
+    globalEffects: [],
+    pendingTarget: null,
+    pendingChoice: null,
+    pendingStructPhase: null,
+    cardReveal: null,
+    cardRevealSeq: 0,
+    turnStartSummary: null,
+    message: "手札か施設デッキを選択してください。",
+    log: [],
+    board: Array.from({ length: ROWS }, () => Array(COLS).fill(null)),
+    players: {
+      p1: createPlayer("p1", mainDeckIds, structDeckIds, coreId, { shuffleMainDeck }),
+      p2: createPlayer("p2", p2MainDeckIds || mainDeckIds, p2StructDeckIds || structDeckIds, p2CoreId || coreId, { shuffleMainDeck }),
+    },
+  };
+
+  for (const playerId of ["p1", "p2"]) {
+    drawCards(game, playerId, game.players[playerId].core.initialHand || 4, false);
+  }
+  log(game, "ゲーム開始");
+  return game;
+}
+
+function createPlayer(id, mainDeckIds = DEFAULT_MAIN_DECK_IDS, structDeckIds = DEFAULT_STRUCT_DECK_IDS, coreId = DEFAULT_CORE_ID, options = {}) {
+  const core = cloneCard(cardCatalog.cores[coreId] || cardCatalog.cores[DEFAULT_CORE_ID]);
+  return {
+    ...PLAYERS[id],
+    core,
+    resources: normalizeResourceObject(core.startResources || {}),
+    mainDeck: makeDeck(mainDeckIds, { shuffle: options.shuffleMainDeck !== false }),
+    structDeck: structDeckIds.map((cardId) => cloneCard(cardCatalog.structs[cardId])).filter(Boolean),
+    hand: [],
+    structs: [],
+    tactZone: [],
+    wildZone: [],
+    grandZone: [],
+    dump: [],
+    exileZone: [],
+  };
+}
+
+function makeDeck(ids, options = {}) {
+  const usableIds = ids.filter((id) => cardCatalog.main[id] && !cardCatalog.main[id].fixture);
+  validateDeck(usableIds);
+  const deck = usableIds.map((id) => cloneCard(cardCatalog.main[id]));
+  return options.shuffle === false ? deck : shuffleCards(deck);
+}
+
+function shuffleCards(cards) {
+  const shuffled = [...cards];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+function cloneCard(card) {
+  return JSON.parse(JSON.stringify(card));
+}
+
+function makeUnit(cardId, owner, row, col, options = {}) {
+  const card = cloneCard(cardCatalog.main[cardId]);
+  return {
+    ...card,
+    instanceId: nextInstanceId++,
+    owner,
+    row,
+    col,
+    maxHp: card.hp,
+    currentHp: options.hp ?? card.hp,
+    rested: Boolean(options.rested),
+    attacksThisTurn: options.attacksThisTurn || 0,
+    mobileMoveUsed: Boolean(options.mobileMoveUsed),
+    counters: options.counters || 0,
+    fromDump: Boolean(options.fromDump),
+  };
+}
+
+function validateDeck(ids) {
+  const counts = {};
+  for (const id of ids) counts[id] = (counts[id] || 0) + 1;
+  for (const [id, count] of Object.entries(counts)) {
+    const card = cardCatalog.main[id];
+    if (count > 1 && hasKeyword(card, "legendary")) {
+      throw new Error(`Legendary card duplicated in deck: ${id}`);
+    }
+  }
+  const factions = new Set(
+    ids
+      .map((id) => cardCatalog.main[id]?.faction)
+      .filter((faction) => faction && faction !== "ニュートラル"),
+  );
+  if (factions.size > 2) {
+    throw new Error(`Too many non-neutral factions in deck: ${[...factions].join(", ")}`);
+  }
+}
+
+function hasKeyword(card, id) {
+  return Boolean(getKeyword(card, id));
+}
+
+function getKeyword(card, id) {
+  return (card?.keywords || []).find((keyword) => keyword.id === id);
+}
+
+function keywordValue(card, id, fallback = 0) {
+  const keyword = getKeyword(card, id);
+  if (!keyword) return fallback;
+  return typeof keyword.value === "number" ? keyword.value : 1;
+}
+
+function keywordLabels(card) {
+  return (card?.keywords || []).map((keyword) => {
+    const label = KEYWORD_DEFINITIONS[keyword.id]?.label || keyword.id;
+    return typeof keyword.value === "number" ? `${label}${keyword.value}` : label;
+  });
+}
+
+function tagLabels(card) {
+  return card?.tags || [];
+}
+
+function cardImageSource(card) {
+  const src = card?.imageUrl || card?.image;
+  if (src) return src;
+  if (card?.id) {
+    const cat = cardCatalog.main[card.id] || cardCatalog.structs[card.id] || cardCatalog.cores[card.id];
+    const fallback = cat?.imageUrl || cat?.image;
+    if (fallback) return fallback;
+  }
+  return null;
+}
+
+function getCardImage(card) {
+  const src = cardImageSource(card);
+  if (!src) return null;
+  if (cardImageCache.has(src)) return cardImageCache.get(src);
+  const image = new Image();
+  const entry = { image, loaded: false, failed: false };
+  image.onload = () => {
+    entry.loaded = true;
+    render();
+  };
+  image.onerror = () => {
+    entry.failed = true;
+    render();
+  };
+  image.src = src;
+  cardImageCache.set(src, entry);
+  return entry;
+}
+
+function emptyResources() {
+  return Object.fromEntries(RESOURCE_KEYS.map((key) => [key, 0]));
+}
+
+function addResources(player, key, amount) {
+  const resourceKey = key === "food" ? "nature" : key;
+  player.resources[resourceKey] = (player.resources[resourceKey] || 0) + amount;
+}
+
+function resourceDelta(before = {}, after = {}) {
+  const delta = emptyResources();
+  for (const key of RESOURCE_KEYS) delta[key] = (after[key] || 0) - (before[key] || 0);
+  return delta;
+}
+
+function mergeResourceDelta(target, source) {
+  for (const key of RESOURCE_KEYS) target[key] = (target[key] || 0) + (source[key] || 0);
+  return target;
+}
+
+function canPay(player, cost = {}) {
+  const normalizedCost = normalizeResourceObject(cost);
+  return Object.entries(normalizedCost).every(([key, amount]) => (player.resources[key] || 0) >= amount);
+}
+
+function pay(player, cost = {}) {
+  const normalizedCost = normalizeResourceObject(cost);
+  if (!canPay(player, normalizedCost)) return false;
+  for (const [key, amount] of Object.entries(normalizedCost)) {
+    player.resources[key] -= amount;
+  }
+  return true;
+}
+
+function payForCard(player, cost = {}, card = null) {
+  if (pay(player, cost)) return true;
+  if (!card || !hasKeyword(card, "soulPay")) return false;
+
+  const payable = { ...cost };
+  const missingMagic = Math.max(0, (payable.magic || 0) - (player.resources.magic || 0));
+  if (missingMagic === 0 || player.dump.length < missingMagic) return false;
+  payable.magic = (payable.magic || 0) - missingMagic;
+  if (!pay(player, payable)) return false;
+  player.dump.splice(0, missingMagic);
+  return true;
+}
+
+function totalCostAmount(cost = {}) {
+  return Object.values(cost).reduce((sum, amount) => sum + amount, 0);
+}
+
+function drawCards(game, playerId, count, announce = true) {
+  const player = game.players[playerId];
+  for (let i = 0; i < count; i += 1) {
+    if (player.mainDeck.length === 0) break;
+    if (player.core.handLimit && player.hand.length >= player.core.handLimit) break;
+    player.hand.push(player.mainDeck.shift());
+  }
+  if (announce) log(game, `${player.name}: ${count}枚ドロー`);
+}
+
+function opponentOf(playerId) {
+  return playerId === "p1" ? "p2" : "p1";
+}
+
+function controlledPlayerId() {
+  return app.match.role === "guest" ? "p2" : "p1";
+}
+
+function viewerPlayerId() {
+  if (app.match.status === "online") return controlledPlayerId();
+  return state.activePlayer || "p1";
+}
+
+function isViewerFlipped() {
+  return viewerPlayerId() === "p2";
+}
+
+function visualRowToBoardRow(row) {
+  return isViewerFlipped() ? ROWS - 1 - row : row;
+}
+
+function boardRowToVisualRow(row) {
+  return isViewerFlipped() ? ROWS - 1 - row : row;
+}
+
+function clampStructDeckScroll(player) {
+  const visibleRows = 2;
+  const totalRows = Math.ceil((player?.structDeck?.length || 0) / 3);
+  const maxScroll = Math.max(0, totalRows - visibleRows);
+  app.structDeckScroll = Math.max(0, Math.min(app.structDeckScroll || 0, maxScroll));
+  return { visibleRows, totalRows, maxScroll, scroll: app.structDeckScroll };
+}
+
+function changeStructDeckScroll(delta) {
+  const player = state.players[viewerPlayerId()];
+  const info = clampStructDeckScroll(player);
+  app.structDeckScroll = Math.max(0, Math.min(info.maxScroll, info.scroll + delta));
+}
+
+function canControlActivePlayer() {
+  if (app.match.status !== "online") return true;
+  return controlledPlayerId() === state.activePlayer;
+}
+
+function requireActivePlayerControl() {
+  if (canControlActivePlayer()) return true;
+  state.message = "相手のターンです。操作できません。";
+  return false;
+}
+
+function triggerAbilities(game, playerId, card, trigger, source = {}) {
+  for (const ability of card.abilities || []) {
+    if (ability.trigger !== trigger) continue;
+    game.effectQueue.push({ playerId, card, ability, source });
+  }
+  processEffectQueue(game);
+}
+
+function processEffectQueue(game) {
+  if (game.pendingTarget) return;
+  if (game.pendingChoice) return;
+  if (game.pendingStructPhase?.pendingResourceChoice) return;
+  while (game.effectQueue.length) {
+    const item = game.effectQueue.shift();
+    const effect = abilityEffects[item.ability.effect];
+    if (!effect) {
+      completeAbilitySource(game, item);
+      continue;
+    }
+    if (item.ability.target) {
+      game.pendingTarget = item;
+      game.selected = { kind: "target", target: item.ability.target };
+      game.message = `${item.card.name}: 対象を選択してください。`;
+      return;
+    }
+    const result = effect({ game, playerId: item.playerId, card: item.card, ability: item.ability, source: item.source });
+    if (result === "pending") return;
+    completeAbilitySource(game, item);
+  }
+}
+
+function resolvePendingTarget(row, col) {
+  const pending = state.pendingTarget;
+  if (!pending) return false;
+  const target = state.board[row]?.[col];
+  if (!isValidAbilityTarget(pending, target)) {
+    state.message = "対象にできません。";
+    log(state, state.message);
+    return true;
+  }
+  const effect = abilityEffects[pending.ability.effect];
+  if (effect) effect({ game: state, playerId: pending.playerId, card: pending.card, ability: pending.ability, target });
+  state.pendingTarget = null;
+  state.selected = null;
+  completeAbilitySource(state, pending);
+  processEffectQueue(state);
+  syncOnlineAction("resolveTarget", pending.playerId);
+  return true;
+}
+
+function mysticCaptureChoices(game = state) {
+  const pending = game.pendingChoice;
+  if (pending?.type !== "mysticCapture") return [];
+  const player = game.players[pending.playerId];
+  return player.hand
+    .map((card, handIndex) => ({ card, handIndex }))
+    .filter(({ card }) => card.type === "unit" && tagLabels(card).includes("神秘"));
+}
+
+function toggleMysticCaptureChoice(handIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "mysticCapture") return;
+  const choices = mysticCaptureChoices();
+  if (!choices.some((choice) => choice.handIndex === handIndex)) return;
+  const selected = new Set(pending.selectedHandIndexes);
+  if (selected.has(handIndex)) selected.delete(handIndex);
+  else selected.add(handIndex);
+  pending.selectedHandIndexes = [...selected].sort((a, b) => a - b);
+  state.message = `神秘捕縛: ${pending.selectedHandIndexes.length}枚選択中`;
+}
+
+function resolveMysticCaptureChoice({ exile = false } = {}) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "mysticCapture") return false;
+  const player = state.players[pending.playerId];
+  const selectedIndexes = [...pending.selectedHandIndexes].sort((a, b) => b - a);
+  const selectedCards = [];
+  for (const handIndex of selectedIndexes) {
+    const card = player.hand[handIndex];
+    if (card?.type === "unit" && tagLabels(card).includes("神秘")) {
+      selectedCards.unshift(player.hand.splice(handIndex, 1)[0]);
+    }
+  }
+  // Pay summon cost of selected cards in electric; shortfall deals core damage
+  const totalSummonCost = selectedCards.reduce((sum, card) => sum + totalCostAmount(card.cost || {}), 0);
+  const available = player.resources.electric || 0;
+  const paid = Math.min(available, totalSummonCost);
+  const shortfall = totalSummonCost - paid;
+  player.resources.electric = available - paid;
+  if (shortfall > 0) {
+    player.core.hp -= shortfall;
+    log(state, `${player.name}: 電気不足 ${shortfall} → コアに ${shortfall} ダメージ`);
+    checkWinner(state);
+  }
+
+  state.pendingChoice = null;
+  state.selected = null;
+  for (const card of selectedCards) {
+    player.dump.push(card);
+    triggerAbilities(state, pending.playerId, card, "onSummon", { zone: "dump" });
+    if (exile) {
+      const dumpIndex = player.dump.indexOf(card);
+      if (dumpIndex >= 0) player.dump.splice(dumpIndex, 1);
+      player.exileZone.push(card);
+      triggerAbilities(state, pending.playerId, card, "onSummon", { zone: "exile" });
+    }
+  }
+  completeAbilitySource(state, pending.queueItem);
+  state.message = `神秘捕縛: ${selectedCards.length}枚${exile ? "除外して2回発動" : "捨てて1回発動"}`;
+  log(state, `${player.name}: 神秘捕縛 ${selectedCards.length}枚${exile ? " 除外" : " 捨て"} (電気 ${paid} 支払い${shortfall > 0 ? ` コアダメージ ${shortfall}` : ""})`);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function isValidAbilityTarget(item, target) {
+  if (!target) return false;
+  if (item.ability.target === "enemyUnit") return target.owner !== item.playerId;
+  if (item.ability.target === "friendlyUnit") return target.owner === item.playerId;
+  if (item.ability.target === "anyUnit") return true;
+  return false;
+}
+
+function completeAbilitySource(game, item) {
+  if (item.source?.zone !== "tact") return;
+  const player = game.players[item.playerId];
+  const index = player.tactZone.indexOf(item.card);
+  if (index >= 0) {
+    const [card] = player.tactZone.splice(index, 1);
+    player.dump.push(card);
+  }
+}
+
+function startTurn(game, playerId) {
+  game.activePlayer = playerId;
+  game.phase = "structure";
+  const player = game.players[playerId];
+  const resourcesBefore = { ...player.resources };
+  const handBefore = player.hand.length;
+  for (const unit of unitsOwnedBy(playerId)) {
+    unit.rested = false;
+    unit.attacksThisTurn = 0;
+    unit.mobileMoveUsed = false;
+  }
+  for (const [key, amount] of Object.entries(player.core.income || {})) addResources(player, key, amount);
+  drawCards(game, playerId, player.core.draw);
+  const structsWithEffect = player.structs.filter(
+    (s) => (s.abilities || []).some((a) => a.trigger === "onStructurePhase")
+  );
+  if (structsWithEffect.length > 0) {
+    game.pendingStructPhase = { playerId, activatedIndexes: [], resourcesBefore, handBefore };
+    game.message = `${player.name}: ストラクトフェーズ`;
+  } else {
+    const gained = resourceDelta(resourcesBefore, player.resources);
+    const drawn = Math.max(0, player.hand.length - handBefore);
+    game.turnStartSummary = {
+      id: `${game.turn}-${playerId}`,
+      playerId,
+      playerName: player.name,
+      gained,
+      drawn,
+      resourcesBefore,
+      resourcesAfter: { ...player.resources },
+    };
+    game.pendingStructPhase = null;
+    game.phase = "main";
+    game.selected = null;
+    game.message = `${player.name}: 行動してください。`;
+  }
+}
+
+function activateStructInPhase(index) {
+  if (!canControlActivePlayer()) return false;
+  const pending = state.pendingStructPhase;
+  if (!pending) return false;
+  if (pending.activatedIndexes.includes(index)) return false;
+  const player = state.players[pending.playerId];
+  const struct = player.structs[index];
+  if (!struct) return false;
+  if (!canAffordStructActivation(struct, player)) return false;
+  pending.activatedIndexes.push(index);
+  triggerAbilities(state, pending.playerId, struct, "onStructurePhase");
+  syncOnlineAction("structActivate");
+  render();
+  return true;
+}
+
+function endStructPhase() {
+  if (!canControlActivePlayer()) return false;
+  const pending = state.pendingStructPhase;
+  if (!pending) return false;
+  if (pending.pendingResourceChoice) return false;
+  const player = state.players[pending.playerId];
+  const gained = resourceDelta(pending.resourcesBefore, player.resources);
+  const drawn = Math.max(0, player.hand.length - pending.handBefore);
+  state.turnStartSummary = {
+    id: `${state.turn}-${pending.playerId}`,
+    playerId: pending.playerId,
+    playerName: player.name,
+    gained,
+    drawn,
+    resourcesBefore: pending.resourcesBefore,
+    resourcesAfter: { ...player.resources },
+  };
+  state.pendingStructPhase = null;
+  state.phase = "main";
+  state.selected = null;
+  state.message = `${player.name}: 行動してください。`;
+  syncOnlineAction("structPhaseEnd");
+  render();
+  return true;
+}
+
+function resolveMarketChoice(resource) {
+  if (!canControlActivePlayer()) return;
+  const pending = state.pendingStructPhase;
+  if (!pending?.pendingResourceChoice) return;
+  const choice = pending.pendingResourceChoice;
+  const option = (choice.costOptions || []).find((o) => o.resource === resource);
+  if (!option) return;
+  const player = state.players[pending.playerId];
+  if ((player.resources[option.resource] || 0) < option.amount) return;
+  addResources(player, option.resource, -option.amount);
+  for (const [res, amt] of Object.entries(choice.produces || {})) {
+    addResources(player, res, amt);
+  }
+  pending.pendingResourceChoice = null;
+  processEffectQueue(state);
+  syncOnlineAction("marketChoice");
+  render();
+}
+
+function endTurn() {
+  if (!requireActivePlayerControl()) return false;
+  if (state.winner) return false;
+  const endingPlayer = state.activePlayer;
+  const shouldSyncOnline = app.screen === "game" && app.match.status === "online" && !applyingRemoteState;
+  for (const unit of unitsOwnedBy(endingPlayer)) {
+    if (hasKeyword(unit, "alert")) unit.rested = false;
+  }
+  // [降臨] healingHealOnTurnEnd: each friendly unit heals (count of 治療-tagged cards on board) × 2
+  if ((state.globalEffects || []).some((e) => e.type === "healingHealOnTurnEnd" && e.playerId === endingPlayer)) {
+    const allUnits = unitsOwnedBy(endingPlayer);
+    const healingCount = allUnits.filter((u) => (u.tags || []).includes("治療")).length;
+    if (healingCount > 0) {
+      const healAmt = healingCount * 2;
+      for (const unit of allUnits) {
+        unit.currentHp = Math.min(unit.maxHp, unit.currentHp + healAmt);
+      }
+      log(state, `${state.players[endingPlayer].name}: 降臨ターン終了時回復 +${healAmt}（治療${healingCount}体）`);
+    }
+  }
+  const next = opponentOf(endingPlayer);
+  if (endingPlayer === "p2") state.turn += 1;
+  log(state, `${state.players[endingPlayer].name}: ターン終了`);
+  startTurn(state, next);
+  if (shouldSyncOnline) syncOnlineAction("endTurn", endingPlayer);
+  render();
+  return true;
+}
+
+function unitsOwnedBy(playerId) {
+  const units = [];
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const unit = state.board[row][col];
+      if (unit?.owner === playerId) units.push(unit);
+    }
+  }
+  return units;
+}
+
+function enemyInRow(playerId, row) {
+  return state.board[row].some((unit) => unit && unit.owner !== playerId);
+}
+
+function placeUnitFromHand(handIndex, row, col) {
+  if (!requireActivePlayerControl()) return false;
+  const player = state.players[state.activePlayer];
+  const card = player.hand[handIndex];
+  if (!card || card.type !== "unit") return fail("ユニットカードを選択してください。");
+  if (!canSummonToRow(card, player, row)) return fail("この行には配置できません。");
+  if (state.board[row][col]) return fail("このマスには既にユニットがあります。");
+  if (enemyInRow(state.activePlayer, row)) return fail("敵ユニットが存在する横列には配置できません。");
+  if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
+
+  revealCardUse(state.activePlayer, card, "summon");
+  const unit = makeUnit(card.id, state.activePlayer, row, col, { rested: true });
+  state.board[row][col] = unit;
+  player.hand.splice(handIndex, 1);
+  state.selected = { kind: "unit", row, col };
+  state.message = `${card.name} をサモンしました。`;
+  log(state, `${player.name}: 「${card.name}」を出撃`);
+  triggerAbilities(state, state.activePlayer, unit, "onSummon");
+  syncOnlineAction("summon", unit.owner);
+  return true;
+}
+
+function canSummonToRow(card, player, row) {
+  if (row === player.summonRow) return true;
+  const raidRow = player.summonRow + player.forward;
+  return hasKeyword(card, "raid") && row === raidRow && !enemyInRow(player.id, raidRow);
+}
+
+function playTactFromHand(handIndex) {
+  if (!requireActivePlayerControl()) return false;
+  const player = state.players[state.activePlayer];
+  const card = player.hand[handIndex];
+  if (!card || card.type !== "tact") return fail("指令カードを選択してください。");
+  if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
+  revealCardUse(state.activePlayer, card, "play");
+  player.hand.splice(handIndex, 1);
+  player.tactZone.push(card);
+  triggerAbilities(state, state.activePlayer, card, "onPlay", { zone: "tact" });
+  log(state, `${player.name}: 「${card.name}」を使用`);
+  syncOnlineAction("playTact", state.activePlayer);
+  return true;
+}
+
+function playWildFromHand(handIndex) {
+  if (!requireActivePlayerControl()) return false;
+  const player = state.players[state.activePlayer];
+  const card = player.hand[handIndex];
+  if (!card || card.type !== "wild") return fail("ワイルドカードを選択してください。");
+  if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
+  revealCardUse(state.activePlayer, card, "set");
+  player.hand.splice(handIndex, 1);
+  player.wildZone.push({ ...card, faceDown: true });
+  state.selected = null;
+  state.message = `${card.name}をワイルドゾーンにセット。`;
+  triggerAbilities(state, state.activePlayer, card, "onPlay", { zone: "wild" });
+  log(state, `${player.name}: 「${card.name}」をワイルドゾーンにセット`);
+  syncOnlineAction("playWild", state.activePlayer);
+  return true;
+}
+
+function playGrandFromHand(handIndex) {
+  if (!requireActivePlayerControl()) return false;
+  const player = state.players[state.activePlayer];
+  const card = player.hand[handIndex];
+  if (!card || card.type !== "grand") return fail("グランドカードを選択してください。");
+  if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
+  revealCardUse(state.activePlayer, card, "play");
+  player.hand.splice(handIndex, 1);
+  player.grandZone.push(card);
+  state.selected = null;
+  state.message = `${card.name}をグランドゾーンにプレイ。`;
+  triggerAbilities(state, state.activePlayer, card, "onPlay", { zone: "grand" });
+  log(state, `${player.name}: グランド「${card.name}」を使用`);
+  syncOnlineAction("playGrand", state.activePlayer);
+  return true;
+}
+
+function playStruct(index) {
+  if (!requireActivePlayerControl()) return false;
+  const player = state.players[state.activePlayer];
+  const card = player.structDeck[index];
+  if (!card) return;
+  if (!payForCard(player, card.cost, card)) return fail("施設のプレイコストが不足しています。");
+  revealCardUse(state.activePlayer, card, "build");
+  player.structs.push(card);
+  player.structDeck.splice(index, 1);
+  state.selected = null;
+  log(state, `${player.name}: 「${card.name}」を建設`);
+  if (syncOnlineAction("buildStruct", state.activePlayer)) {
+    attachPendingLocalPopup(state.activePlayer, card, "build");
+  } else {
+    app.localCardPopup = buildCardRevealPayload(state.activePlayer, card, "build", `local-build-${Date.now()}`);
+  }
+  return true;
+}
+
+function moveSelectedUnit() {
+  if (!requireActivePlayerControl()) return false;
+  const unit = selectedUnit();
+  if (!unit) return;
+  const player = state.players[unit.owner];
+  if (unit.owner !== state.activePlayer) return fail("現在のプレイヤーのユニットではありません。");
+  if (unit.rested) return fail("このユニットはレスト状態です。");
+  if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
+  const toRow = unit.row + player.forward;
+  if (toRow < 0 || toRow >= ROWS) return fail("これ以上前進できません。");
+  if (state.board[toRow].some((candidate) => candidate && candidate.owner !== unit.owner)) {
+    return fail("正面の行に敵ユニットがいるため前進できません。");
+  }
+  if (state.board[toRow][unit.col]) return fail("前方のマスが埋まっています。");
+  if (!payForCard(player, unit.actCost, unit)) return fail("アクトコストが不足しています。");
+  const fromRow = unit.row;
+  const fromCol = unit.col;
+  state.board[unit.row][unit.col] = null;
+  unit.row = toRow;
+  state.board[unit.row][unit.col] = unit;
+  if (hasKeyword(unit, "mobile") && !unit.mobileMoveUsed) {
+    unit.mobileMoveUsed = true;
+  } else {
+    unit.rested = true;
+  }
+  state.selected = { kind: "unit", row: unit.row, col: unit.col };
+  log(state, `${player.name}: 「${unit.name}」が前進`);
+  startMoveAnimation(unit, fromRow, fromCol, toRow, unit.col);
+  syncOnlineAction("moveUnit", unit.owner);
+  return true;
+}
+
+function retreatSelectedUnit() {
+  if (!requireActivePlayerControl()) return false;
+  const unit = selectedUnit();
+  if (!unit) return;
+  const player = state.players[unit.owner];
+  if (unit.owner !== state.activePlayer) return fail("現在のプレイヤーのユニットではありません。");
+  if (unit.rested) return fail("このユニットはレスト状態です。");
+  if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
+  const toRow = unit.row - player.forward;
+  if (toRow < 0 || toRow >= ROWS) return fail("これ以上後退できません。");
+  if (state.board[toRow][unit.col]) return fail("後方のマスが埋まっています。");
+  if (!payForCard(player, unit.actCost, unit)) return fail("アクトコストが不足しています。");
+  const fromRowR = unit.row;
+  state.board[unit.row][unit.col] = null;
+  unit.row = toRow;
+  state.board[unit.row][unit.col] = unit;
+  if (hasKeyword(unit, "mobile") && !unit.mobileMoveUsed) {
+    unit.mobileMoveUsed = true;
+  } else {
+    unit.rested = true;
+  }
+  state.selected = { kind: "unit", row: unit.row, col: unit.col };
+  log(state, `${player.name}: 「${unit.name}」が後退`);
+  startMoveAnimation(unit, fromRowR, unit.col, toRow, unit.col);
+  syncOnlineAction("retreatUnit", unit.owner);
+  return true;
+}
+
+function attackWithSelectedUnit(target) {
+  if (!requireActivePlayerControl()) return false;
+  const unit = selectedUnit();
+  if (!unit) return;
+  const player = state.players[unit.owner];
+  if (unit.owner !== state.activePlayer) return fail("現在のプレイヤーのユニットではありません。");
+  if (unit.rested) return fail("このユニットはレスト状態です。");
+  if (hasKeyword(unit, "noAttack")) return fail("このユニットは攻撃できません。");
+
+  if (target.kind === "core") {
+    if (!canAttackCore(unit)) return fail("コアへ直接攻撃できる位置ではありません。");
+    if (!payAttackCosts(player, unit)) return fail("アクトコストが不足しています。");
+    const defender = state.players[opponentOf(unit.owner)];
+    defender.core.hp -= unit.atk;
+    afterAttack(unit);
+    log(state, `${player.name}: 「${unit.name}」がコアに${unit.atk}ダメージ`);
+    checkWinner(state);
+    syncOnlineAction("attackCore", unit.owner);
+    return true;
+  }
+
+  const defender = state.board[target.row]?.[target.col];
+  if (!defender || defender.owner === unit.owner) return fail("攻撃対象がありません。");
+  const legality = canAttackUnit(unit, defender);
+  if (!legality.ok) return fail(legality.reason);
+  if (!payAttackCosts(player, unit)) return fail("アクトコストが不足しています。");
+
+  const damage = calculateAttackDamage(unit, defender);
+  defender.currentHp -= damage;
+  if (damage > 0 && hasKeyword(unit, "shock")) defender.rested = true;
+  applyCleave(unit, defender);
+  if (canCounterAttack(defender, unit)) unit.currentHp -= defender.atk;
+  startAttackAnimation(unit, unit.row, unit.col, defender.row, defender.col);
+  afterAttack(unit);
+  log(state, `「${unit.name}」が「${defender.name}」を攻撃`);
+  cleanupAllDestroyed(unit);
+  syncOnlineAction("attackUnit", unit.owner);
+  return true;
+}
+
+function payAttackCosts(player, unit) {
+  const cost = { ...(unit.actCost || {}) };
+  if (hasKeyword(unit, "charge")) {
+    cost.electric = (cost.electric || 0) + totalCostAmount(unit.actCost);
+  }
+  return payForCard(player, cost, unit);
+}
+
+function afterAttack(unit) {
+  unit.attacksThisTurn = (unit.attacksThisTurn || 0) + 1;
+  const attackLimit = keywordValue(unit, "multiStrike", 1);
+  if (unit.attacksThisTurn >= attackLimit) unit.rested = true;
+}
+
+function canAttackUnit(attacker, defender) {
+  const owner = state.players[attacker.owner];
+  const forwardDistance = (defender.row - attacker.row) * owner.forward;
+  const maxRows = keywordValue(attacker, "arc", 1);
+  if (forwardDistance < 1 || forwardDistance > maxRows) {
+    return { ok: false, reason: "攻撃範囲外です。" };
+  }
+  if (hasKeyword(defender, "flying") && !hasKeyword(attacker, "flying") && attacker.atk <= keywordValue(defender, "flying")) {
+    return { ok: false, reason: "航空ユニットへ攻撃できません。" };
+  }
+  if (isGuardedFrom(attacker, defender)) {
+    return { ok: false, reason: "守護により隣接ユニットを攻撃できません。" };
+  }
+  return { ok: true };
+}
+
+function isGuardedFrom(attacker, defender) {
+  if (hasKeyword(attacker, "arc") || hasKeyword(attacker, "flying")) return false;
+  for (const delta of [-1, 1]) {
+    const guardian = state.board[defender.row]?.[defender.col + delta];
+    if (guardian?.owner === defender.owner && hasKeyword(guardian, "guard")) return true;
+  }
+  return false;
+}
+
+function calculateAttackDamage(attacker, defender) {
+  const ignoresArmor = hasKeyword(attacker, "charge");
+  const armor = ignoresArmor ? 0 : Math.max(0, keywordValue(defender, "armor") - keywordValue(attacker, "pierce"));
+  return Math.max(0, attacker.atk - armor);
+}
+
+function canCounterAttack(defender, attacker) {
+  if (defender.rested) return false;
+  if (hasKeyword(attacker, "arc")) return false;
+  if (hasKeyword(attacker, "flying") && !hasKeyword(defender, "flying") && defender.atk <= keywordValue(attacker, "flying")) return false;
+  return true;
+}
+
+function applyCleave(attacker, defender) {
+  const cleaveDamage = keywordValue(attacker, "cleave");
+  if (!cleaveDamage) return;
+  for (const delta of [-1, 1]) {
+    const adjacent = state.board[defender.row]?.[defender.col + delta];
+    if (adjacent && adjacent.owner !== attacker.owner) adjacent.currentHp -= cleaveDamage;
+  }
+}
+
+function cleanupAllDestroyed(killer = null) {
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const unit = state.board[row][col];
+      if (unit?.currentHp <= 0) cleanupDestroyed(unit, killer);
+    }
+  }
+}
+
+function canAttackCore(unit) {
+  const player = state.players[unit.owner];
+  return player.side === "bottom" ? unit.row <= player.directRow : unit.row >= player.directRow;
+}
+
+function cleanupDestroyed(unit, killer = null) {
+  if (!unit || unit.currentHp > 0) return;
+  if (unit.destroyed) return;
+  unit.destroyed = true;
+  triggerAbilities(state, unit.owner, unit, "onDestroy");
+  state.board[unit.row][unit.col] = null;
+  // [降臨] returnToHandOnDestroy: owner gets card back to hand instead of dump
+  const returnEffect = (state.globalEffects || []).find(
+    (e) => e.type === "returnToHandOnDestroy" && e.playerId === unit.owner
+  );
+  if (returnEffect) {
+    state.players[unit.owner].hand.push(stripRuntime(unit));
+    log(state, `${unit.name} → 手札に戻る（降臨効果）`);
+  } else {
+    state.players[unit.owner].dump.push(stripRuntime(unit));
+    log(state, `「${unit.name}」が破壊された`);
+  }
+  if (state.selected?.row === unit.row && state.selected?.col === unit.col) state.selected = null;
+  // notify structs always; notify only the killing unit (or all units if no specific killer)
+  const enemyId = opponentOf(unit.owner);
+  for (const struct of state.players[enemyId].structs) {
+    triggerAbilities(state, enemyId, struct, "onDestroyEnemyUnit", { target: unit });
+  }
+  if (killer && killer.owner === enemyId) {
+    triggerAbilities(state, enemyId, killer, "onDestroyEnemyUnit", { target: unit });
+  } else if (!killer) {
+    for (const enemyUnit of unitsOwnedBy(enemyId)) {
+      triggerAbilities(state, enemyId, enemyUnit, "onDestroyEnemyUnit", { target: unit });
+    }
+  }
+  const blast = keywordValue(unit, "selfDestruct");
+  if (blast) {
+    for (const [row, col] of adjacentCells(unit.row, unit.col)) {
+      const adjacent = state.board[row]?.[col];
+      if (adjacent) adjacent.currentHp -= blast;
+    }
+    cleanupAllDestroyed();
+  }
+}
+
+function adjacentCells(row, col) {
+  return [
+    [row - 1, col],
+    [row + 1, col],
+    [row, col - 1],
+    [row, col + 1],
+  ].filter(([r, c]) => r >= 0 && r < ROWS && c >= 0 && c < COLS);
+}
+
+function stripRuntime(unit) {
+  const copy = { ...unit };
+  delete copy.owner;
+  delete copy.row;
+  delete copy.col;
+  delete copy.rested;
+  delete copy.instanceId;
+  delete copy.currentHp;
+  delete copy.maxHp;
+  return copy;
+}
+
+function checkWinner(game) {
+  for (const playerId of ["p1", "p2"]) {
+    if (game.players[playerId].core.hp <= 0) {
+      game.winner = opponentOf(playerId);
+      game.message = `${game.players[game.winner].name} wins`;
+      log(game, game.message);
+    }
+  }
+}
+
+function selectedUnit() {
+  if (state.selected?.kind !== "unit") return null;
+  return state.board[state.selected.row]?.[state.selected.col];
+}
+
+function selectedHandCard() {
+  if (state.selected?.kind !== "hand") return null;
+  const playerId = state.selected.playerId || viewerPlayerId();
+  return state.players[playerId]?.hand[state.selected.index] || null;
+}
+
+function selectedStructDeckCard() {
+  if (state.selected?.kind !== "structDeck") return null;
+  const playerId = state.selected.playerId || viewerPlayerId();
+  return state.players[playerId]?.structDeck[state.selected.index] || null;
+}
+
+function selectedPlayableCard() {
+  return selectedHandCard() || selectedStructDeckCard();
+}
+
+function selectedFieldCard() {
+  const selected = state.selected;
+  if (!selected?.detailOpen) return null;
+  if (selected.kind === "unit") return state.board[selected.row]?.[selected.col] || null;
+  if (selected.kind === "fieldStruct") return state.players[selected.playerId]?.structs[selected.index] || null;
+  return null;
+}
+
+function buildCardRevealPayload(playerId, card, source = "play", id = null) {
+  return {
+    id: id || `${state.turn}-${state.cardRevealSeq}-${playerId}-${card.id || card.name}`,
+    playerId,
+    playerName: state.players[playerId]?.name || playerId,
+    source,
+    card: {
+      id: card.id || null,
+      name: card.name,
+      type: card.type,
+      faction: card.faction || "ニュートラル",
+      tags: tagLabels(card),
+      cost: card.cost || {},
+      actCost: card.actCost || null,
+      atk: card.atk ?? null,
+      hp: card.hp ?? card.maxHp ?? null,
+      currentHp: card.currentHp ?? null,
+      maxHp: card.maxHp ?? null,
+      keywords: keywordLabels(card),
+      abilityText: abilityText(card),
+      text: card.text || card.flavor || "",
+      image: cardImageSource(card),
+    },
+  };
+}
+
+function revealCardUse(playerId, card, source = "play") {
+  if (!card) return;
+  state.cardRevealSeq = (state.cardRevealSeq || 0) + 1;
+  state.cardReveal = buildCardRevealPayload(playerId, card, source);
+}
+
+function dismissCardReveal() {
+  if (app.localCardPopup) {
+    app.localCardPopup = null;
+    return;
+  }
+  const id = state.cardReveal?.id;
+  if (id && !app.dismissedCardRevealIds.includes(id)) app.dismissedCardRevealIds.push(id);
+  app.dismissedCardRevealIds = app.dismissedCardRevealIds.slice(-24);
+}
+
+function useSelectedPlayableCard() {
+  if (!requireActivePlayerControl()) return false;
+  const selected = state.selected;
+  const card = selectedPlayableCard();
+  if (!card || !selected) return false;
+  if (selected.playerId && selected.playerId !== viewerPlayerId()) return false;
+  if (selected.kind === "structDeck") return playStruct(selected.index);
+  if (selected.kind !== "hand") return false;
+  if (card.type === "tact") return playTactFromHand(selected.index);
+  if (card.type === "wild") return playWildFromHand(selected.index);
+  if (card.type === "grand") return playGrandFromHand(selected.index);
+  if (card.type === "unit") {
+    state.selected = { ...selected, confirmed: true };
+    state.message = `${card.name}: 配置するサモンフィールドを選択してください。`;
+    return true;
+  }
+  return false;
+}
+
+const useSelectedHandCard = useSelectedPlayableCard;
+
+function fail(message) {
+  state.message = message;
+  log(state, message);
+  return false;
+}
+
+function log(game, message) {
+  game.log.unshift(message);
+  game.log = game.log.slice(0, 7);
+}
+
+function formatCost(cost = {}) {
+  const parts = Object.entries(cost)
+    .filter(([, amount]) => amount)
+    .map(([key, amount]) => `${RESOURCE_LABELS[key]}${amount}`);
+  return parts.length ? parts.join(" ") : "無料";
+}
+
+function deckAnalysis() {
+  const mainCards = app.deck.main.map((id) => cardCatalog.main[id]).filter(Boolean);
+  const structCards = app.deck.struct.map((id) => cardCatalog.structs[id]).filter(Boolean);
+  const core = cardCatalog.cores[app.deck.core] || cardCatalog.cores[DEFAULT_CORE_ID];
+  const typeCounts = {};
+  const tagCounts = {};
+  const costTotals = emptyResources();
+  const incomeTotals = emptyResources();
+  const warnings = [];
+
+  for (const card of mainCards) {
+    typeCounts[card.type] = (typeCounts[card.type] || 0) + 1;
+    for (const tag of tagLabels(card)) tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    for (const [key, amount] of Object.entries(card.cost || {})) costTotals[key] += amount || 0;
+  }
+
+  for (const card of structCards) {
+    typeCounts.struct = (typeCounts.struct || 0) + 1;
+    for (const ability of card.abilities || []) {
+      if (ability.effect === "produceResource") incomeTotals[ability.resource] += ability.amount || 0;
+    }
+  }
+
+  const deckMin = core.deckMin || core.deckSize || 40;
+  const deckMax = core.deckMax || core.deckSize || 60;
+  if (mainCards.length < deckMin) warnings.push(`メイン ${deckMin - mainCards.length}枚不足`);
+  if (mainCards.length > deckMax) warnings.push(`メイン ${mainCards.length - deckMax}枚超過`);
+  const nonNeutralFactions = new Set(mainCards.map((card) => card.faction).filter((faction) => faction && faction !== "ニュートラル"));
+  if (nonNeutralFactions.size > 2) warnings.push(`非中立陣営 ${nonNeutralFactions.size}/2`);
+  for (const entry of groupedCardEntries(app.deck.main, cardCatalog.main)) {
+    const maxCopies = hasKeyword(entry.card, "legendary") ? 1 : 4;
+    if (entry.count > maxCopies) warnings.push(`${entry.card.name} ${entry.count}/${maxCopies}`);
+  }
+
+  const topTags = Object.entries(tagCounts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ja"))
+    .slice(0, 4)
+    .map(([tag, count]) => `${tag}${count}`);
+
+  return { typeCounts, topTags, costTotals, incomeTotals, warnings };
+}
+
+function formatResourceTotals(resources) {
+  return RESOURCE_KEYS.filter((key) => resources[key])
+    .map((key) => `${RESOURCE_LABELS[key]}${resources[key]}`)
+    .join(" ") || "なし";
+}
+
+function getPointer(event) {
+  const rect = canvas.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) / rect.width) * W;
+  const y = ((event.clientY - rect.top) / rect.height) * H;
+  return { x, y };
+}
+
+function consumeFieldDoubleClick(key) {
+  const now = performance.now();
+  const last = app.lastFieldClick;
+  const isDouble = last?.key === key && now - last.time <= 360;
+  app.lastFieldClick = { key, time: now };
+  return isDouble;
+}
+
+canvas.addEventListener("pointermove", (event) => {
+  const point = getPointer(event);
+  let found = null;
+  for (let i = hoverRegions.length - 1; i >= 0; i -= 1) {
+    const r = hoverRegions[i];
+    if (point.x >= r.x && point.x <= r.x + r.w && point.y >= r.y && point.y <= r.y + r.h) {
+      found = { card: r.card, mx: point.x, my: point.y };
+      break;
+    }
+  }
+  const changed = appHoveredCard?.card !== found?.card;
+  appHoveredCard = found;
+  if (changed) render();
+});
+
+canvas.addEventListener("pointerleave", () => {
+  if (appHoveredCard) {
+    appHoveredCard = null;
+    render();
+  }
+});
+
+canvas.addEventListener("pointerdown", (event) => {
+  if (state.winner && app.screen === "game") return;
+  const point = getPointer(event);
+  for (let i = hitRegions.length - 1; i >= 0; i -= 1) {
+    const region = hitRegions[i];
+    if (point.x >= region.x && point.x <= region.x + region.w && point.y >= region.y && point.y <= region.y + region.h) {
+      const beforeState = app.screen === "game" && app.match.status === "online" ? serializeGameState() : null;
+      const beforeOpId = queuedOnlineAction?.opId || null;
+      try {
+        region.onClick();
+      } catch (e) {
+        console.error("onClick error:", e);
+        state.message = "error: " + e.message;
+      }
+      const queuedOp = queuedOnlineAction?.opId && queuedOnlineAction.opId !== beforeOpId;
+      if (queuedOp && beforeState) {
+        const pending = queuedOnlineAction;
+        applyRemoteGameState(beforeState);
+        queuedOnlineAction = pending;
+        app.match.pendingOpId = pending.opId;
+        state.message = "SERVER PROCESSING...";
+      } else {
+        broadcastOnlineState();
+      }
+      render();
+      return;
+    }
+  }
+});
+
+canvas.addEventListener(
+  "wheel",
+  (event) => {
+    const point = getPointer(event);
+    for (let i = wheelRegions.length - 1; i >= 0; i -= 1) {
+      const region = wheelRegions[i];
+      if (point.x >= region.x && point.x <= region.x + region.w && point.y >= region.y && point.y <= region.y + region.h) {
+        event.preventDefault();
+        region.onWheel(event.deltaY);
+        render();
+        return;
+      }
+    }
+  },
+  { passive: false },
+);
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && app.deckBuilder.searchFocused) {
+    app.deckBuilder.searchFocused = false;
+    searchInput.blur();
+    render();
+    return;
+  }
+  if (event.key === "Escape" && app.match.roomCodeFocused) {
+    app.match.roomCodeFocused = false;
+    roomCodeInput.blur();
+    render();
+    return;
+  }
+  if (event.key.toLowerCase() === "f" && !app.deckBuilder.searchFocused) toggleFullscreen();
+});
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    canvas.requestFullscreen?.();
+  } else {
+    document.exitFullscreen?.();
+  }
+}
+
+function addHit(x, y, w, h, onClick) {
+  hitRegions.push({ x, y, w, h, onClick });
+}
+
+function addCardHover(x, y, w, h, card) {
+  hoverRegions.push({ x, y, w, h, card });
+}
+
+function addWheelRegion(x, y, w, h, onWheel) {
+  wheelRegions.push({ x, y, w, h, onWheel });
+}
+
+function render() {
+  hitRegions.length = 0;
+  hoverRegions.length = 0;
+  wheelRegions.length = 0;
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+  if (app.screen === "login") return drawLoginScreen();
+  if (app.screen === "home") return drawHomeScreen();
+  if (app.screen === "deckBuilder") return drawDeckBuilderScreen();
+  if (app.screen === "matchLobby") return drawMatchLobbyScreen();
+  drawHeader();
+  drawBoard();
+  const viewer = viewerPlayerId();
+  drawSidePanel(viewer, layout.left);
+  drawSidePanel(opponentOf(viewer), layout.right);
+  drawHand();
+  drawTopHand();
+  drawActionPanel();
+  drawTurnStartSummaryPanel();
+  drawLog();
+  drawAnimations();
+  drawStructPhaseOverlay();
+  drawChoiceOverlay();
+  drawHandConfirmOverlay();
+  drawFieldCardDetailOverlay();
+  drawCardRevealOverlay();
+  drawZoneViewerOverlay();
+  drawOnlinePendingOverlay();
+  if (appHoveredCard) drawCardTooltip(appHoveredCard.card, appHoveredCard.mx, appHoveredCard.my);
+}
+
+function drawBackground() {
+  // Deep space gradient
+  const grd = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * 0.8);
+  grd.addColorStop(0, "#0c1428");
+  grd.addColorStop(0.5, "#070c18");
+  grd.addColorStop(1, "#030609");
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, W, H);
+  // Hex grid overlay
+  ctx.strokeStyle = "rgba(40, 80, 160, 0.08)";
+  ctx.lineWidth = 1;
+  const hex = 40;
+  const hh = hex * Math.sqrt(3) / 2;
+  for (let row = -1; row < H / hh + 2; row++) {
+    for (let col = -1; col < W / (hex * 1.5) + 2; col++) {
+      const ox = col * hex * 1.5;
+      const oy = row * hh * 2 + (col % 2 === 0 ? 0 : hh);
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const angle = Math.PI / 3 * i - Math.PI / 6;
+        const px = ox + hex * 0.9 * Math.cos(angle);
+        const py = oy + hex * 0.9 * Math.sin(angle);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+  }
+  // Ambient glow top-center (opponent side)
+  const topGlow = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, 400);
+  topGlow.addColorStop(0, "rgba(200, 50, 30, 0.12)");
+  topGlow.addColorStop(1, "transparent");
+  ctx.fillStyle = topGlow;
+  ctx.fillRect(0, 0, W, H);
+  // Ambient glow bottom-center (player side)
+  const botGlow = ctx.createRadialGradient(W / 2, H, 0, W / 2, H, 400);
+  botGlow.addColorStop(0, "rgba(20, 80, 200, 0.12)");
+  botGlow.addColorStop(1, "transparent");
+  ctx.fillStyle = botGlow;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawAppTitle(subtitle) {
+  ctx.save();
+  ctx.shadowColor = "#2060ff";
+  ctx.shadowBlur = 16;
+  ctx.fillStyle = "#b0ccff";
+  ctx.font = "700 32px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("Threads World Card Game", 72, 66);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  ctx.font = "600 16px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(140,170,230,0.7)";
+  ctx.fillText(subtitle, 74, 96);
+}
+
+function drawLoginScreen() {
+  drawAppTitle("ログインしてデッキ構築と対戦を開始");
+  ctx.save();
+  ctx.shadowColor = "#2060ff";
+  ctx.shadowBlur = 20;
+  roundRect(410, 190, 620, 420, 12, "rgba(6,8,22,0.97)", "rgba(40,80,200,0.6)", 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  ctx.fillStyle = "#c0d8ff";
+  ctx.font = "700 26px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("ログイン", 472, 258);
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(140,170,230,0.8)";
+  ctx.fillText("Google Identity Services 接続前のデモログインです。", 474, 292);
+  ctx.fillText("認証情報を設定すると、この入口を本物のGoogleログインに差し替えられます。", 474, 314, 558);
+  ctx.fillText(
+    googleSignInEnabled ? "Google OAuth: 設定済み" : app.auth.message || "Google OAuth: GOOGLE_CLIENT_ID 未設定",
+    474, 344,
+  );
+  drawButton(474, 378, 492, 48, googleSignInEnabled ? "Googleでログイン" : "Google設定を確認", signInWithGoogle, null, { accent: "p1" });
+  drawButton(474, 436, 492, 48, "ゲストで開始", signInAsGuest);
+}
+
+function drawHomeScreen() {
+  drawAppTitle("ホーム");
+  drawUserBadge();
+  ctx.save();
+  ctx.shadowColor = "#1040c0";
+  ctx.shadowBlur = 16;
+  roundRect(260, 190, 920, 420, 12, "rgba(6,8,22,0.97)", "rgba(30,70,180,0.5)", 1.5);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  ctx.fillStyle = "#c0d8ff";
+  ctx.font = "700 24px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("次に行う操作を選択", 320, 254);
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(140,170,230,0.75)";
+  ctx.fillText(`コア ${cardCatalog.cores[app.deck.core]?.name || app.deck.core} / メイン ${app.deck.main.length}枚 / 施設 ${app.deck.struct.length}枚`, 322, 284);
+  drawButton(320, 344, 240, 52, "デッキビルダー", openDeckBuilder);
+  drawButton(600, 344, 240, 52, "試合ロビー", openMatchLobby);
+  drawButton(880, 344, 240, 52, "ローカル対戦開始", startLocalMatch, null, { accent: "p1" });
+  drawButton(320, 452, 240, 42, "ログアウト", signOut);
+}
+
+function drawUserBadge() {
+  roundRect(1040, 42, 320, 54, 8, "rgba(8,12,30,0.85)", "rgba(40,80,180,0.4)", 1.5);
+  ctx.fillStyle = "#b0ccf0";
+  ctx.font = "700 15px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(app.auth.name, 1058, 68);
+  ctx.fillStyle = "rgba(100,130,200,0.7)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(app.auth.provider === "google" ? (app.auth.demo ? "Google デモログイン" : "Googleログイン") : "ゲスト", 1058, 86);
+}
+
+function drawDeckBuilderScreen() {
+  drawAppTitle("デッキビルダー");
+  drawUserBadge();
+  // Header button row
+  const btnY = 118;
+  drawButton(74, btnY, 108, 32, "ホーム", () => (app.screen = "home"));
+  drawButton(192, btnY, 108, 32, "名前保存", () => saveDeck());
+  drawButton(310, btnY, 108, 32, "初期化", resetDeckBuilder);
+  drawButton(428, btnY, 118, 32, "テストドロー", testDrawDeck);
+  drawButton(556, btnY, 108, 32, "出力", exportDeck);
+  drawButton(674, btnY, 108, 32, "試合へ", openMatchLobby, null, { accent: "p1" });
+  drawButton(792, btnY, 154, 32, "Deckmaker読込", importDeckmakerDeckFile);
+  drawButton(956, btnY, 154, 32, "Deckmaker出力", exportDeckmakerAllData);
+
+  roundRect(58, 178, 500, 646, 10, "rgba(14,22,50,0.96)", "rgba(50,90,220,0.6)", 1.5);
+  roundRect(572, 178, 442, 646, 10, "rgba(14,22,50,0.96)", "rgba(50,90,220,0.6)", 1.5);
+  roundRect(1028, 178, 340, 646, 10, "rgba(14,22,50,0.96)", "rgba(50,90,220,0.6)", 1.5);
+
+  drawDeckListPanel(84, 216);
+  drawCardLibraryPanel(600, 216);
+  drawDeckAnalysisPanel(1056, 216);
+  drawCardDetailOverlay();
+  drawCoreDropdownOverlay();
+  if (appHoveredCard) drawCardTooltip(appHoveredCard.card, appHoveredCard.mx, appHoveredCard.my);
+}
+
+function drawCoreDropdownOverlay() {
+  if (!app.deckBuilder.coreDropdownOpen) return;
+  const x = 84, y = 222;
+  const coreList = Object.values(cardCatalog.cores);
+  const ddX = x, ddY = y + 86, ddW = 430, ddH = 34;
+  const itemH = 36;
+  const listH = coreList.length * itemH;
+  const listY = ddY + ddH + 2;
+  roundRect(ddX, listY, ddW, listH, 8, "rgba(6,8,22,0.98)", "rgba(40,80,200,0.5)", 1.5);
+  coreList.forEach((core, i) => {
+    const iy = listY + i * itemH;
+    const isActive = core.id === app.deck.core;
+    if (isActive) roundRect(ddX + 2, iy + 2, ddW - 4, itemH - 4, 4, "rgba(40,80,180,0.5)", null);
+    ctx.fillStyle = isActive ? "#c0d8ff" : "rgba(140,170,220,0.8)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${core.name}  初${core.initialHand}/引${core.draw}/上${core.handLimit}  HP${core.hp}`, ddX + 10, iy + 23, ddW - 40);
+    addHit(ddX, iy, ddW, itemH, () => { selectCoreCard(core.id); app.deckBuilder.coreDropdownOpen = false; });
+    addCardHover(ddX, iy, ddW, itemH, core);
+  });
+  addHit(0, 0, ddX, H, () => { app.deckBuilder.coreDropdownOpen = false; });
+  addHit(ddX + ddW, 0, W - ddX - ddW, H, () => { app.deckBuilder.coreDropdownOpen = false; });
+  addHit(ddX, listY + listH, ddW, H - listY - listH, () => { app.deckBuilder.coreDropdownOpen = false; });
+}
+
+function drawDeckListPanel(x, y) {
+  ctx.fillStyle = "#d0e4ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("デッキリスト", x, y);
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "#a8c4e8";
+  ctx.fillText(`デッキ名: ${app.deckName}`, x, y + 28, 430);
+  ctx.fillStyle = "#90b0d8";
+  ctx.fillText(app.deckBuilder.message, x, y + 48, 430);
+
+  ctx.fillStyle = "#c0d8ff";
+  ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("コア", x, y + 72);
+
+  const coreList = Object.values(cardCatalog.cores);
+  const selectedCore = cardCatalog.cores[app.deck.core] || cardCatalog.cores[DEFAULT_CORE_ID];
+  const ddX = x, ddY = y + 78, ddW = 430, ddH = 32;
+
+  // Dropdown button
+  const ddBg = app.deckBuilder.coreDropdownOpen ? "rgba(60,100,200,0.5)" : "rgba(14,24,52,0.85)";
+  const ddBorder = app.deckBuilder.coreDropdownOpen ? "#5090ff" : "rgba(50,80,160,0.55)";
+  roundRect(ddX, ddY, ddW, ddH, 6, ddBg, ddBorder, 1.5);
+  ctx.fillStyle = "#d0e4ff";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${selectedCore.name}  初${selectedCore.initialHand}/引${selectedCore.draw}/上${selectedCore.handLimit}`, ddX + 10, ddY + 20, ddW - 30);
+  ctx.fillStyle = "#a0bce0";
+  ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(app.deckBuilder.coreDropdownOpen ? "▲" : "▼", ddX + ddW - 22, ddY + 20);
+  addHit(ddX, ddY, ddW, ddH, () => { app.deckBuilder.coreDropdownOpen = !app.deckBuilder.coreDropdownOpen; });
+  addCardHover(ddX, ddY, ddW, ddH, selectedCore);
+
+  // Dropdown list is drawn later (top layer) via drawCoreDropdownOverlay()
+
+  const core = selectedCore;
+  const rows = deckListRows();
+  const visibleRows = 14;
+  const maxScroll = Math.max(0, rows.length - visibleRows);
+  app.deckBuilder.deckScroll = Math.max(0, Math.min(maxScroll, app.deckBuilder.deckScroll));
+  const visibleRowsData = rows.slice(app.deckBuilder.deckScroll, app.deckBuilder.deckScroll + visibleRows);
+
+  ctx.fillStyle = "#c0d8ff";
+  ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`カード一覧 メイン ${app.deck.main.length}/${core.deckMin || 40}-${core.deckMax || 60}枚 / 施設 ${app.deck.struct.length}/20枚`, x, y + 132, 430);
+  drawButton(x + 310, y + 112, 52, 26, "上へ", () => changeDeckScroll(-3), null, { micro: true });
+  drawButton(x + 370, y + 112, 52, 26, "下へ", () => changeDeckScroll(3), null, { micro: true });
+  addWheelRegion(x, y + 162, 430, visibleRows * 34, (deltaY) => changeDeckScroll(deltaY > 0 ? 1 : -1));
+
+  addWheelRegion(x, y + 152, 430, visibleRows * 32, (deltaY) => changeDeckScroll(deltaY > 0 ? 1 : -1));
+  visibleRowsData.forEach((row, i) => {
+    const rowY = y + 152 + i * 32;
+    if (row.kind === "mainHeader" || row.kind === "structHeader") {
+      ctx.strokeStyle = "rgba(40,70,160,0.3)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, rowY + 18); ctx.lineTo(x + 430, rowY + 18); ctx.stroke();
+      ctx.fillStyle = "rgba(140,170,230,0.6)";
+      ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+      ctx.fillText(row.kind === "mainHeader" ? `${CARD_TYPE_LABELS[row.type]} (${row.count})` : `ストラクト (${row.count})`, x, rowY + 16);
+      return;
+    }
+    const entry = row.entry;
+    const isStruct = row.kind === "structCard";
+    const cardX = x + 14;
+    const theme = CARD_TYPE_THEME[entry.card.type] || CARD_TYPE_THEME.struct;
+    roundRect(cardX, rowY + 1, 308, 26, 5, isStruct ? "rgba(80,60,20,0.5)" : "rgba(20,40,80,0.5)", isStruct ? "rgba(160,120,40,0.4)" : "rgba(40,80,180,0.35)", 1);
+    ctx.fillStyle = "#d0e4ff";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${entry.card.name} x${entry.count}`, cardX + 8, rowY + 17, 280);
+    addHit(cardX, rowY + 1, 308, 26, () => selectCardForDetail(entry.id));
+    addCardHover(cardX, rowY + 1, 308, 26, entry.card);
+    drawButton(cardX + 314, rowY + 1, 26, 26, "-", () => (isStruct ? removeStructDeckCardById(entry.id) : removeDeckCardById(entry.id)), null, { micro: true });
+    drawButton(cardX + 346, rowY + 1, 26, 26, "+", () => (isStruct ? addStructDeckCard(entry.id) : addDeckCard(entry.id)), null, { micro: true });
+  });
+}
+
+function drawCardLibraryPanel(x, y) {
+  ctx.fillStyle = "#b0ccf0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("カードライブラリ", x, y);
+  LIBRARY_TYPE_ORDER.forEach((type, i) => {
+    const buttonX = x + (i % 4) * 100;
+    const buttonY = y + 24 + Math.floor(i / 4) * 36;
+    const isActive = app.deckBuilder.libraryType === type;
+    drawButton(buttonX, buttonY, 88, 28, CARD_TYPE_LABELS[type], () => setDeckBuilderLibrary(type), null, isActive ? { accent: "p1" } : { micro: true });
+  });
+
+  // Free text search box
+  const sbX = x, sbY = y + 100, sbW = 320, sbH = 28;
+  const focused = app.deckBuilder.searchFocused;
+  roundRect(sbX, sbY, sbW, sbH, 6, focused ? "rgba(20,50,120,0.8)" : "rgba(10,16,40,0.8)", focused ? "#5090ff" : "rgba(40,70,160,0.5)", focused ? 2 : 1);
+  ctx.fillStyle = app.deckBuilder.searchText ? "#b0ccf0" : "rgba(80,110,180,0.6)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(app.deckBuilder.searchText || "カード名・テキスト・タグで検索…", sbX + 10, sbY + 18, sbW - 40);
+  if (app.deckBuilder.searchText) {
+    drawButton(sbX + sbW - 28, sbY + 2, 24, 24, "✕", () => {
+      app.deckBuilder.searchText = "";
+      searchInput.value = "";
+      app.deckBuilder.libraryScroll = 0;
+    }, null, { micro: true });
+  }
+  addHit(sbX, sbY, sbW - (app.deckBuilder.searchText ? 28 : 0), sbH, () => {
+    app.deckBuilder.searchFocused = true;
+    searchInput.value = app.deckBuilder.searchText;
+    setTimeout(() => searchInput.focus(), 0);
+  });
+
+  SEARCH_PRESETS.forEach((preset, i) => {
+    const buttonX = x + i * 96;
+    const buttonY = y + 134;
+    const isActive = app.deckBuilder.searchPreset === preset.id;
+    drawButton(buttonX, buttonY, 84, 26, preset.label, () => setDeckBuilderSearchPreset(preset.id), null, isActive ? { accent: "p1" } : { micro: true });
+  });
+
+  const allTags = ["all", ...popularLibraryTags()];
+  const visibleTagCols = 4;
+  const tagScroll = app.deckBuilder.tagScroll || 0;
+  const canScrollLeft = tagScroll > 0;
+  const canScrollRight = tagScroll + visibleTagCols < allTags.length;
+  drawButton(x, y + 166, 20, 24, "◀", () => changeTagScroll(-1), null, { micro: true });
+  drawButton(x + 410, y + 166, 20, 24, "▶", () => changeTagScroll(1), null, { micro: true });
+  addWheelRegion(x, y + 162, 430, 28, (dy) => changeTagScroll(dy > 0 ? 1 : -1));
+  allTags.slice(tagScroll, tagScroll + visibleTagCols).forEach((tag, i) => {
+    const buttonX = x + 24 + i * 96;
+    const label = tag === "all" ? "全タグ" : tag;
+    const isActive = app.deckBuilder.tagFilter === tag;
+    drawButton(buttonX, y + 166, 88, 24, label, () => setDeckBuilderTagFilter(tag), null, isActive ? { accent: "p1" } : { micro: true });
+  });
+  ctx.fillStyle = "rgba(80,110,180,0.6)";
+  ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${tagScroll + 1}–${Math.min(tagScroll + visibleTagCols, allTags.length)} / ${allTags.length}タグ`, x + 24, y + 204);
+
+  const cards = filteredLibraryCards();
+  const visibleRows = 6;
+  const totalRows = Math.max(1, Math.ceil(cards.length / 2));
+  const maxScroll = Math.max(0, totalRows - visibleRows);
+  app.deckBuilder.libraryScroll = Math.max(0, Math.min(maxScroll, app.deckBuilder.libraryScroll));
+  const startIndex = app.deckBuilder.libraryScroll * 2;
+  const visibleCards = cards.slice(startIndex, startIndex + visibleRows * 2);
+
+  ctx.fillStyle = "rgba(100,130,200,0.7)";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  const sortLabel = SORT_OPTIONS.find((option) => option.id === app.deckBuilder.sortBy)?.label || app.deckBuilder.sortBy;
+  const visibleStart = cards.length ? startIndex + 1 : 0;
+  const visibleEnd = Math.min(cards.length, startIndex + visibleCards.length);
+  ctx.fillText(`${cards.length}枚 / ${visibleStart}-${visibleEnd} / ${sortLabel}`, x, y + 222);
+  drawButton(x + 178, y + 202, 64, 26, "並替", cycleDeckBuilderSort, null, { micro: true });
+  drawButton(x + 250, y + 202, 64, 26, "上へ", () => changeLibraryScroll(-3), null, { micro: true });
+  drawButton(x + 322, y + 202, 64, 26, "下へ", () => changeLibraryScroll(3), null, { micro: true });
+  addWheelRegion(x, y + 232, 400, visibleRows * 56, (deltaY) => changeLibraryScroll(deltaY > 0 ? 1 : -1));
+
+  visibleCards.forEach((card, i) => {
+    const cardX = x + (i % 2) * 206;
+    const cardY = y + 232 + Math.floor(i / 2) * 56;
+    const cTheme = CARD_TYPE_THEME[card.type] || CARD_TYPE_THEME.struct;
+    roundRect(cardX, cardY, 196, 48, 6, cTheme.grad[0], cTheme.accent, 1.5);
+    ctx.fillStyle = "#e0f0ff";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.name, cardX + 8, cardY + 18, 176);
+    ctx.fillStyle = "#a0c0e0";
+    ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.type === "core" ? `初${card.initialHand} 引${card.draw}` : `${CARD_TYPE_LABELS[card.type] || card.type} / ${formatCost(card.cost)}`, cardX + 8, cardY + 38, 180);
+    addHit(cardX, cardY, 196, 48, () => addCardFromLibrary(card));
+    addCardHover(cardX, cardY, 196, 48, card);
+  });
+}
+
+function drawDeckAnalysisPanel(x, y) {
+  const analysis = deckAnalysis();
+  const typeText = Object.entries(analysis.typeCounts)
+    .map(([type, count]) => `${CARD_TYPE_LABELS[type] || type}:${count}`)
+    .join(" / ") || "なし";
+
+  const SECTION_LABEL = "#8aacdc";
+  const SECTION_DATA = "#d0e4ff";
+  ctx.fillStyle = "#b0ccf0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("デッキ分析", x, y);
+  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = SECTION_LABEL;
+  ctx.fillText("カード種類分布", x, y + 38);
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = SECTION_DATA;
+  ctx.fillText(typeText, x, y + 56, 286);
+  ctx.fillStyle = SECTION_LABEL; ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("トップタグ", x, y + 90);
+  ctx.fillStyle = SECTION_DATA; ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(analysis.topTags.join(" / ") || "なし", x, y + 108, 286);
+  ctx.fillStyle = SECTION_LABEL; ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("コスト集計", x, y + 142);
+  ctx.fillStyle = SECTION_DATA; ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(formatResourceTotals(analysis.costTotals), x, y + 160, 286);
+  ctx.fillStyle = SECTION_LABEL; ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("資源収支分析", x, y + 194);
+  ctx.fillStyle = SECTION_DATA; ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`生産 ${formatResourceTotals(analysis.incomeTotals)}`, x, y + 212, 286);
+  ctx.fillStyle = SECTION_LABEL; ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("枚数管理", x, y + 246);
+  ctx.fillStyle = analysis.warnings.length ? "#ff8080" : "#60c080";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(analysis.warnings.join(" / ") || "問題なし", x, y + 264, 286);
+  ctx.fillStyle = SECTION_LABEL; ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("テストドロー", x, y + 298);
+  const drawText = app.deckBuilder.testDraw.length ? app.deckBuilder.testDraw.join(" / ") : "未実行";
+  ctx.fillStyle = SECTION_DATA; ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(drawText, x, y + 316, 286);
+  drawSavedDeckList(x, y + 330);
+  drawSelectedCardDetail(x, y + 408);
+}
+
+function drawSavedDeckList(x, y) {
+  ctx.fillStyle = "rgba(120,150,210,0.6)";
+  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("保存済みデッキ", x, y);
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  if (!app.savedDecks.length) {
+    ctx.fillStyle = "rgba(100,130,180,0.5)";
+    ctx.fillText("名前保存で追加", x, y + 20, 286);
+    return;
+  }
+  app.savedDecks.slice(0, 2).forEach((entry, i) => {
+    const by = y + 14 + i * 24;
+    const isActive = app.deckName === entry.name;
+    drawButton(x, by, 286, 20, entry.name, () => loadNamedDeck(entry.id), null, isActive ? { accent: "p1" } : { micro: true });
+  });
+}
+
+function drawSelectedCardDetail(x, y) {
+  const card = findCatalogCard(app.deckBuilder.selectedCardId);
+  ctx.fillStyle = "rgba(120,150,210,0.6)";
+  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("カード詳細", x, y);
+  if (!card) {
+    ctx.fillStyle = "rgba(100,130,180,0.5)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("カードをクリックすると全文を表示", x, y + 20, 286);
+    return;
+  }
+  const cdTheme = CARD_TYPE_THEME[card.type] || CARD_TYPE_THEME.struct;
+  ctx.fillStyle = cdTheme.text;
+  ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${CARD_TYPE_LABELS[card.type] || card.type} / ${card.name}`, x, y + 20, 286);
+  ctx.fillStyle = "rgba(140,170,220,0.8)";
+  ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+  const lines = [
+    `陣営: ${card.faction || "なし"}`,
+    `タグ: ${tagLabels(card).join(" / ") || "なし"}`,
+    `コスト: ${formatCost(card.cost)} / アクト: ${formatCost(card.actCost)}`,
+  ];
+  if (card.type === "unit") lines.push(`ATK/HP: ${card.atk}/${card.hp}`);
+  const keywordText = keywordLabels(card).join(" / ");
+  if (keywordText) lines.push(`効果語: ${keywordText}`);
+  let nextY = y + 38;
+  for (const line of lines) {
+    ctx.fillText(line, x, nextY, 286);
+    nextY += 14;
+  }
+  const effectText = abilityText(card);
+  if (effectText) drawWrappedText(`効果: ${effectText}`, x, nextY, 286, 14, 2);
+  drawButton(x, y + 104, 120, 26, "全文表示", () => (app.deckBuilder.detailOpen = true), null, { micro: true });
+}
+
+function drawCardDetailOverlay() {
+  if (!app.deckBuilder.detailOpen) return;
+  const card = findCatalogCard(app.deckBuilder.selectedCardId);
+  if (!card) return;
+  ctx.fillStyle = "rgba(0, 0, 10, 0.72)";
+  ctx.fillRect(0, 0, W, H);
+  const x = 382;
+  const y = 168;
+  const w = 676;
+  const h = 520;
+  const ctheme = CARD_TYPE_THEME[card.type] || CARD_TYPE_THEME.struct;
+  ctx.save();
+  ctx.shadowColor = ctheme.glow;
+  ctx.shadowBlur = 20;
+  roundRect(x, y, w, h, 12, "rgba(6,8,22,0.98)", ctheme.accent, 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  const cStripe = ctx.createLinearGradient(x, y, x + w, y);
+  cStripe.addColorStop(0, "transparent"); cStripe.addColorStop(0.2, ctheme.accent); cStripe.addColorStop(0.8, ctheme.accent); cStripe.addColorStop(1, "transparent");
+  ctx.fillStyle = cStripe; ctx.fillRect(x, y, w, 3);
+  drawCardArt(x + 16, y + 16, 180, 220, card);
+  ctx.fillStyle = "#d8e8ff";
+  ctx.font = "700 22px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(card.name, x + 210, y + 40, w - 226);
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = ctheme.text;
+  let nextY = y + 62;
+  const lines = [
+    `種類: ${CARD_TYPE_LABELS[card.type] || card.type}`,
+    `陣営: ${card.faction || "なし"}`,
+    `タグ: ${tagLabels(card).join(" / ") || "なし"}`,
+    `コスト: ${formatCost(card.cost)} / アクト: ${formatCost(card.actCost)}`,
+  ];
+  if (card.type === "unit") lines.push(`ATK/HP: ${card.atk}/${card.hp}`);
+  const keywordText = keywordLabels(card).join(" / ");
+  if (keywordText) lines.push(`効果語: ${keywordText}`);
+  ctx.fillStyle = "rgba(160,190,240,0.85)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  for (const line of lines) {
+    ctx.fillText(line, x + 210, nextY, w - 226);
+    nextY += 20;
+  }
+  const effectText = abilityText(card);
+  if (effectText) {
+    ctx.fillStyle = "rgba(140,170,220,0.6)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("効果", x + 210, nextY + 10);
+    ctx.fillStyle = "#90b8e0";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    nextY = drawWrappedText(effectText, x + 210, nextY + 24, w - 226, 18, 6);
+  }
+  const fullText = card.text || card.flavor || "";
+  if (fullText) {
+    ctx.fillStyle = "rgba(140,170,220,0.6)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("テキスト", x + 210, nextY + 10);
+    ctx.fillStyle = "rgba(180,200,240,0.7)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    drawWrappedText(fullText, x + 210, nextY + 26, w - 226, 18, 10);
+  }
+  drawButton(x + w - 140, y + h - 50, 116, 34, "閉じる", () => (app.deckBuilder.detailOpen = false));
+}
+
+function drawMatchLobbyScreen() {
+  drawAppTitle("試合ロビー");
+  drawUserBadge();
+  drawButton(74, 126, 108, 34, "ホーム", () => (app.screen = "home"), "#575f72");
+  drawButton(194, 126, 150, 34, "デッキ編集", openDeckBuilder, "#6a5632");
+  roundRect(300, 200, 840, 520, 10, "rgba(6,8,22,0.95)", "rgba(40,80,200,0.5)", 1.5);
+  ctx.fillStyle = "#c0d8ff";
+  ctx.font = "700 24px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("試合設定", 360, 260);
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(160,190,240,0.85)";
+  ctx.fillText(`ログイン: ${app.auth.name}`, 362, 296);
+  ctx.fillText(`コア: ${cardCatalog.cores[app.deck.core]?.name || app.deck.core}`, 362, 318);
+  ctx.fillText(`使用デッキ: ${app.deckName} / メイン ${app.deck.main.length}枚 / 施設 ${app.deck.struct.length}枚`, 362, 340, 720);
+  drawMatchDeckSelector(362, 362);
+  ctx.fillStyle = "rgba(140,170,220,0.75)";
+  ctx.fillText(`状態: ${app.match.mode}`, 362, 448);
+  // Room code display / input
+  const rcFocused = app.match.roomCodeFocused;
+  const rcValue = app.match.roomCode || "";
+  roundRect(362, 454, 260, 32, 6, rcFocused ? "rgba(20,50,120,0.8)" : "rgba(10,16,40,0.7)", rcFocused ? "#5090ff" : "rgba(40,70,160,0.45)", rcFocused ? 2 : 1);
+  ctx.fillStyle = rcValue ? "#d0e8ff" : "rgba(80,110,180,0.5)";
+  ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(rcValue || "ルームコードを入力…", 374, 474, 230);
+  addHit(362, 454, 260, 32, () => {
+    app.match.roomCodeFocused = true;
+    roomCodeInput.value = app.match.roomCode || "";
+    setTimeout(() => roomCodeInput.focus(), 0);
+  });
+  drawButton(634, 454, 100, 32, "コードコピー", copyRoomCode, null, { micro: true });
+  ctx.fillText(`接続: ${app.match.connection || "offline"}`, 362, 496);
+  ctx.fillText(`参加者: ${(app.match.players || []).map((player) => player.name).join(" / ") || "なし"}`, 362, 516);
+  drawButton(362, 552, 210, 50, "ローカル対戦", startLocalMatch, null, { accent: "p1" });
+  drawButton(606, 552, 210, 50, "ルーム作成", createRoomMatch);
+  drawButton(850, 552, 210, 50, "ルーム参加", joinRoomMatch);
+  const waitingForOpponent = app.match.status === "online" && (app.match.players || []).length < 2;
+  if (app.match.status === "online" || app.match.status === "connecting") {
+    drawButton(850, 614, 210, 50, waitingForOpponent ? "相手待ち" : "オンライン開始", startMatchFromLobby, null, waitingForOpponent ? {} : { accent: "p1" });
+  }
+  ctx.fillStyle = "rgba(120,150,200,0.65)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(app.match.message || "保存済みデッキを選択し、ルームを作成するか参加してください。", 362, 640, 760);
+}
+
+function drawMatchDeckSelector(x, y) {
+  ctx.fillStyle = "rgba(120,150,210,0.6)";
+  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("保存デッキ選択", x, y);
+  if (!app.savedDecks.length) {
+    ctx.fillStyle = "rgba(100,130,180,0.5)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("保存済みデッキなし。デッキビルダーで名前保存してください。", x, y + 22, 720);
+    return;
+  }
+  app.savedDecks.slice(0, 4).forEach((entry, i) => {
+    const bx = x + i * 178;
+    const selected = app.match.selectedDeckId === entry.id;
+    drawButton(bx, y + 16, 166, 26, entry.name, () => selectMatchDeck(entry.id), null, selected ? { accent: "p1" } : { micro: true });
+  });
+}
+
+function drawHeader() {
+  // Dark header bar
+  const grd = ctx.createLinearGradient(0, 0, 0, 90);
+  grd.addColorStop(0, "rgba(8,14,30,0.98)");
+  grd.addColorStop(1, "rgba(5,10,22,0.92)");
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, W, 90);
+  ctx.strokeStyle = "rgba(30,70,160,0.5)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, 90); ctx.lineTo(W, 90); ctx.stroke();
+
+  // Logo / title
+  ctx.shadowColor = "#2060ff";
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = "#c0d8ff";
+  ctx.font = "700 26px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("TWCG", 30, 44);
+  ctx.shadowBlur = 0;
+
+  // Turn indicator pill
+  const canEndTurn = canControlActivePlayer();
+  const activePlayer = state.players[state.activePlayer];
+  const pillColor = state.activePlayer === "p1" ? "rgba(20,80,200,0.7)" : "rgba(180,30,30,0.7)";
+  const pillBorder = state.activePlayer === "p1" ? "#4090e0" : "#e04444";
+  roundRect(190, 18, 320, 54, 8, pillColor, pillBorder, 1.5);
+  ctx.fillStyle = "#e0ecff";
+  ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`TURN ${state.turn}`, 210, 38);
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(activePlayer.name, 210, 62);
+
+  drawButton(1060, 24, 110, 42, "ロビー", openMatchLobby, null, { dark: true });
+  drawButton(1192, 24, 188, 42, canEndTurn ? "END TURN" : "相手のターン", canEndTurn ? endTurn : () => requestOnlineStateSync("turnButton"), null, { accent: canEndTurn ? "p1" : "dim" });
+}
+
+function drawBoard() {
+  const { x, y, w, h } = layout.board;
+  // Board surround
+  ctx.save();
+  ctx.shadowColor = "rgba(20, 60, 180, 0.5)";
+  ctx.shadowBlur = 24;
+  roundRect(x - 10, y - 10, w + 20, h + 20, 10, "rgba(6,10,22,0.95)", "rgba(30,60,160,0.6)", 1.5);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // Dividing line at board center
+  const midY = y + h / 2;
+  const divGrd = ctx.createLinearGradient(x, 0, x + w, 0);
+  divGrd.addColorStop(0, "transparent");
+  divGrd.addColorStop(0.3, "rgba(180,180,255,0.25)");
+  divGrd.addColorStop(0.7, "rgba(180,180,255,0.25)");
+  divGrd.addColorStop(1, "transparent");
+  ctx.fillStyle = divGrd;
+  ctx.fillRect(x, midY - 1, w, 2);
+
+  for (let visualRow = 0; visualRow < ROWS; visualRow += 1) {
+    const row = visualRowToBoardRow(visualRow);
+    for (let col = 0; col < COLS; col += 1) {
+      const cx = x + col * layout.cell.w;
+      const cy = y + visualRow * layout.cell.h;
+      const isP1Summon = row === PLAYERS.p1.summonRow;
+      const isP2Summon = row === PLAYERS.p2.summonRow;
+      const isSummon = isP1Summon || isP2Summon;
+
+      // Cell base
+      const cellFill = isSummon
+        ? isP1Summon ? "rgba(14,40,100,0.55)" : "rgba(100,20,20,0.45)"
+        : "rgba(8,14,30,0.7)";
+      ctx.fillStyle = cellFill;
+      ctx.fillRect(cx + 1, cy + 1, layout.cell.w - 2, layout.cell.h - 2);
+
+      // Cell border
+      ctx.save();
+      if (isSummon) {
+        ctx.shadowColor = isP1Summon ? "#3080ff" : "#ff4030";
+        ctx.shadowBlur = 8;
+      }
+      ctx.strokeStyle = isP1Summon ? "rgba(50,120,255,0.7)"
+        : isP2Summon ? "rgba(255,60,40,0.6)"
+        : "rgba(30,55,130,0.4)";
+      ctx.lineWidth = isSummon ? 1.5 : 1;
+      ctx.strokeRect(cx + 4, cy + 4, layout.cell.w - 8, layout.cell.h - 8);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+
+      // Zone label (only for empty cells)
+      const unit = state.board[row][col];
+      if (!unit) {
+        ctx.fillStyle = isSummon
+          ? isP1Summon ? "rgba(80,140,255,0.35)" : "rgba(255,90,70,0.28)"
+          : "rgba(80,100,180,0.18)";
+        ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(isSummon ? "SUMMON" : "UNIT", cx + layout.cell.w / 2, cy + layout.cell.h / 2 + 4);
+        ctx.textAlign = "left";
+      }
+
+      addHit(cx, cy, layout.cell.w, layout.cell.h, () => handleCellClick(row, col));
+      if (unit) drawCard(cx + 8, cy + 8, layout.cell.w - 16, layout.cell.h - 16, unit, { selected: selectedUnit() === unit });
+    }
+  }
+  const viewer = viewerPlayerId();
+  drawCore(opponentOf(viewer), x + 240, y - 80, 320, 64);
+  drawCore(viewer, x + 240, y + h + 16, 320, 64);
+}
+
+function drawCore(playerId, x, y, w, h) {
+  const player = state.players[playerId];
+  const isP1 = playerId === "p1";
+  const accentColor = isP1 ? "#3080ff" : "#ff4030";
+  const bgColor = isP1 ? "rgba(10,25,70,0.88)" : "rgba(70,12,12,0.88)";
+
+  ctx.save();
+  ctx.shadowColor = accentColor;
+  ctx.shadowBlur = 16;
+  roundRect(x, y, w, h, 10, bgColor, accentColor, 1.5);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // Player name
+  ctx.fillStyle = "#c8d8ff";
+  ctx.font = "700 15px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(player.name, x + 16, y + 22);
+
+  // Core name
+  ctx.fillStyle = "rgba(180,200,255,0.6)";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(player.core.name, x + 16, y + 40);
+
+  // HP
+  const maxHp = player.core.maxHp || 20;
+  const hpRatio = Math.max(0, player.core.hp / maxHp);
+  const barX = x + 16;
+  const barY = y + h - 18;
+  const barW = w - 100;
+  const barH = 8;
+  // bar bg
+  ctx.fillStyle = "rgba(20,20,40,0.8)";
+  roundRect(barX, barY, barW, barH, 4, "rgba(20,20,40,0.8)", null);
+  // bar fill
+  const hpColor = hpRatio > 0.5 ? accentColor : hpRatio > 0.25 ? "#e0a020" : "#ff2020";
+  ctx.save();
+  ctx.shadowColor = hpColor;
+  ctx.shadowBlur = 6;
+  roundRect(barX, barY, barW * hpRatio, barH, 4, hpColor, null);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // HP number
+  ctx.fillStyle = "#e8f0ff";
+  ctx.font = "700 22px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText(`${player.core.hp}`, x + w - 16, y + h - 8);
+  ctx.textAlign = "left";
+  ctx.fillStyle = "rgba(160,180,220,0.7)";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`LP`, x + w - 16 - ctx.measureText(`${player.core.hp}`).width - 26, y + h - 10);
+
+  if (playerId !== state.activePlayer) addHit(x, y, w, h, () => attackWithSelectedUnit({ kind: "core" }));
+}
+
+function handleCellClick(row, col) {
+  const selected = state.selected;
+  const unit = state.board[row][col];
+  if (state.pendingTarget) {
+    if (!requireActivePlayerControl()) return;
+    resolvePendingTarget(row, col);
+    return;
+  }
+  if (selected?.kind === "hand" && selected.confirmed && (!selected.playerId || selected.playerId === state.activePlayer)) {
+    if (!requireActivePlayerControl()) return;
+    const card = state.players[state.activePlayer].hand[selected.index];
+    if (card?.type === "unit") return placeUnitFromHand(selected.index, row, col);
+  }
+  if (selected?.kind === "unit" && unit?.owner !== state.activePlayer) {
+    if (!requireActivePlayerControl()) return;
+    return attackWithSelectedUnit({ kind: "unit", row, col });
+  }
+  if (unit) {
+    const detailOpen = consumeFieldDoubleClick(`unit:${row}:${col}`);
+    state.selected = { kind: "unit", row, col, detailOpen };
+    state.message = `${unit.name} selected`;
+  } else {
+    if (!requireActivePlayerControl()) return;
+    state.selected = null;
+  }
+}
+
+function drawSidePanel(playerId, box) {
+  const player = state.players[playerId];
+  const isP1 = playerId === "p1";
+  const accentColor = isP1 ? "rgba(30,80,200,0.5)" : "rgba(200,30,30,0.4)";
+  const borderColor = isP1 ? "rgba(40,90,220,0.7)" : "rgba(220,40,40,0.6)";
+
+  // Glass panel
+  roundRect(box.x, box.y, box.w, box.h, 10, "rgba(14,20,45,0.95)", borderColor, 1.5);
+  // Top accent stripe
+  ctx.fillStyle = accentColor;
+  roundRect(box.x, box.y, box.w, 3, 2, accentColor, null);
+
+  // Player name
+  ctx.fillStyle = "#e0eeff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(player.name, box.x + 14, box.y + 28);
+
+  // Deck count pill
+  roundRect(box.x + 14, box.y + 36, 80, 20, 4, "rgba(20,40,100,0.6)", "rgba(60,100,200,0.4)", 1);
+  ctx.fillStyle = "#90b0e0";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`DECK ${player.mainDeck.length}`, box.x + 20, box.y + 50);
+
+  // Zone buttons (Dump / Exile) as icon-style buttons
+  const zoneY = box.y + 64;
+  const dumpX = box.x + 14;
+  const exileX = box.x + 122;
+  // Dump button
+  roundRect(dumpX, zoneY, 100, 24, 5, "rgba(40,80,60,0.5)", "rgba(60,160,100,0.4)", 1);
+  ctx.fillStyle = "#80e0a0";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`墓地  ${player.dump.length}枚`, dumpX + 8, zoneY + 16);
+  addHit(dumpX, zoneY, 100, 24, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
+  // Exile button
+  roundRect(exileX, zoneY, 100, 24, 5, "rgba(80,40,100,0.5)", "rgba(160,80,200,0.4)", 1);
+  ctx.fillStyle = "#c080f0";
+  ctx.fillText(`除外  ${player.exileZone.length}枚`, exileX + 8, zoneY + 16);
+  addHit(exileX, zoneY, 100, 24, () => { zoneViewerState = { playerId, zone: "exile", scroll: 0 }; });
+
+  // Resources
+  drawResourceList(player, box.x + 14, box.y + 96);
+
+  // Separator
+  ctx.strokeStyle = "rgba(40,70,160,0.3)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(box.x + 14, box.y + 272); ctx.lineTo(box.x + box.w - 14, box.y + 272); ctx.stroke();
+
+  // Wild / Grand zones
+  drawMiniCard(box.x + 14, box.y + 280, 96, 26, `Wild ${player.wildZone.length}`, "rgba(60,30,90,0.7)");
+  drawMiniCard(box.x + 124, box.y + 280, 96, 26, player.grandZone[0]?.name?.split(" ")[0] || `Grand ${player.grandZone.length}`, "rgba(20,60,100,0.7)");
+
+  // Struct zone header
+  ctx.fillStyle = "rgba(160,180,230,0.7)";
+  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("STRUCT ZONE", box.x + 14, box.y + 326);
+  ctx.strokeStyle = "rgba(40,70,160,0.3)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(box.x + 14, box.y + 330); ctx.lineTo(box.x + box.w - 14, box.y + 330); ctx.stroke();
+
+  player.structs.slice(0, 6).forEach((card, i) => {
+    const selected = state.selected?.kind === "fieldStruct" && state.selected.playerId === playerId && state.selected.index === i;
+    const cardX = box.x + 14;
+    const cardY = box.y + 336 + i * 36;
+    const fill = selected ? "rgba(140,100,20,0.7)" : "rgba(20,40,80,0.6)";
+    const border = selected ? "rgba(220,170,40,0.8)" : "rgba(40,80,160,0.5)";
+    roundRect(cardX, cardY, box.w - 28, 30, 5, fill, border, selected ? 1.5 : 1);
+    ctx.fillStyle = selected ? "#ffd860" : "#a0b8e0";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.name, cardX + 8, cardY + 20, box.w - 44);
+    addHit(cardX, cardY, box.w - 28, 30, () => {
+      const detailOpen = consumeFieldDoubleClick(`fieldStruct:${playerId}:${i}`);
+      state.selected = { kind: "fieldStruct", playerId, index: i, detailOpen };
+      state.message = detailOpen ? `${card.name}: detail` : `${card.name} selected`;
+    });
+  });
+
+  if (playerId === viewerPlayerId()) {
+    const deckTitleY = box.y + 556;
+    const deckCardsY = box.y + 574;
+    ctx.fillStyle = "rgba(160,180,230,0.7)";
+    ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("STRUCT DECK", box.x + 14, deckTitleY);
+    const scrollInfo = clampStructDeckScroll(player);
+    ctx.fillStyle = "rgba(100,120,180,0.6)";
+    ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${player.structDeck.length}枚`, box.x + 114, deckTitleY);
+    drawButton(box.x + box.w - 76, deckTitleY - 14, 28, 18, "↑", () => changeStructDeckScroll(-1), null, { micro: true });
+    drawButton(box.x + box.w - 42, deckTitleY - 14, 28, 18, "↓", () => changeStructDeckScroll(1), null, { micro: true });
+    const startIndex = scrollInfo.scroll * 3;
+    const visibleCards = player.structDeck.slice(startIndex, startIndex + scrollInfo.visibleRows * 3);
+    addWheelRegion(box.x + 14, deckCardsY, box.w - 28, scrollInfo.visibleRows * 42, (deltaY) => changeStructDeckScroll(deltaY > 0 ? 1 : -1));
+    visibleCards.forEach((card, visibleIndex) => {
+      const i = startIndex + visibleIndex;
+      const col = visibleIndex % 3;
+      const row = Math.floor(visibleIndex / 3);
+      const bx = box.x + 14 + col * 70;
+      const by = deckCardsY + row * 42;
+      const selected = state.selected?.kind === "structDeck" && state.selected.playerId === playerId && state.selected.index === i;
+      const canAfford = canPay(player, card.cost);
+      const fill = selected ? "rgba(140,100,20,0.7)" : canAfford ? "rgba(20,50,100,0.7)" : "rgba(20,20,40,0.6)";
+      const border = selected ? "rgba(220,170,40,0.9)" : canAfford ? "rgba(50,100,200,0.5)" : "rgba(40,40,80,0.4)";
+      roundRect(bx, by, 64, 38, 5, fill, border, selected ? 1.5 : 1);
+      ctx.fillStyle = selected ? "#ffd860" : canAfford ? "#90b8f0" : "#506080";
+      ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+      ctx.fillText(card.name.split(" ")[0], bx + 5, by + 24, 54);
+      addHit(bx, by, 64, 38, () => {
+        if (!requireActivePlayerControl()) return;
+        state.selected = { kind: "structDeck", playerId, index: i, confirmed: false };
+        state.message = `${card.name}: 内容を確認してから使用できます。`;
+      });
+    });
+  }
+}
+
+const CARD_TYPE_THEME = {
+  unit:   { grad: ["#1a3060", "#0a1830"], accent: "#3080e0", glow: "#2060c0", text: "#80c0ff" },
+  tact:   { grad: ["#2a1650", "#120830"], accent: "#8040d0", glow: "#6020a0", text: "#c080ff" },
+  wild:   { grad: ["#102a18", "#081610"], accent: "#30a050", glow: "#208040", text: "#60d080" },
+  grand:  { grad: ["#0e2038", "#061020"], accent: "#2070b0", glow: "#1050a0", text: "#60a0e0" },
+  struct: { grad: ["#141e2a", "#0a1018"], accent: "#507080", glow: "#305060", text: "#80b0b8" },
+};
+
+const RESOURCE_PILL_COLORS = {
+  electric: { bg: "rgba(20,60,140,0.65)", border: "rgba(60,130,255,0.6)", text: "#70b4ff", glow: "#3070ff" },
+  heat:     { bg: "rgba(140,40,10,0.65)", border: "rgba(255,100,50,0.6)", text: "#ff9060", glow: "#ff5020" },
+  kinetic:  { bg: "rgba(20,100,50,0.65)", border: "rgba(50,200,100,0.6)", text: "#60e090", glow: "#30c060" },
+  mystic:   { bg: "rgba(80,20,130,0.65)", border: "rgba(160,60,255,0.6)", text: "#c070ff", glow: "#9030ff" },
+  bio:      { bg: "rgba(10,100,80,0.65)", border: "rgba(30,200,160,0.6)", text: "#50e0c0", glow: "#20c0a0" },
+};
+
+function drawResourceList(player, x, y) {
+  const gained = state.turnStartSummary?.playerId === player.id ? state.turnStartSummary.gained || {} : {};
+  RESOURCE_KEYS.forEach((key, i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const rx = x + col * 108;
+    const ry = y + row * 40;
+    const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(30,40,70,0.6)", border: "rgba(80,100,180,0.5)", text: "#a0b0d0", glow: "#6080c0" };
+    const amt = player.resources[key] || 0;
+    roundRect(rx, ry, 100, 32, 6, colors.bg, colors.border, 1.5);
+    ctx.save();
+    ctx.shadowColor = colors.glow; ctx.shadowBlur = 4;
+    ctx.fillStyle = colors.text;
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(RESOURCE_LABELS[key], rx + 8, ry + 13);
+    ctx.font = "700 17px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(String(amt), rx + 8, ry + 28);
+    ctx.shadowBlur = 0; ctx.restore();
+    if (gained[key] > 0) {
+      ctx.save();
+      ctx.shadowColor = colors.glow;
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = colors.text;
+      ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(`+${gained[key]}`, rx + 94, ry + 28);
+      ctx.textAlign = "left";
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+  });
+}
+
+function drawHand() {
+  const player = state.players[viewerPlayerId()];
+  // Dark hand zone
+  const hx = layout.hand.x, hy = layout.hand.y, hw = layout.hand.w, hh = layout.hand.h;
+  const grd = ctx.createLinearGradient(hx, hy, hx, hy + hh);
+  grd.addColorStop(0, "rgba(16,26,58,0.96)");
+  grd.addColorStop(1, "rgba(10,18,42,0.98)");
+  roundRect(hx, hy, hw, hh, 8, grd, "rgba(50,90,220,0.5)", 1.5);
+  // Top accent line
+  ctx.fillStyle = "rgba(30,80,200,0.5)";
+  roundRect(hx, hy, hw, 2, 1, "rgba(30,80,200,0.5)", null);
+
+  ctx.fillStyle = "rgba(140,170,230,0.7)";
+  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("HAND", hx + 16, hy + 16);
+  ctx.fillStyle = "rgba(80,110,180,0.6)";
+  ctx.fillText(`${player.hand.length}枚`, hx + 60, hy + 16);
+
+  player.hand.forEach((card, i) => {
+    const cx = hx + 16 + i * 100;
+    const cy = hy + 22;
+    const isSelected = state.selected?.kind === "hand" && state.selected.playerId === player.id && state.selected.index === i;
+    drawCard(cx, cy, 88, hh - 30, card, { selected: isSelected, small: true });
+    addHit(cx, cy, 88, hh - 30, () => {
+      if (!requireActivePlayerControl()) return;
+      state.selected = { kind: "hand", playerId: player.id, index: i, confirmed: false };
+      state.message = `${card.name}: 内容を確認してから使用できます。`;
+    });
+  });
+}
+
+function drawTopHand() {
+  const opponent = state.players[opponentOf(viewerPlayerId())];
+  const { x, y, w, h } = layout.topHand;
+  const grd = ctx.createLinearGradient(x, y, x, y + h);
+  grd.addColorStop(0, "rgba(10,18,42,0.98)");
+  grd.addColorStop(1, "rgba(16,26,58,0.96)");
+  roundRect(x, y, w, h, 8, grd, "rgba(180,40,40,0.5)", 1.5);
+  ctx.fillStyle = "rgba(230,140,140,0.5)";
+  roundRect(x, y + h - 2, w, 2, 1, "rgba(200,40,40,0.5)", null);
+
+  ctx.fillStyle = "rgba(220,150,150,0.65)";
+  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("HAND", x + 16, y + 16);
+  ctx.fillStyle = "rgba(180,80,80,0.6)";
+  ctx.fillText(`${opponent.hand.length}枚`, x + 60, y + 16);
+
+  for (let i = 0; i < opponent.hand.length; i += 1) {
+    drawCardBack(x + 16 + i * 52, y + 22, 44, h - 30);
+  }
+}
+
+function drawOnlinePendingOverlay() {
+  if (app.screen !== "game" || app.match.status !== "online" || !queuedOnlineAction) return;
+  const x = W / 2 - 150;
+  const y = 92;
+  const label = queuedOnlineAction.reason || "sync";
+  ctx.save();
+  ctx.shadowColor = "#4080ff";
+  ctx.shadowBlur = 18;
+  roundRect(x, y, 300, 44, 8, "rgba(8,16,38,0.94)", "rgba(70,130,255,0.85)", 2);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#d8e8ff";
+  ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("SERVER PROCESSING", x + 18, y + 19);
+  ctx.fillStyle = "rgba(150,185,255,0.82)";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(label, x + 18, y + 34, 264);
+  ctx.restore();
+}
+
+function drawActionPanel() {
+  const x = 1168;
+  const y = 94;
+  const unit = selectedUnit();
+  roundRect(x, y, 238, 72, 8, "rgba(6,10,24,0.9)", "rgba(40,70,160,0.5)", 1.5);
+  ctx.fillStyle = "rgba(160,190,240,0.75)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(state.message, x + 12, y + 18, 214);
+  if (unit && unit.owner === state.activePlayer) {
+    drawButton(x + 10, y + 30, 64, 28, "前進", moveSelectedUnit);
+    drawButton(x + 84, y + 30, 64, 28, "後退", retreatSelectedUnit);
+    drawButton(x + 158, y + 30, 66, 28, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
+  }
+}
+
+function drawTurnStartSummaryPanel() {
+  const summary = state.turnStartSummary;
+  if (!summary) return;
+  const x = 560;
+  const y = 160;
+  const w = 320;
+  const h = 58;
+  const isViewer = summary.playerId === viewerPlayerId();
+  const bg = isViewer ? "rgba(10,30,80,0.92)" : "rgba(80,10,10,0.92)";
+  const border = isViewer ? "rgba(50,120,255,0.7)" : "rgba(220,50,50,0.7)";
+  ctx.save();
+  ctx.shadowColor = isViewer ? "#2060ff" : "#ff2020";
+  ctx.shadowBlur = 12;
+  roundRect(x, y, w, h, 8, bg, border, 1.5);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  ctx.fillStyle = "#d0e8ff";
+  ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`TURN START: ${summary.playerName}`, x + 14, y + 20, w - 28);
+  ctx.fillStyle = "rgba(160,190,240,0.8)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`資源 +${formatResourceTotals(summary.gained)} / ドロー ${summary.drawn}枚`, x + 14, y + 42, w - 28);
+}
+
+function drawChoiceOverlay() {
+  const pending = state.pendingChoice;
+  if (!pending) return;
+  ctx.fillStyle = "rgba(0, 0, 8, 0.75)";
+  ctx.fillRect(0, 0, W, H);
+
+  const x = 388;
+  const y = 202;
+  const w = 664;
+  const h = 392;
+  ctx.save();
+  ctx.shadowColor = "#8040ff";
+  ctx.shadowBlur = 30;
+  roundRect(x, y, w, h, 12, "rgba(8,10,28,0.97)", "rgba(100,50,200,0.7)", 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  // Top accent
+  const acGrd = ctx.createLinearGradient(x, y, x + w, y);
+  acGrd.addColorStop(0, "transparent");
+  acGrd.addColorStop(0.3, "rgba(120,60,220,0.6)");
+  acGrd.addColorStop(0.7, "rgba(120,60,220,0.6)");
+  acGrd.addColorStop(1, "transparent");
+  ctx.fillStyle = acGrd;
+  ctx.fillRect(x, y, w, 2);
+
+  ctx.fillStyle = "#d0b0ff";
+  ctx.font = "700 22px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("神秘捕縛", x + 28, y + 38);
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(180,160,220,0.8)";
+  ctx.fillText("手札の神秘タグユニットを選択します。捨てると1回、除外すると2回、登場時効果を発動します。", x + 28, y + 64, w - 56);
+
+  const choices = mysticCaptureChoices();
+  if (!choices.length) {
+    ctx.fillStyle = "rgba(180,160,220,0.8)";
+    ctx.font = "700 15px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("選択できる神秘ユニットがありません。", x + 28, y + 126);
+  }
+  choices.forEach(({ card, handIndex }, i) => {
+    const cardX = x + 28 + (i % 2) * 304;
+    const cardY = y + 98 + Math.floor(i / 2) * 62;
+    const selected = pending.selectedHandIndexes.includes(handIndex);
+    const fill = selected ? "rgba(100,60,200,0.7)" : "rgba(20,24,60,0.7)";
+    const border = selected ? "rgba(160,100,255,0.9)" : "rgba(60,70,160,0.5)";
+    roundRect(cardX, cardY, 282, 48, 6, fill, border, selected ? 2 : 1);
+    ctx.fillStyle = selected ? "#d0b0ff" : "#8090c0";
+    ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${selected ? "✓ " : ""}${card.name}`, cardX + 10, cardY + 20, 260);
+    ctx.fillStyle = "rgba(140,130,180,0.7)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${tagLabels(card).join("/")} / ${formatCost(card.cost)}`, cardX + 10, cardY + 38, 260);
+    addHit(cardX, cardY, 282, 48, () => toggleMysticCaptureChoice(handIndex));
+  });
+
+  const selectedCount = pending.selectedHandIndexes.length;
+  ctx.fillStyle = "rgba(180,160,220,0.8)";
+  ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${selectedCount}枚選択中`, x + 28, y + h - 82);
+  drawButton(x + 28, y + h - 58, 150, 36, "選ばず解決", () => resolveMysticCaptureChoice({ exile: false }));
+  drawButton(x + 196, y + h - 58, 180, 36, "捨てて1回発動", () => resolveMysticCaptureChoice({ exile: false }));
+  drawButton(x + 394, y + h - 58, 210, 36, "除外して2回発動", () => resolveMysticCaptureChoice({ exile: true }), null, { accent: "p1" });
+}
+
+function canAffordStructActivation(struct, player) {
+  for (const ab of (struct.abilities || []).filter((a) => a.trigger === "onStructurePhase")) {
+    if (ab.effect === "chooseExchange") {
+      const canAffordAny = (ab.costOptions || []).some(
+        (opt) => (player.resources[opt.resource] || 0) >= opt.amount
+      );
+      if (!canAffordAny) return false;
+    } else {
+      for (const [res, amt] of Object.entries(ab.cost || {})) {
+        if ((player.resources[res] || 0) < amt) return false;
+      }
+      if (typeof ab.amount === "number" && ab.amount < 0) {
+        if ((player.resources[ab.resource] || 0) < Math.abs(ab.amount)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function drawStructPhaseOverlay() {
+  const pending = state.pendingStructPhase;
+  if (!pending) return;
+  const player = state.players[pending.playerId];
+  const structs = player.structs
+    .map((s, origIdx) => ({ s, origIdx }))
+    .filter(({ s }) => (s.abilities || []).some((a) => a.trigger === "onStructurePhase"));
+  const isController = canControlActivePlayer();
+
+  ctx.fillStyle = "rgba(0,0,8,0.72)";
+  ctx.fillRect(0, 0, W, H);
+
+  const rowH = 62;
+  const headerH = 76;
+  const choiceH = pending.pendingResourceChoice ? 72 : 0;
+  const footerH = 58;
+  const w = 640;
+  const h = headerH + structs.length * rowH + choiceH + footerH;
+  const x = Math.round((W - w) / 2);
+  const y = Math.round((H - h) / 2);
+
+  ctx.save();
+  ctx.shadowColor = "#30a870";
+  ctx.shadowBlur = 28;
+  roundRect(x, y, w, h, 12, "rgba(6,18,14,0.97)", "rgba(40,150,90,0.7)", 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  const acGrd = ctx.createLinearGradient(x, y, x + w, y);
+  acGrd.addColorStop(0, "transparent");
+  acGrd.addColorStop(0.3, "rgba(50,160,100,0.55)");
+  acGrd.addColorStop(0.7, "rgba(50,160,100,0.55)");
+  acGrd.addColorStop(1, "transparent");
+  ctx.fillStyle = acGrd;
+  ctx.fillRect(x, y, w, 2);
+
+  ctx.fillStyle = "#70dfa8";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("ストラクトフェーズ", x + 24, y + 34);
+  ctx.fillStyle = "rgba(130,200,160,0.75)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("発動するストラクトを選択（スキップ可）", x + 24, y + 56);
+
+  structs.forEach(({ s: struct, origIdx }, i) => {
+    const activated = pending.activatedIndexes.includes(origIdx);
+    const affordable = canAffordStructActivation(struct, player);
+    const ry = y + headerH + i * rowH;
+    const rowFill = activated ? "rgba(16,54,34,0.75)" : "rgba(8,26,16,0.75)";
+    const rowBorder = activated ? "rgba(50,160,90,0.85)" : affordable ? "rgba(30,80,50,0.5)" : "rgba(100,40,40,0.5)";
+    roundRect(x + 14, ry + 5, w - 28, rowH - 10, 6, rowFill, rowBorder, activated ? 2 : 1);
+
+    ctx.fillStyle = activated ? "#60c890" : affordable ? "#90c8a8" : "#a07070";
+    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${activated ? "✓ " : ""}${struct.name}`, x + 26, ry + 24, 280);
+
+    const abText = (struct.abilities || [])
+      .filter((a) => a.trigger === "onStructurePhase")
+      .map((a) => abilityText({ abilities: [a] }))
+      .join(" / ");
+    ctx.fillStyle = activated ? "rgba(80,160,100,0.7)" : affordable ? "rgba(120,180,140,0.72)" : "rgba(160,100,100,0.7)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(abText || struct.text || "", x + 26, ry + 42, 380);
+
+    if (isController && !activated) {
+      if (affordable) {
+        drawButton(x + w - 110, ry + 13, 84, 30, "発動", () => activateStructInPhase(origIdx));
+      } else {
+        drawButton(x + w - 110, ry + 13, 84, 30, "発動不可", null, null, { accent: "dim" });
+      }
+    }
+  });
+
+  const choice = pending.pendingResourceChoice;
+  if (choice) {
+    const choiceY = y + h - footerH - choiceH + 6;
+    roundRect(x + 14, choiceY, w - 28, 58, 6, "rgba(4,14,28,0.92)", "rgba(60,120,200,0.7)", 1.5);
+    ctx.fillStyle = "#90b8e8";
+    ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${choice.cardName}: 支払う資源を選択してください`, x + 26, choiceY + 20);
+    let bx = x + 26;
+    for (const opt of choice.costOptions) {
+      const canPay = (player.resources[opt.resource] || 0) >= opt.amount;
+      const label = `${RESOURCE_LABELS[opt.resource] || opt.resource} ${opt.amount}`;
+      if (isController && canPay) {
+        drawButton(bx, choiceY + 28, 120, 22, label, () => resolveMarketChoice(opt.resource));
+      } else {
+        drawButton(bx, choiceY + 28, 120, 22, label, null, null, { accent: "dim" });
+      }
+      bx += 130;
+    }
+  }
+
+  if (isController) {
+    const endDisabled = !!choice;
+    drawButton(
+      x + w - 210, y + h - 44, 190, 34,
+      "ストラクトフェーズ終了",
+      endDisabled ? null : endStructPhase,
+      null,
+      endDisabled ? { accent: "dim" } : { accent: "p1" }
+    );
+  }
+}
+
+function drawHandConfirmOverlay() {
+  const selected = state.selected;
+  const card = selectedPlayableCard();
+  if (
+    !card ||
+    !["hand", "structDeck"].includes(selected?.kind) ||
+    selected.confirmed ||
+    state.pendingChoice ||
+    (selected.playerId && selected.playerId !== viewerPlayerId())
+  ) {
+    return;
+  }
+
+  ctx.fillStyle = "rgba(0, 0, 10, 0.72)";
+  ctx.fillRect(0, 0, W, H);
+  addHit(0, 0, W, H, () => {});
+
+  const x = 418;
+  const y = 142;
+  const w = 604;
+  const h = 520;
+  const theme = CARD_TYPE_THEME[card.type] || CARD_TYPE_THEME.struct;
+  ctx.save();
+  ctx.shadowColor = theme.glow;
+  ctx.shadowBlur = 24;
+  roundRect(x, y, w, h, 12, "rgba(6,8,22,0.98)", theme.accent, 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  // Top stripe
+  const stripeGrd = ctx.createLinearGradient(x, y, x + w, y);
+  stripeGrd.addColorStop(0, "transparent");
+  stripeGrd.addColorStop(0.2, theme.accent);
+  stripeGrd.addColorStop(0.8, theme.accent);
+  stripeGrd.addColorStop(1, "transparent");
+  ctx.fillStyle = stripeGrd;
+  ctx.fillRect(x, y, w, 3);
+
+  // Card art preview (left panel)
+  drawCardArt(x + 16, y + 16, 180, 220, card);
+
+  ctx.fillStyle = "#d8e8ff";
+  ctx.font = "700 24px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(card.name, x + 212, y + 40, w - 228);
+
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = theme.text;
+  const typeLabel = { unit: "ユニット", tact: "指令", wild: "Wild", grand: "Grand", struct: "施設" }[card.type] || card.type;
+  const stats = card.type === "unit" ? ` / ATK ${card.atk} / HP ${card.hp}` : "";
+  ctx.fillText(`${typeLabel} / ${card.faction || "ニュートラル"} / コスト ${formatCost(card.cost)}${stats}`, x + 212, y + 62, w - 228);
+
+  let nextY = y + 90;
+  const tags = tagLabels(card).join(" / ");
+  if (tags) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("タグ", x + 212, nextY);
+    ctx.fillStyle = "#90b8e0";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(tags, x + 260, nextY, w - 276);
+    nextY += 24;
+  }
+
+  const keywords = keywordLabels(card).join(" / ");
+  if (keywords) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("効果", x + 212, nextY);
+    ctx.fillStyle = "#90b8e0";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    nextY = drawWrappedText(keywords, x + 260, nextY, w - 276, 18, 3);
+    nextY += 6;
+  }
+
+  const generatedEffect = abilityText(card);
+  if (generatedEffect) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("処理", x + 212, nextY);
+    ctx.fillStyle = "#90b8e0";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    nextY = drawWrappedText(generatedEffect, x + 212, nextY + 16, w - 228, 18, 4);
+    nextY += 6;
+  }
+
+  const text = card.text || card.flavor || "";
+  if (text) {
+    // Separator
+    ctx.strokeStyle = "rgba(40,70,160,0.3)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x + 212, nextY + 6); ctx.lineTo(x + w - 20, nextY + 6); ctx.stroke();
+    nextY += 16;
+    ctx.fillStyle = "rgba(180,200,240,0.7)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    drawWrappedText(text, x + 212, nextY, w - 228, 18, 8);
+  }
+
+  const useLabel = card.type === "unit" ? "使う: 配置先選択" : card.type === "struct" ? "使う: 建設" : "使う";
+  drawButton(x + w - 316, y + h - 58, 154, 38, "戻る", () => {
+    state.selected = null;
+    state.message = "カード選択を解除しました。";
+  });
+  drawButton(x + w - 146, y + h - 58, 120, 38, useLabel, useSelectedPlayableCard, null, { accent: "p1" });
+}
+
+function drawFieldCardDetailOverlay() {
+  const selected = state.selected;
+  const card = selectedFieldCard();
+  if (!card || state.pendingChoice) return;
+
+  ctx.fillStyle = "rgba(0, 0, 10, 0.72)";
+  ctx.fillRect(0, 0, W, H);
+  addHit(0, 0, W, H, () => {});
+
+  const x = 418;
+  const y = 142;
+  const w = 604;
+  const h = 520;
+  const theme = CARD_TYPE_THEME[card.type] || CARD_TYPE_THEME.struct;
+  ctx.save();
+  ctx.shadowColor = theme.glow;
+  ctx.shadowBlur = 24;
+  roundRect(x, y, w, h, 12, "rgba(6,8,22,0.98)", theme.accent, 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  const stripeGrd2 = ctx.createLinearGradient(x, y, x + w, y);
+  stripeGrd2.addColorStop(0, "transparent");
+  stripeGrd2.addColorStop(0.2, theme.accent);
+  stripeGrd2.addColorStop(0.8, theme.accent);
+  stripeGrd2.addColorStop(1, "transparent");
+  ctx.fillStyle = stripeGrd2;
+  ctx.fillRect(x, y, w, 3);
+
+  // Card art preview
+  drawCardArt(x + 16, y + 16, 180, 220, card);
+
+  ctx.fillStyle = "#d8e8ff";
+  ctx.font = "700 24px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(card.name, x + 212, y + 40, w - 228);
+
+  const controller = card.owner ? state.players[card.owner]?.name : selected.kind === "fieldStruct" ? state.players[selected.playerId]?.name : "";
+  const typeLabel = { unit: "ユニット", struct: "施設" }[card.type] || card.type;
+  const stats = card.type === "unit" ? ` / ATK ${card.atk} / HP ${card.currentHp}/${card.maxHp}` : "";
+  const status = card.type === "unit" ? ` / ${card.rested ? "レスト" : "非レスト"}` : "";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = theme.text;
+  ctx.fillText(`${typeLabel} / ${controller || "場"} / ${card.faction || "ニュートラル"}${stats}${status}`, x + 212, y + 62, w - 228);
+
+  let nextY = y + 90;
+  const tags = tagLabels(card).join(" / ");
+  if (tags) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("タグ", x + 212, nextY);
+    ctx.fillStyle = "#90b8e0";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(tags, x + 260, nextY, w - 276);
+    nextY += 24;
+  }
+
+  const costLine = [`コスト ${formatCost(card.cost)}`];
+  if (card.actCost) costLine.push(`アクト ${formatCost(card.actCost)}`);
+  ctx.fillStyle = "rgba(160,190,240,0.6)";
+  ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("コスト", x + 212, nextY);
+  ctx.fillStyle = "#90b8e0";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(costLine.join(" / "), x + 260, nextY, w - 276);
+  nextY += 24;
+
+  const keywords = keywordLabels(card).join(" / ");
+  if (keywords) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("効果", x + 212, nextY);
+    ctx.fillStyle = "#90b8e0";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    nextY = drawWrappedText(keywords, x + 212, nextY + 14, w - 228, 18, 3);
+    nextY += 6;
+  }
+
+  const generatedEffect = abilityText(card);
+  if (generatedEffect) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("処理", x + 212, nextY);
+    ctx.fillStyle = "#90b8e0";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    nextY = drawWrappedText(generatedEffect, x + 212, nextY + 14, w - 228, 18, 4);
+    nextY += 6;
+  }
+
+  const text = card.text || card.flavor || "";
+  if (text) {
+    ctx.strokeStyle = "rgba(40,70,160,0.3)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x + 212, nextY + 6); ctx.lineTo(x + w - 20, nextY + 6); ctx.stroke();
+    nextY += 16;
+    ctx.fillStyle = "rgba(180,200,240,0.7)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    drawWrappedText(text, x + 212, nextY, w - 228, 18, 8);
+  }
+
+  drawButton(x + w - 146, y + h - 58, 120, 38, "閉じる", () => {
+    if (selected.kind === "unit") {
+      state.selected = { kind: "unit", row: selected.row, col: selected.col };
+      state.message = `${card.name} selected`;
+    } else {
+      state.selected = null;
+      state.message = "詳細を閉じました。";
+    }
+  });
+}
+
+function drawCardRevealOverlay() {
+  const reveal = app.localCardPopup || state.cardReveal;
+  const isLocalPopup = Boolean(app.localCardPopup);
+  if (!reveal) return;
+  if (!isLocalPopup && (reveal.playerId === viewerPlayerId() || app.dismissedCardRevealIds.includes(reveal.id))) return;
+  const card = reveal.card;
+
+  ctx.fillStyle = "rgba(0, 0, 10, 0.78)";
+  ctx.fillRect(0, 0, W, H);
+  addHit(0, 0, W, H, () => {});
+
+  const x = 382;
+  const y = 104;
+  const w = 676;
+  const h = 596;
+  const revTheme = CARD_TYPE_THEME[card.type] || CARD_TYPE_THEME.struct;
+  ctx.save();
+  ctx.shadowColor = revTheme.glow;
+  ctx.shadowBlur = 28;
+  roundRect(x, y, w, h, 12, "rgba(6,8,22,0.98)", revTheme.accent, 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  // Top banner
+  const bannerGrd = ctx.createLinearGradient(x, y, x, y + 56);
+  bannerGrd.addColorStop(0, revTheme.grad[0]);
+  bannerGrd.addColorStop(1, "rgba(6,8,22,0)");
+  ctx.fillStyle = bannerGrd;
+  ctx.fillRect(x, y, w, 56);
+
+  ctx.fillStyle = "#c8d8ff";
+  ctx.font = "700 16px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${reveal.playerName} がカードを使用`, x + 36, y + 30, w - 72);
+
+  // Card art on left
+  drawCardArt(x + 16, y + 58, 190, 240, card);
+
+  ctx.fillStyle = "#d8e8ff";
+  ctx.font = "700 26px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(card.name, x + 224, y + 92, w - 240);
+
+  const typeLabel = { unit: "ユニット", tact: "指令", wild: "Wild", grand: "Grand", struct: "施設" }[card.type] || card.type;
+  const stats =
+    card.type === "unit"
+      ? ` / ATK ${card.atk ?? "-"} / HP ${card.currentHp && card.maxHp ? `${card.currentHp}/${card.maxHp}` : card.hp ?? "-"}`
+      : "";
+  ctx.fillStyle = revTheme.text;
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${typeLabel} / ${card.faction || "ニュートラル"} / コスト ${formatCost(card.cost)}${stats}`, x + 224, y + 118, w - 240);
+
+  let nextY = y + 148;
+  if (card.actCost) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)"; ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("アクト", x + 224, nextY);
+    ctx.fillStyle = "#90b8e0"; ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(formatCost(card.actCost), x + 280, nextY, w - 296);
+    nextY += 22;
+  }
+
+  if (card.tags?.length) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)"; ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("タグ", x + 224, nextY);
+    ctx.fillStyle = "#90b8e0"; ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.tags.join(" / "), x + 280, nextY, w - 296);
+    nextY += 22;
+  }
+
+  if (card.keywords?.length) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)"; ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("効果", x + 224, nextY);
+    ctx.fillStyle = "#90b8e0"; ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    nextY = drawWrappedText(card.keywords.join(" / "), x + 224, nextY + 14, w - 240, 18, 3);
+    nextY += 6;
+  }
+
+  if (card.abilityText) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)"; ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("処理", x + 224, nextY);
+    ctx.fillStyle = "#90b8e0"; ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    nextY = drawWrappedText(card.abilityText, x + 224, nextY + 14, w - 240, 18, 5);
+    nextY += 6;
+  }
+
+  if (card.text) {
+    ctx.strokeStyle = "rgba(40,70,160,0.3)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x + 224, nextY + 6); ctx.lineTo(x + w - 20, nextY + 6); ctx.stroke();
+    nextY += 18;
+    ctx.fillStyle = "rgba(180,200,240,0.7)"; ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    drawWrappedText(card.text, x + 224, nextY, w - 240, 18, 8);
+  }
+
+  drawButton(x + w - 156, y + h - 58, 130, 38, "確認", () => {
+    dismissCardReveal();
+    state.message = "相手の使用カードを確認しました。";
+  }, null, { accent: "p1" });
+}
+
+function drawZoneViewerOverlay() {
+  if (!zoneViewerState) return;
+  const { playerId, zone, scroll } = zoneViewerState;
+  const player = state.players[playerId];
+  const cards = zone === "dump" ? player.dump : player.exileZone;
+  const zoneLabel = zone === "dump" ? "墓地" : "除外";
+  const zoneColor = zone === "dump" ? "#4a6347" : "#5a3d6a";
+
+  ctx.fillStyle = "rgba(0, 0, 10, 0.82)";
+  ctx.fillRect(0, 0, W, H);
+  addHit(0, 0, W, H, () => { zoneViewerState = null; });
+
+  const ox = 200;
+  const oy = 80;
+  const ow = 1040;
+  const oh = 740;
+  const zoneAccent = zone === "dump" ? "rgba(60,180,100,0.7)" : "rgba(160,80,200,0.7)";
+  ctx.save();
+  ctx.shadowColor = zone === "dump" ? "#30c060" : "#a040c0";
+  ctx.shadowBlur = 20;
+  roundRect(ox, oy, ow, oh, 12, "rgba(6,8,22,0.98)", zoneAccent, 2);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  // Top stripe
+  const zoneStripe = ctx.createLinearGradient(ox, oy, ox + ow, oy);
+  zoneStripe.addColorStop(0, "transparent"); zoneStripe.addColorStop(0.2, zoneAccent); zoneStripe.addColorStop(0.8, zoneAccent); zoneStripe.addColorStop(1, "transparent");
+  ctx.fillStyle = zoneStripe; ctx.fillRect(ox, oy, ow, 3);
+
+  ctx.fillStyle = "#c8e0ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${player.name} / ${zoneLabel} (${cards.length}枚)`, ox + 24, oy + 38);
+  drawButton(ox + ow - 126, oy + 14, 106, 32, "閉じる", () => { zoneViewerState = null; });
+
+  const CARD_W = 120;
+  const CARD_H = 148;
+  const COLS_V = 7;
+  const GAP_X = 14;
+  const GAP_Y = 14;
+  const startY = oy + 58;
+  const visibleRows = Math.floor((oh - 76) / (CARD_H + GAP_Y));
+  const totalRows = Math.ceil(cards.length / COLS_V);
+  const clampedScroll = Math.max(0, Math.min(scroll, totalRows - visibleRows));
+  zoneViewerState.scroll = clampedScroll;
+
+  const startIdx = clampedScroll * COLS_V;
+  const visible = cards.slice(startIdx, startIdx + visibleRows * COLS_V);
+  visible.forEach((card, i) => {
+    const col = i % COLS_V;
+    const row = Math.floor(i / COLS_V);
+    const cx = ox + 24 + col * (CARD_W + GAP_X);
+    const cy = startY + row * (CARD_H + GAP_Y);
+    drawCard(cx, cy, CARD_W, CARD_H, card, { small: true });
+    addHit(cx, cy, CARD_W, CARD_H, () => {});
+    addCardHover(cx, cy, CARD_W, CARD_H, card);
+  });
+
+  if (totalRows > visibleRows) {
+    drawButton(ox + ow - 70, oy + oh - 96, 46, 34, "↑", () => { zoneViewerState.scroll = Math.max(0, zoneViewerState.scroll - 1); });
+    drawButton(ox + ow - 70, oy + oh - 54, 46, 34, "↓", () => { zoneViewerState.scroll = Math.min(totalRows - visibleRows, zoneViewerState.scroll + 1); });
+    addWheelRegion(ox, startY, ow, visibleRows * (CARD_H + GAP_Y), (dy) => { zoneViewerState.scroll = Math.max(0, Math.min(totalRows - visibleRows, zoneViewerState.scroll + (dy > 0 ? 1 : -1))); });
+  }
+}
+
+function drawLog() {
+  const x = 36;
+  const y = 94;
+  ctx.fillStyle = "rgba(4,8,20,0.7)";
+  roundRect(x, y, 520, 60, 6, "rgba(4,8,20,0.7)", "rgba(30,60,140,0.25)", 1);
+  ctx.fillStyle = "rgba(140,170,220,0.75)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  state.log.slice(0, 3).forEach((line, i) => ctx.fillText(line, x + 12, y + 18 + i * 18));
+}
+
+function drawCard(x, y, w, h, card, options = {}) {
+  if (card && !options.noHover) addCardHover(x, y, w, h, card);
+  const theme = CARD_TYPE_THEME[card.type] || CARD_TYPE_THEME.struct;
+  const isSelected = options.selected;
+  const isSmall = options.small;
+  const fs = isSmall ? 10 : 13;
+
+  ctx.save();
+  if (isSelected) {
+    ctx.shadowColor = "#f0c040";
+    ctx.shadowBlur = 20;
+  }
+
+  // Card background gradient
+  const bgGrd = ctx.createLinearGradient(x, y, x, y + h);
+  bgGrd.addColorStop(0, theme.grad[0]);
+  bgGrd.addColorStop(1, theme.grad[1]);
+  roundRect(x, y, w, h, 6, bgGrd, isSelected ? "#f0c040" : theme.accent, isSelected ? 2.5 : 1.5);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // Art area (top 60% of card)
+  const artH = Math.max(22, Math.floor(h * 0.58));
+  drawCardArt(x + 2, y + 2, w - 4, artH - 2, card, options);
+
+  // Name bar (gradient overlay at top)
+  const nameGrd = ctx.createLinearGradient(x, y, x, y + 22);
+  nameGrd.addColorStop(0, "rgba(0,0,0,0.8)");
+  nameGrd.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = nameGrd;
+  ctx.fillRect(x + 2, y + 2, w - 4, 22);
+
+  ctx.fillStyle = "#e8f0ff";
+  ctx.font = `700 ${fs}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText(card.name, x + 5, y + 15, w - 10);
+
+  // Stats area below art
+  const statsY = y + artH + 2;
+  const statsH = h - artH - 4;
+  if (statsH > 0) {
+    ctx.fillStyle = "rgba(4,8,20,0.85)";
+    ctx.fillRect(x + 2, statsY, w - 4, statsH);
+
+    if (card.type === "unit") {
+      // HP bar
+      const maxHp = card.maxHp ?? card.hp;
+      const curHp = card.currentHp ?? card.hp;
+      const hpRatio = maxHp > 0 ? Math.max(0, curHp / maxHp) : 0;
+      const barX = x + 4;
+      const barY = statsY + statsH - 8;
+      const barW = w - 8;
+      ctx.fillStyle = "rgba(20,20,40,0.8)";
+      ctx.fillRect(barX, barY, barW, 5);
+      const hpCol = hpRatio > 0.5 ? "#30c060" : hpRatio > 0.25 ? "#e0a020" : "#e02020";
+      ctx.fillStyle = hpCol;
+      ctx.fillRect(barX, barY, barW * hpRatio, 5);
+
+      ctx.fillStyle = "#c0d8ff";
+      ctx.font = `700 ${fs}px 'Yu Gothic UI', sans-serif`;
+      ctx.fillText(`${card.atk}`, x + 5, statsY + 12);
+      ctx.textAlign = "right";
+      ctx.fillStyle = hpRatio < 0.5 ? "#ff8080" : "#80e080";
+      ctx.fillText(`${curHp}`, x + w - 5, statsY + 12);
+      ctx.textAlign = "left";
+
+      const keywords = keywordLabels(card).join(" ");
+      if (keywords && statsH > 22) {
+        ctx.fillStyle = theme.text;
+        ctx.font = `600 ${Math.max(8, fs - 2)}px 'Yu Gothic UI', sans-serif`;
+        ctx.fillText(keywords, x + 5, statsY + 24, w - 10);
+      }
+      if (card.rested) drawRestedOverlay(x, y, w, h, options);
+    } else {
+      const typeLabel = { tact: "TACT", wild: "WILD", grand: "GRAND", struct: "STRUCT" }[card.type] || card.type.toUpperCase();
+      ctx.fillStyle = theme.text;
+      ctx.font = `700 ${fs}px 'Yu Gothic UI', sans-serif`;
+      ctx.fillText(typeLabel, x + 5, statsY + 14);
+    }
+  }
+}
+
+function drawRestedOverlay(x, y, w, h, options = {}) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x + 2, y + 2, w - 4, h - 4);
+  ctx.clip();
+  ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+  ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
+
+  // Diagonal slash
+  ctx.strokeStyle = "rgba(200, 60, 60, 0.7)";
+  ctx.lineWidth = options.small ? 3 : 5;
+  ctx.beginPath();
+  ctx.moveTo(x + 8, y + h - 8);
+  ctx.lineTo(x + w - 8, y + 8);
+  ctx.stroke();
+
+  // REST badge
+  const badgeW = options.small ? 40 : 58;
+  const badgeH = options.small ? 16 : 22;
+  ctx.shadowColor = "#ff2020";
+  ctx.shadowBlur = 8;
+  roundRect(x + w - badgeW - 6, y + 6, badgeW, badgeH, 4, "rgba(180,20,20,0.85)", "rgba(255,60,60,0.8)", 1.5);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#ffb0b0";
+  ctx.font = options.small ? "800 10px 'Yu Gothic UI', sans-serif" : "800 13px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("REST", x + w - badgeW / 2 - 6, y + 6 + badgeH / 2);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.restore();
+}
+
+function drawCardArt(x, y, w, h, card, options = {}) {
+  const entry = getCardImage(card);
+  if (!entry?.loaded || entry.failed) {
+    const theme = CARD_TYPE_THEME[card?.type] || CARD_TYPE_THEME.struct;
+    const pg = ctx.createRadialGradient(x + w/2, y + h/2, 0, x + w/2, y + h/2, Math.max(w,h)*0.7);
+    pg.addColorStop(0, theme.grad[0]);
+    pg.addColorStop(1, theme.grad[1]);
+    ctx.fillStyle = pg;
+    ctx.fillRect(x, y, w, h);
+    return;
+  }
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  const iw = entry.image.naturalWidth || entry.image.width;
+  const ih = entry.image.naturalHeight || entry.image.height;
+  const scale = Math.max(w / iw, h / ih);
+  const dw = iw * scale;
+  const dh = ih * scale;
+  ctx.drawImage(entry.image, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  // Dark vignette at bottom so stats text is readable
+  const botGrad = ctx.createLinearGradient(x, y + h - 30, x, y + h);
+  botGrad.addColorStop(0, "rgba(0,0,0,0)");
+  botGrad.addColorStop(1, "rgba(0,0,0,0.7)");
+  ctx.fillStyle = botGrad;
+  ctx.fillRect(x, y + h - 30, w, 30);
+  ctx.restore();
+}
+
+function drawCardBack(x, y, w, h) {
+  const grd = ctx.createLinearGradient(x, y, x, y + h);
+  grd.addColorStop(0, "#0e1a34");
+  grd.addColorStop(1, "#060e1c");
+  roundRect(x, y, w, h, 6, grd, "rgba(50,90,180,0.7)", 1.5);
+  // Diamond pattern
+  ctx.strokeStyle = "rgba(60,100,200,0.25)";
+  ctx.lineWidth = 1;
+  const cx2 = x + w / 2;
+  const cy2 = y + h / 2;
+  const size = Math.min(w, h) * 0.36;
+  ctx.beginPath();
+  ctx.moveTo(cx2, cy2 - size);
+  ctx.lineTo(cx2 + size * 0.7, cy2);
+  ctx.lineTo(cx2, cy2 + size);
+  ctx.lineTo(cx2 - size * 0.7, cy2);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(80,130,255,0.18)";
+  ctx.strokeRect(x + 4, y + 4, w - 8, h - 8);
+}
+
+function drawCardTooltip(card, mx, my) {
+  const TW = 300;
+  const PAD = 12;
+  const LINE = 18;
+  const tipTheme = CARD_TYPE_THEME[card?.type] || CARD_TYPE_THEME.struct;
+
+  // measure height: collect lines first
+  const lines = [];
+  lines.push({ text: card.name, font: "700 14px 'Yu Gothic UI', sans-serif", color: "#c8e0ff" });
+  const typeLabel = `${CARD_TYPE_LABELS[card.type] || card.type} / ${card.faction || "ニュートラル"}`;
+  lines.push({ text: typeLabel, font: "600 11px 'Yu Gothic UI', sans-serif", color: tipTheme.text });
+  if (card.type === "unit") {
+    lines.push({ text: `ATK ${card.atk}  HP ${card.hp}`, font: "700 13px 'Yu Gothic UI', sans-serif", color: "#80d0ff" });
+  }
+  const tags = tagLabels(card);
+  if (tags.length) lines.push({ text: `[${tags.join("] [")}]`, font: "600 11px 'Yu Gothic UI', sans-serif", color: "#80c0a0" });
+  const costStr = formatCost(card.cost);
+  if (costStr !== "無料" || card.type !== "struct") {
+    lines.push({ text: `コスト: ${costStr}`, font: "600 11px 'Yu Gothic UI', sans-serif", color: "rgba(160,180,220,0.8)" });
+  }
+  const kwLabels = keywordLabels(card);
+  if (kwLabels.length) lines.push({ text: kwLabels.join(" / "), font: "600 11px 'Yu Gothic UI', sans-serif", color: "#70b0e0" });
+  const descText = card.text || "";
+  if (descText) lines.push({ text: descText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "rgba(180,200,240,0.8)", wrap: true });
+
+  // compute tooltip height
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  let th = PAD;
+  for (const l of lines) {
+    ctx.font = l.font;
+    if (l.wrap) {
+      const words = l.text;
+      let row = "";
+      let lineCount = 0;
+      for (const ch of words) {
+        const next = row + ch;
+        if (ctx.measureText(next).width > TW - PAD * 2) {
+          lineCount++;
+          row = ch;
+          if (lineCount >= 8) break;
+        } else {
+          row = next;
+        }
+      }
+      lineCount++;
+      th += lineCount * LINE + 4;
+    } else {
+      th += LINE;
+    }
+  }
+  th += PAD;
+
+  // position
+  let tx = mx + 18;
+  let ty = my - 12;
+  if (tx + TW > W - 4) tx = mx - TW - 18;
+  if (ty + th > H - 4) ty = H - th - 4;
+  if (ty < 4) ty = 4;
+
+  roundRect(tx, ty, TW, th, 10, "rgba(4,6,18,0.97)", tipTheme.accent, 1.5);
+
+  // draw lines
+  let cy = ty + PAD + 4;
+  for (const l of lines) {
+    ctx.font = l.font;
+    ctx.fillStyle = l.color;
+    if (l.wrap) {
+      cy = drawWrappedText(l.text, tx + PAD, cy + 2, TW - PAD * 2, LINE, 8);
+    } else {
+      ctx.fillText(l.text, tx + PAD, cy + 14, TW - PAD * 2);
+      cy += LINE;
+    }
+  }
+}
+
+function drawMiniCard(x, y, w, h, label, fill) {
+  roundRect(x, y, w, h, 5, fill, "rgba(80,120,200,0.4)", 1);
+  ctx.fillStyle = "#b0c8e8";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(label, x + 7, y + h * 0.65, w - 12);
+}
+
+function abilityText(card) {
+  return (card?.abilities || [])
+    .map((ability) => {
+      const trigger = {
+        onPlay: "使用時",
+        onSummon: "登場時",
+        onDestroy: "破壊時",
+        onStructurePhase: "Structure Phase",
+        onDestroyEnemyUnit: "相手ユニット破壊時",
+      }[ability.trigger] || ability.trigger;
+      const effect = {
+        drawCards: `カードを${ability.amount}枚引く`,
+        damageEnemyCore: `敵コアに${ability.amount}ダメージ`,
+        damageTargetUnit: `対象ユニットに${ability.amount}ダメージ`,
+        produceResource: `${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
+        gainResource: `${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
+        buffFriendlyUnitsHp: `味方ユニットのHP+${ability.amount}`,
+        buffFriendlyUnitsAtk: `味方ユニットのATK+${ability.amount}`,
+        mysticCapture: "神秘ユニットを選択して登場時効果を発動",
+        grantDestroyGain: `味方ユニット1体に「破壊時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}」を付与`,
+        chooseExchange: `${(ability.costOptions || []).map((o) => `${RESOURCE_LABELS[o.resource] || o.resource}${o.amount}`).join("または")}を支払い → ${Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("/")}`,
+      }[ability.effect] || ability.effect;
+      return `${trigger}: ${effect}`;
+    })
+    .join(" / ");
+}
+
+function drawWrappedText(text, x, y, maxWidth, lineHeight, maxLines = 8) {
+  const chars = String(text || "").split("");
+  let line = "";
+  let lines = 0;
+  for (const char of chars) {
+    const next = line + char;
+    if (ctx.measureText(next).width > maxWidth && line) {
+      ctx.fillText(line, x, y, maxWidth);
+      y += lineHeight;
+      lines += 1;
+      line = char;
+      if (lines >= maxLines) return y;
+    } else {
+      line = next;
+    }
+  }
+  if (line && lines < maxLines) {
+    ctx.fillText(line, x, y, maxWidth);
+    y += lineHeight;
+  }
+  return y;
+}
+
+function drawButton(x, y, w, h, label, onClick, _fillUnused, opts = {}) {
+  const isMicro = opts.micro;
+  const accent = opts.accent; // "p1" | "dim" | undefined
+  let bgColor, borderColor, textColor;
+  if (accent === "p1") {
+    bgColor = "rgba(20,60,180,0.85)"; borderColor = "#4090ff"; textColor = "#c0d8ff";
+  } else if (accent === "dim") {
+    bgColor = "rgba(30,20,20,0.7)"; borderColor = "rgba(120,60,60,0.6)"; textColor = "#806060";
+  } else if (opts.dark) {
+    bgColor = "rgba(10,16,36,0.85)"; borderColor = "rgba(50,80,160,0.5)"; textColor = "#8090b0";
+  } else {
+    bgColor = "rgba(14,24,52,0.85)"; borderColor = "rgba(60,100,200,0.55)"; textColor = "#a8c0e8";
+  }
+  roundRect(x, y, w, h, isMicro ? 4 : 7, bgColor, borderColor, isMicro ? 1 : 1.5);
+  ctx.fillStyle = textColor;
+  ctx.font = isMicro ? "700 11px 'Yu Gothic UI', sans-serif" : "700 14px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + w / 2, y + h / 2);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  if (onClick) addHit(x, y, w, h, onClick);
+}
+
+function roundRect(x, y, w, h, r, fill, stroke, lineWidth = 2) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+}
+
+function gameSummary() {
+  return {
+    note: "Canvas coordinates origin top-left; x right, y down. Board rows 0-3 from Player 2 side to Player 1 side.",
+    app: {
+      screen: app.screen,
+      auth: app.auth,
+      deckName: app.deckName,
+      deck: { core: app.deck.core, main: [...app.deck.main], struct: [...app.deck.struct] },
+      savedDecks: app.savedDecks.map((entry) => ({ id: entry.id, name: entry.name, mainCount: entry.deck.main.length, structCount: entry.deck.struct.length })),
+      structDeckScroll: app.structDeckScroll,
+      selectedCard: (() => {
+        const card = findCatalogCard(app.deckBuilder.selectedCardId);
+        return card ? { id: card.id, name: card.name, type: card.type, text: card.text || card.flavor || "", abilities: abilityText(card) } : null;
+      })(),
+      match: app.match,
+      localCardPopup: app.localCardPopup,
+      queuedOnlineAction: queuedOnlineAction ? { opId: queuedOnlineAction.opId, reason: queuedOnlineAction.reason, playerId: queuedOnlineAction.playerId } : null,
+    },
+    turn: state.turn,
+    activePlayer: state.activePlayer,
+    viewerPlayer: viewerPlayerId(),
+    bottomHandPlayer: viewerPlayerId(),
+    topHandPlayer: opponentOf(viewerPlayerId()),
+    phase: state.phase,
+    winner: state.winner,
+    selected: state.selected,
+    handConfirmVisible: Boolean(
+      ["hand", "structDeck"].includes(state.selected?.kind) &&
+        !state.selected.confirmed &&
+        (!state.selected.playerId || state.selected.playerId === viewerPlayerId()) &&
+        selectedPlayableCard(),
+    ),
+    cardReveal: state.cardReveal,
+    dismissedCardRevealIds: [...app.dismissedCardRevealIds],
+    turnStartSummary: state.turnStartSummary,
+    pendingTarget: state.pendingTarget
+      ? { card: state.pendingTarget.card.name, target: state.pendingTarget.ability.target, effect: state.pendingTarget.ability.effect }
+      : null,
+    pendingChoice: state.pendingChoice
+      ? {
+          type: state.pendingChoice.type,
+          card: state.pendingChoice.cardName,
+          selectedHandIndexes: [...state.pendingChoice.selectedHandIndexes],
+          choices: mysticCaptureChoices().map(({ card, handIndex }) => ({ handIndex, name: card.name, tags: tagLabels(card) })),
+        }
+      : null,
+    effectQueueCount: state.effectQueue.length,
+    players: Object.fromEntries(
+      Object.entries(state.players).map(([id, player]) => [
+        id,
+        {
+          core: {
+            id: player.core.id,
+            name: player.core.name,
+            faction: player.core.faction || null,
+            flavor: player.core.flavor || "",
+            hp: player.core.hp,
+            initialHand: player.core.initialHand,
+            draw: player.core.draw,
+            handLimit: player.core.handLimit,
+            deckSize: player.core.deckSize,
+            deckMin: player.core.deckMin,
+            deckMax: player.core.deckMax,
+            startResources: player.core.startResources,
+            income: player.core.income,
+            specialRequirements: player.core.specialRequirements || [],
+          },
+          coreHp: player.core.hp,
+          resources: player.resources,
+          hand: player.hand.map((card) => ({
+            name: card.name,
+            type: card.type,
+            faction: card.faction || null,
+            tags: tagLabels(card),
+            variant: card.variant || null,
+            cost: card.cost,
+            keywords: keywordLabels(card),
+            image: cardImageSource(card),
+          })),
+          structs: player.structs.map((card) => card.name),
+          tactZone: player.tactZone.map((card) => card.name),
+          wildZone: player.wildZone.map((card) => ({ type: card.type, faceDown: Boolean(card.faceDown) })),
+          grandZone: player.grandZone.map((card) => card.name),
+          mainDeckCount: player.mainDeck.length,
+          structDeckCount: player.structDeck.length,
+          dumpCount: player.dump.length,
+          exileCount: player.exileZone.length,
+        },
+      ]),
+    ),
+    board: state.board.map((row) =>
+      row.map((unit) =>
+        unit
+          ? {
+              owner: unit.owner,
+              name: unit.name,
+              faction: unit.faction || null,
+              tags: tagLabels(unit),
+              variant: unit.variant || null,
+              atk: unit.atk,
+              hp: unit.currentHp,
+              maxHp: unit.maxHp,
+              rested: unit.rested,
+              keywords: keywordLabels(unit),
+              image: cardImageSource(unit),
+              attacksThisTurn: unit.attacksThisTurn || 0,
+            }
+          : null,
+      ),
+    ),
+    visualBoard: Array.from({ length: ROWS }, (_, visualRow) =>
+      state.board[visualRowToBoardRow(visualRow)].map((unit) =>
+        unit
+          ? {
+              owner: unit.owner,
+              name: unit.name,
+              row: unit.row,
+              visualRow,
+              rested: unit.rested,
+            }
+          : null,
+      ),
+    ),
+    message: state.message,
+    log: state.log.slice(0, 5),
+  };
+}
+
+function resetForTest(options = {}) {
+  const fresh = createGame(DEFAULT_MAIN_DECK_IDS, DEFAULT_STRUCT_DECK_IDS, DEFAULT_CORE_ID, { shuffleMainDeck: false });
+  Object.assign(state, fresh);
+  app.screen = "game";
+  nextInstanceId = 1;
+  if (options.emptyHands) {
+    for (const player of Object.values(state.players)) player.hand = [];
+  }
+  if (options.resources) {
+    for (const [playerId, resources] of Object.entries(options.resources)) {
+      state.players[playerId].resources = normalizeResourceObject(resources);
+    }
+  }
+  render();
+  return gameSummary();
+}
+
+function placeUnitForTest(cardId, owner, row, col, options = {}) {
+  const unit = makeUnit(cardId, owner, row, col, options);
+  state.board[row][col] = unit;
+  render();
+  return unit;
+}
+
+function setResourcesForTest(playerId, resources) {
+  state.players[playerId].resources = normalizeResourceObject(resources);
+  render();
+  return state.players[playerId].resources;
+}
+
+function selectUnitForTest(row, col) {
+  if (!state.board[row]?.[col]) throw new Error(`No unit at ${row},${col}`);
+  state.selected = { kind: "unit", row, col };
+  render();
+}
+
+function openUnitDetailForTest(row, col) {
+  if (!state.board[row]?.[col]) throw new Error(`No unit at ${row},${col}`);
+  state.selected = { kind: "unit", row, col, detailOpen: true };
+  render();
+  return gameSummary();
+}
+
+function openFieldStructDetailForTest(playerId, index) {
+  if (!state.players[playerId]?.structs[index]) throw new Error(`No struct at ${playerId}:${index}`);
+  state.selected = { kind: "fieldStruct", playerId, index, detailOpen: true };
+  render();
+  return gameSummary();
+}
+
+function addHandCardForTest(playerId, cardId) {
+  const card = cardCatalog.main[cardId] || cardCatalog.structs[cardId] || cardCatalog.cores[cardId];
+  if (!card) throw new Error(`Unknown card: ${cardId}`);
+  state.players[playerId].hand.push(cloneCard(card));
+  render();
+  return state.players[playerId].hand.length - 1;
+}
+
+function addDumpCardForTest(playerId, cardId) {
+  const card = cardCatalog.main[cardId] || cardCatalog.structs[cardId] || cardCatalog.cores[cardId];
+  if (!card) throw new Error(`Unknown card: ${cardId}`);
+  state.players[playerId].dump.push(cloneCard(card));
+  render();
+  return state.players[playerId].dump.length;
+}
+
+function validateDeckForTest(ids) {
+  validateDeck(ids);
+  return true;
+}
+
+function selectHandCardForTest(handIndex) {
+  const card = state.players[state.activePlayer].hand[handIndex];
+  if (!card) return false;
+  state.selected = { kind: "hand", playerId: state.activePlayer, index: handIndex, confirmed: false };
+  return true;
+}
+
+function selectStructDeckCardForTest(structIndex) {
+  const card = state.players[state.activePlayer].structDeck[structIndex];
+  if (!card) return false;
+  state.selected = { kind: "structDeck", playerId: state.activePlayer, index: structIndex, confirmed: false };
+  return true;
+}
+
+const testing = {
+  reset: resetForTest,
+  placeUnit: placeUnitForTest,
+  setResources: setResourcesForTest,
+  selectUnit: selectUnitForTest,
+  openUnitDetail: openUnitDetailForTest,
+  openFieldStructDetail: openFieldStructDetailForTest,
+  addHandCard: addHandCardForTest,
+  addDumpCard: addDumpCardForTest,
+  validateDeck: validateDeckForTest,
+  summonFromHand: placeUnitFromHand,
+  playTactFromHand,
+  playWildFromHand,
+  playGrandFromHand,
+  playStruct,
+  toggleMysticCaptureChoice,
+  resolveMysticCaptureChoice,
+  selectHandCard: selectHandCardForTest,
+  selectStructDeckCard: selectStructDeckCardForTest,
+  useSelectedHandCard,
+  useSelectedPlayableCard,
+  canControlActivePlayer,
+  attack: attackWithSelectedUnit,
+  resolveTarget: resolvePendingTarget,
+  processEffectQueue,
+  move: moveSelectedUnit,
+  retreat: retreatSelectedUnit,
+  endTurn,
+  signInWithGoogleDemo,
+  signInWithGoogle,
+  signInAsGuest,
+  signOut,
+  openDeckBuilder,
+  openMatchLobby,
+  startLocalMatch,
+  startMatchFromLobby,
+  startOnlineMatch,
+  copyRoomCode,
+  createRoomMatch,
+  joinRoomMatch,
+  broadcastOnlineState,
+  requestOnlineStateSync,
+  addDeckCard,
+  removeDeckCard,
+  removeDeckCardById,
+  addStructDeckCard,
+  removeStructDeckCard,
+  removeStructDeckCardById,
+  importDeckmakerDeckData,
+  importDeckmakerAllData,
+  deckmakerAllDataPayload,
+  catalogCard: findCatalogCard,
+  setDeckBuilderLibrary,
+  changeLibraryPage,
+  changeLibraryScroll,
+  changeStructDeckScroll,
+  changeDeckScroll,
+  setDeckBuilderSearchPreset,
+  setDeckBuilderTagFilter,
+  cycleDeckBuilderSort,
+  saveDeck,
+  syncDecksFromServer,
+  persistDecksToServer,
+  loadNamedDeck,
+  selectMatchDeck,
+  selectCardForDetail,
+  testDrawDeck,
+  selectCoreCard,
+  resetDeckBuilder,
+  summary: gameSummary,
+};
+
+window.render_game_to_text = () => JSON.stringify(gameSummary());
+window.advanceTime = () => render();
+window.__twcg = { app, state, cardCatalog, abilityEffects, KEYWORD_DEFINITIONS, testing, render };
+
+loadServerConfig();
+render();
