@@ -150,11 +150,14 @@ const DECKMAKER_TYPE_LABELS = {
 };
 
 const layout = {
-  board: { x: 320, y: 196, w: 800, h: 448 },
-  hand: { x: 284, y: 704, w: 872, h: 156 },
-  topHand: { x: 284, y: 36, w: 760, h: 112 },
-  left: { x: 34, y: 178, w: 238, h: 676 },
-  right: { x: 1168, y: 178, w: 238, h: 676 },
+  board:        { x: 192, y: 168, w: 1056, h: 452 },
+  hand:         { x: 192, y: 696, w: 1056, h: 160 },
+  topHand:      { x: 192, y: 62,  w: 960,  h: 36  },
+  left:         { x: 4,   y: 100, w: 184,  h: 756 },
+  right:        { x: 1252,y: 100, w: 184,  h: 756 },
+  oppStruct:    { x: 192, y: 100, w: 1056, h: 64  },
+  playerStruct: { x: 192, y: 620, w: 1056, h: 72  },
+  resourceBar:  { x: 192, y: 860, w: 1056, h: 36  },
 };
 layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
 
@@ -165,10 +168,10 @@ let animFrameId = null;
 function cellCardPos(row, col) {
   const visualRow = boardRowToVisualRow(row);
   return {
-    x: layout.board.x + col * layout.cell.w + 18,
-    y: layout.board.y + visualRow * layout.cell.h + 34,
-    w: layout.cell.w - 36,
-    h: layout.cell.h - 48,
+    x: layout.board.x + col * layout.cell.w + 8,
+    y: layout.board.y + visualRow * layout.cell.h + 8,
+    w: layout.cell.w - 16,
+    h: layout.cell.h - 16,
   };
 }
 
@@ -4524,12 +4527,16 @@ function render() {
   if (app.screen === "deckBuilder") return drawDeckBuilderScreen();
   if (app.screen === "matchLobby") return drawMatchLobbyScreen();
   drawHeader();
-  drawBoard();
   const viewer = viewerPlayerId();
-  drawSidePanel(viewer, layout.left);
-  drawSidePanel(opponentOf(viewer), layout.right);
-  drawHand();
+  const opp = opponentOf(viewer);
   drawTopHand();
+  drawStructBar(opp, layout.oppStruct.x, layout.oppStruct.y, layout.oppStruct.w, layout.oppStruct.h);
+  drawBoard();
+  drawStructBar(viewer, layout.playerStruct.x, layout.playerStruct.y, layout.playerStruct.w, layout.playerStruct.h);
+  drawSidePanel(viewer, layout.left);
+  drawSidePanel(opp, layout.right);
+  drawHand();
+  drawResourceBar();
   drawActionPanel();
   drawTurnStartSummaryPanel();
   drawLog();
@@ -4545,15 +4552,48 @@ function render() {
 }
 
 function drawBackground() {
-  // Deep space gradient
+  // Base dark gradient
   const grd = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * 0.8);
   grd.addColorStop(0, "#0c1428");
   grd.addColorStop(0.5, "#070c18");
   grd.addColorStop(1, "#030609");
   ctx.fillStyle = grd;
   ctx.fillRect(0, 0, W, H);
-  // Hex grid overlay
-  ctx.strokeStyle = "rgba(40, 80, 160, 0.08)";
+
+  // Field zone tints (only during game)
+  if (app.screen === "game" || app.screen === undefined) {
+    const bx = layout.board.x, by = layout.board.y;
+    const bw = layout.board.w, bh = layout.board.h;
+    const midY = by + bh / 2;
+    // Opponent field - subtle crimson tint
+    const oppGrd = ctx.createLinearGradient(0, by, 0, midY);
+    oppGrd.addColorStop(0, "rgba(90,14,14,0.14)");
+    oppGrd.addColorStop(1, "rgba(60,10,10,0.04)");
+    ctx.fillStyle = oppGrd;
+    ctx.fillRect(bx, by, bw, midY - by);
+    // Player field - subtle navy tint
+    const playerGrd = ctx.createLinearGradient(0, midY, 0, by + bh);
+    playerGrd.addColorStop(0, "rgba(10,20,80,0.04)");
+    playerGrd.addColorStop(1, "rgba(14,32,100,0.14)");
+    ctx.fillStyle = playerGrd;
+    ctx.fillRect(bx, midY, bw, bh / 2);
+    // Row divider lines inside board
+    ctx.strokeStyle = "rgba(40,60,120,0.18)";
+    ctx.lineWidth = 1;
+    for (let r = 1; r < ROWS; r++) {
+      const ry = by + r * layout.cell.h;
+      ctx.beginPath(); ctx.moveTo(bx, ry); ctx.lineTo(bx + bw, ry); ctx.stroke();
+    }
+    // Column divider lines inside board
+    ctx.strokeStyle = "rgba(40,60,120,0.12)";
+    for (let c = 1; c < COLS; c++) {
+      const cx2 = bx + c * layout.cell.w;
+      ctx.beginPath(); ctx.moveTo(cx2, by); ctx.lineTo(cx2, by + bh); ctx.stroke();
+    }
+  }
+
+  // Hex grid overlay (subtle)
+  ctx.strokeStyle = "rgba(40, 80, 160, 0.05)";
   ctx.lineWidth = 1;
   const hex = 40;
   const hh = hex * Math.sqrt(3) / 2;
@@ -4572,15 +4612,15 @@ function drawBackground() {
       ctx.stroke();
     }
   }
-  // Ambient glow top-center (opponent side)
-  const topGlow = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, 400);
-  topGlow.addColorStop(0, "rgba(200, 50, 30, 0.12)");
+  // Ambient glow top-center
+  const topGlow = ctx.createRadialGradient(W / 2, 0, 0, W / 2, 0, 380);
+  topGlow.addColorStop(0, "rgba(200, 50, 30, 0.10)");
   topGlow.addColorStop(1, "transparent");
   ctx.fillStyle = topGlow;
   ctx.fillRect(0, 0, W, H);
-  // Ambient glow bottom-center (player side)
-  const botGlow = ctx.createRadialGradient(W / 2, H, 0, W / 2, H, 400);
-  botGlow.addColorStop(0, "rgba(20, 80, 200, 0.12)");
+  // Ambient glow bottom-center
+  const botGlow = ctx.createRadialGradient(W / 2, H, 0, W / 2, H, 380);
+  botGlow.addColorStop(0, "rgba(20, 80, 200, 0.10)");
   botGlow.addColorStop(1, "transparent");
   ctx.fillStyle = botGlow;
   ctx.fillRect(0, 0, W, H);
@@ -5088,38 +5128,48 @@ function drawMatchDeckSelector(x, y) {
 }
 
 function drawHeader() {
-  // Dark header bar
-  const grd = ctx.createLinearGradient(0, 0, 0, 90);
-  grd.addColorStop(0, "rgba(8,14,30,0.98)");
-  grd.addColorStop(1, "rgba(5,10,22,0.92)");
+  // Slim header bar (60px)
+  const grd = ctx.createLinearGradient(0, 0, 0, 60);
+  grd.addColorStop(0, "rgba(8,14,30,0.99)");
+  grd.addColorStop(1, "rgba(5,10,22,0.95)");
   ctx.fillStyle = grd;
-  ctx.fillRect(0, 0, W, 90);
+  ctx.fillRect(0, 0, W, 60);
   ctx.strokeStyle = "rgba(30,70,160,0.5)";
   ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, 90); ctx.lineTo(W, 90); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, 60); ctx.lineTo(W, 60); ctx.stroke();
 
-  // Logo / title
-  ctx.shadowColor = "#2060ff";
-  ctx.shadowBlur = 12;
+  // Logo
+  ctx.save();
+  ctx.shadowColor = "#2060ff"; ctx.shadowBlur = 10;
   ctx.fillStyle = "#c0d8ff";
-  ctx.font = "700 26px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("TWCG", 30, 44);
-  ctx.shadowBlur = 0;
+  ctx.font = "800 22px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("TWCG", 14, 38);
+  ctx.shadowBlur = 0; ctx.restore();
 
-  // Turn indicator pill
+  // Turn / phase pill (center)
   const canEndTurn = canControlActivePlayer();
   const activePlayer = state.players[state.activePlayer];
-  const pillColor = state.activePlayer === "p1" ? "rgba(20,80,200,0.7)" : "rgba(180,30,30,0.7)";
-  const pillBorder = state.activePlayer === "p1" ? "#4090e0" : "#e04444";
-  roundRect(190, 18, 320, 54, 8, pillColor, pillBorder, 1.5);
-  ctx.fillStyle = "#e0ecff";
-  ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`TURN ${state.turn}`, 210, 38);
+  const isP1Active = state.activePlayer === "p1";
+  const pillColor = isP1Active ? "rgba(16,56,180,0.80)" : "rgba(160,20,20,0.80)";
+  const pillBorder = isP1Active ? "#4090e0" : "#e04444";
+  roundRect(180, 8, 560, 44, 8, pillColor, pillBorder, 1.5);
+  ctx.fillStyle = "rgba(200,220,255,0.6)";
+  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`TURN ${state.turn} ·`, 200, 26);
+  const phaseLabel = state.phase === "structure" ? "STRUCTURE PHASE" : state.phase === "main" ? "MAIN PHASE" : state.phase === "end" ? "END" : (state.phase || "").toUpperCase();
+  ctx.fillText(phaseLabel, 268, 26);
+  ctx.fillStyle = "#e8f2ff";
   ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(activePlayer.name, 210, 62);
+  ctx.fillText(activePlayer.name, 200, 46);
 
-  drawButton(1060, 24, 110, 42, "ロビー", openMatchLobby, null, { dark: true });
-  drawButton(1192, 24, 188, 42, canEndTurn ? "END TURN" : "相手のターン", canEndTurn ? endTurn : () => requestOnlineStateSync("turnButton"), null, { accent: canEndTurn ? "p1" : "dim" });
+  // Message (right of turn pill)
+  ctx.fillStyle = "rgba(160,190,240,0.75)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(state.message || "", 760, 36, 440);
+
+  drawButton(996, 12, 90, 36, "ロビー", openMatchLobby, null, { dark: true });
+  drawButton(1096, 12, 200, 36, canEndTurn ? "END TURN" : "相手のターン", canEndTurn ? endTurn : () => requestOnlineStateSync("turnButton"), null, { accent: canEndTurn ? "p1" : "dim" });
+  drawButton(1308, 12, 120, 36, "HOME", () => (app.screen = "home"), null, { dark: true });
 }
 
 function drawBoard() {
@@ -5132,15 +5182,24 @@ function drawBoard() {
   ctx.shadowBlur = 0;
   ctx.restore();
 
-  // Dividing line at board center
+  // Center divider with phase label
   const midY = y + h / 2;
   const divGrd = ctx.createLinearGradient(x, 0, x + w, 0);
   divGrd.addColorStop(0, "transparent");
-  divGrd.addColorStop(0.3, "rgba(180,180,255,0.25)");
-  divGrd.addColorStop(0.7, "rgba(180,180,255,0.25)");
+  divGrd.addColorStop(0.15, "rgba(180,180,255,0.30)");
+  divGrd.addColorStop(0.85, "rgba(180,180,255,0.30)");
   divGrd.addColorStop(1, "transparent");
   ctx.fillStyle = divGrd;
   ctx.fillRect(x, midY - 1, w, 2);
+  // Phase badge at center
+  const phBadge = state.phase === "structure" ? "STRUCT" : state.phase === "main" ? "MAIN" : "END";
+  const badgeW = 80;
+  roundRect(x + w / 2 - badgeW / 2, midY - 11, badgeW, 22, 5, "rgba(6,10,28,0.92)", "rgba(60,80,180,0.5)", 1);
+  ctx.fillStyle = "rgba(140,160,220,0.8)";
+  ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(phBadge, x + w / 2, midY + 3);
+  ctx.textAlign = "left";
 
   for (let visualRow = 0; visualRow < ROWS; visualRow += 1) {
     const row = visualRowToBoardRow(visualRow);
@@ -5185,12 +5244,9 @@ function drawBoard() {
       }
 
       addHit(cx, cy, layout.cell.w, layout.cell.h, () => handleCellClick(row, col));
-      if (unit) drawCard(cx + 8, cy + 8, layout.cell.w - 16, layout.cell.h - 16, unit, { selected: selectedUnit() === unit });
+      if (unit) drawCard(cx + 6, cy + 6, layout.cell.w - 12, layout.cell.h - 12, unit, { selected: selectedUnit() === unit });
     }
   }
-  const viewer = viewerPlayerId();
-  drawCore(opponentOf(viewer), x + 240, y - 80, 320, 64);
-  drawCore(viewer, x + 240, y + h + 16, 320, 64);
 }
 
 function drawCore(playerId, x, y, w, h) {
@@ -5292,95 +5348,72 @@ function drawSidePanel(playerId, box) {
   ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
   ctx.fillText(player.name, box.x + 14, box.y + 28);
 
-  // Deck count pill
-  roundRect(box.x + 14, box.y + 36, 80, 20, 4, "rgba(20,40,100,0.6)", "rgba(60,100,200,0.4)", 1);
-  ctx.fillStyle = "#90b0e0";
-  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`DECK ${player.mainDeck.length}`, box.x + 20, box.y + 50);
-
-  // Zone buttons (Dump / Exile) as icon-style buttons
-  const zoneY = box.y + 64;
-  const dumpX = box.x + 14;
-  const exileX = box.x + 122;
-  // Dump button
-  roundRect(dumpX, zoneY, 100, 24, 5, "rgba(40,80,60,0.5)", "rgba(60,160,100,0.4)", 1);
+  // Deck / Dump / Exile compact row
+  const zoneY = box.y + 36;
+  const zW = (box.w - 24) / 3;
+  roundRect(box.x + 8, zoneY, zW, 22, 4, "rgba(20,40,100,0.6)", "rgba(60,100,200,0.4)", 1);
+  ctx.fillStyle = "#90b0e0"; ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`D ${player.mainDeck.length}`, box.x + 13, zoneY + 15);
+  roundRect(box.x + 8 + zW + 4, zoneY, zW, 22, 4, "rgba(40,80,60,0.5)", "rgba(60,160,100,0.4)", 1);
   ctx.fillStyle = "#80e0a0";
-  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`墓地  ${player.dump.length}枚`, dumpX + 8, zoneY + 16);
-  addHit(dumpX, zoneY, 100, 24, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
-  // Exile button
-  roundRect(exileX, zoneY, 100, 24, 5, "rgba(80,40,100,0.5)", "rgba(160,80,200,0.4)", 1);
+  ctx.fillText(`G ${player.dump.length}`, box.x + 13 + zW + 4, zoneY + 15);
+  addHit(box.x + 8 + zW + 4, zoneY, zW, 22, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
+  roundRect(box.x + 8 + (zW + 4) * 2, zoneY, zW, 22, 4, "rgba(80,40,100,0.5)", "rgba(160,80,200,0.4)", 1);
   ctx.fillStyle = "#c080f0";
-  ctx.fillText(`除外  ${player.exileZone.length}枚`, exileX + 8, zoneY + 16);
-  addHit(exileX, zoneY, 100, 24, () => { zoneViewerState = { playerId, zone: "exile", scroll: 0 }; });
+  ctx.fillText(`E ${player.exileZone.length}`, box.x + 13 + (zW + 4) * 2, zoneY + 15);
+  addHit(box.x + 8 + (zW + 4) * 2, zoneY, zW, 22, () => { zoneViewerState = { playerId, zone: "exile", scroll: 0 }; });
 
-  // Resources
-  drawResourceList(player, box.x + 14, box.y + 96);
+  // Resources (compact 2-col) - only for viewer player, opponent resources visible too
+  drawResourceList(player, box.x + 8, box.y + 66);
+
+  // Wild / Grand compact row
+  const wgY = box.y + 200;
+  const wgW = (box.w - 16) / 2 - 2;
+  drawMiniCard(box.x + 8, wgY, wgW, 22, `Wild ${player.wildZone.length}`, "rgba(60,30,90,0.7)");
+  drawMiniCard(box.x + 8 + wgW + 4, wgY, wgW, 22, player.grandZone[0]?.name?.split(" ")[0] || `Grand ${player.grandZone.length}`, "rgba(20,60,100,0.7)");
 
   // Separator
-  ctx.strokeStyle = "rgba(40,70,160,0.3)";
+  ctx.strokeStyle = "rgba(40,70,160,0.25)";
   ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(box.x + 14, box.y + 272); ctx.lineTo(box.x + box.w - 14, box.y + 272); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(box.x + 8, box.y + 230); ctx.lineTo(box.x + box.w - 8, box.y + 230); ctx.stroke();
 
-  // Wild / Grand zones
-  drawMiniCard(box.x + 14, box.y + 280, 96, 26, `Wild ${player.wildZone.length}`, "rgba(60,30,90,0.7)");
-  drawMiniCard(box.x + 124, box.y + 280, 96, 26, player.grandZone[0]?.name?.split(" ")[0] || `Grand ${player.grandZone.length}`, "rgba(20,60,100,0.7)");
-
-  // Struct zone header
-  ctx.fillStyle = "rgba(160,180,230,0.7)";
-  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("STRUCT ZONE", box.x + 14, box.y + 326);
-  ctx.strokeStyle = "rgba(40,70,160,0.3)";
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(box.x + 14, box.y + 330); ctx.lineTo(box.x + box.w - 14, box.y + 330); ctx.stroke();
-
-  player.structs.slice(0, 6).forEach((card, i) => {
-    const selected = state.selected?.kind === "fieldStruct" && state.selected.playerId === playerId && state.selected.index === i;
-    const cardX = box.x + 14;
-    const cardY = box.y + 336 + i * 36;
-    const fill = selected ? "rgba(140,100,20,0.7)" : "rgba(20,40,80,0.6)";
-    const border = selected ? "rgba(220,170,40,0.8)" : "rgba(40,80,160,0.5)";
-    roundRect(cardX, cardY, box.w - 28, 30, 5, fill, border, selected ? 1.5 : 1);
-    ctx.fillStyle = selected ? "#ffd860" : "#a0b8e0";
-    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(card.name, cardX + 8, cardY + 20, box.w - 44);
-    addHit(cardX, cardY, box.w - 28, 30, () => {
-      const detailOpen = consumeFieldDoubleClick(`fieldStruct:${playerId}:${i}`);
-      state.selected = { kind: "fieldStruct", playerId, index: i, detailOpen };
-      state.message = detailOpen ? `${card.name}: detail` : `${card.name} selected`;
-    });
-  });
-
+  // STRUCT DECK (only for viewer — this is what you use to play new structs)
   if (playerId === viewerPlayerId()) {
-    const deckTitleY = box.y + 556;
-    const deckCardsY = box.y + 574;
+    const deckTitleY = box.y + 242;
+    const deckCardsY = box.y + 258;
     ctx.fillStyle = "rgba(160,180,230,0.7)";
-    ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
-    ctx.fillText("STRUCT DECK", box.x + 14, deckTitleY);
-    const scrollInfo = clampStructDeckScroll(player);
-    ctx.fillStyle = "rgba(100,120,180,0.6)";
+    ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("STRUCT DECK", box.x + 8, deckTitleY);
+    ctx.fillStyle = "rgba(100,120,180,0.55)";
     ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(`${player.structDeck.length}枚`, box.x + 114, deckTitleY);
-    drawButton(box.x + box.w - 76, deckTitleY - 14, 28, 18, "↑", () => changeStructDeckScroll(-1), null, { micro: true });
-    drawButton(box.x + box.w - 42, deckTitleY - 14, 28, 18, "↓", () => changeStructDeckScroll(1), null, { micro: true });
-    const startIndex = scrollInfo.scroll * 3;
-    const visibleCards = player.structDeck.slice(startIndex, startIndex + scrollInfo.visibleRows * 3);
-    addWheelRegion(box.x + 14, deckCardsY, box.w - 28, scrollInfo.visibleRows * 42, (deltaY) => changeStructDeckScroll(deltaY > 0 ? 1 : -1));
+    ctx.fillText(`${player.structDeck.length}枚`, box.x + 100, deckTitleY);
+    drawButton(box.x + box.w - 58, deckTitleY - 12, 24, 16, "↑", () => changeStructDeckScroll(-1), null, { micro: true });
+    drawButton(box.x + box.w - 30, deckTitleY - 12, 24, 16, "↓", () => changeStructDeckScroll(1), null, { micro: true });
+    const scrollInfo = clampStructDeckScroll(player);
+    const startIndex = scrollInfo.scroll * 2;
+    const visibleCards = player.structDeck.slice(startIndex, startIndex + scrollInfo.visibleRows * 2);
+    const panelBottom = box.y + box.h - 8;
+    const maxRows = Math.floor((panelBottom - deckCardsY) / 44);
+    const actualRows = Math.min(maxRows, scrollInfo.visibleRows);
+    addWheelRegion(box.x + 8, deckCardsY, box.w - 16, actualRows * 44, (deltaY) => changeStructDeckScroll(deltaY > 0 ? 1 : -1));
     visibleCards.forEach((card, visibleIndex) => {
+      if (visibleIndex >= actualRows * 2) return;
       const i = startIndex + visibleIndex;
-      const col = visibleIndex % 3;
-      const row = Math.floor(visibleIndex / 3);
-      const bx = box.x + 14 + col * 70;
-      const by = deckCardsY + row * 42;
+      const col = visibleIndex % 2;
+      const row = Math.floor(visibleIndex / 2);
+      const cW = (box.w - 18) / 2;
+      const bx = box.x + 8 + col * (cW + 2);
+      const by = deckCardsY + row * 44;
+      if (by + 40 > panelBottom) return;
       const selected = state.selected?.kind === "structDeck" && state.selected.playerId === playerId && state.selected.index === i;
       const canAfford = canPay(player, card.cost);
-      const fill = selected ? "rgba(140,100,20,0.7)" : canAfford ? "rgba(20,50,100,0.7)" : "rgba(20,20,40,0.6)";
-      const border = selected ? "rgba(220,170,40,0.9)" : canAfford ? "rgba(50,100,200,0.5)" : "rgba(40,40,80,0.4)";
-      roundRect(bx, by, 64, 38, 5, fill, border, selected ? 1.5 : 1);
+      const fill = selected ? "rgba(140,100,20,0.75)" : canAfford ? "rgba(20,50,100,0.75)" : "rgba(20,20,40,0.65)";
+      const border = selected ? "rgba(220,170,40,0.9)" : canAfford ? "rgba(50,100,200,0.55)" : "rgba(40,40,80,0.4)";
+      roundRect(bx, by, cW, 40, 5, fill, border, selected ? 1.5 : 1);
       ctx.fillStyle = selected ? "#ffd860" : canAfford ? "#90b8f0" : "#506080";
       ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
-      ctx.fillText(card.name.split(" ")[0], bx + 5, by + 24, 54);
-      addHit(bx, by, 64, 38, () => {
+      ctx.fillText(card.name.split(" ")[0], bx + 5, by + 25, cW - 8);
+      addHit(bx, by, cW, 40, () => {
         if (!requireActivePlayerControl()) return;
         state.selected = { kind: "structDeck", playerId, index: i, confirmed: false };
         state.message = `${card.name}: 内容を確認してから使用できます。`;
@@ -5407,34 +5440,28 @@ const RESOURCE_PILL_COLORS = {
 
 function drawResourceList(player, x, y) {
   const gained = state.turnStartSummary?.playerId === player.id ? state.turnStartSummary.gained || {} : {};
+  const pillW = 82; const pillH = 28;
   RESOURCE_KEYS.forEach((key, i) => {
     const col = i % 2;
     const row = Math.floor(i / 2);
-    const rx = x + col * 108;
-    const ry = y + row * 40;
+    const rx = x + col * (pillW + 4);
+    const ry = y + row * (pillH + 4);
     const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(30,40,70,0.6)", border: "rgba(80,100,180,0.5)", text: "#a0b0d0", glow: "#6080c0" };
     const amt = player.resources[key] || 0;
-    roundRect(rx, ry, 100, 32, 6, colors.bg, colors.border, 1.5);
-    ctx.save();
-    ctx.shadowColor = colors.glow; ctx.shadowBlur = 4;
+    roundRect(rx, ry, pillW, pillH, 5, colors.bg, colors.border, 1);
+    ctx.save(); ctx.shadowColor = colors.glow; ctx.shadowBlur = 3;
     ctx.fillStyle = colors.text;
-    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(RESOURCE_LABELS[key], rx + 8, ry + 13);
-    ctx.font = "700 17px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(String(amt), rx + 8, ry + 28);
-    ctx.shadowBlur = 0; ctx.restore();
+    ctx.font = "600 9px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(RESOURCE_LABELS[key], rx + 6, ry + 11);
+    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(String(amt), rx + 6, ry + 23);
     if (gained[key] > 0) {
-      ctx.save();
-      ctx.shadowColor = colors.glow;
-      ctx.shadowBlur = 6;
-      ctx.fillStyle = colors.text;
-      ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "right";
-      ctx.fillText(`+${gained[key]}`, rx + 94, ry + 28);
+      ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+      ctx.fillText(`+${gained[key]}`, rx + pillW - 4, ry + 23);
       ctx.textAlign = "left";
-      ctx.shadowBlur = 0;
-      ctx.restore();
     }
+    ctx.shadowBlur = 0; ctx.restore();
   });
 }
 
@@ -5456,12 +5483,15 @@ function drawHand() {
   ctx.fillStyle = "rgba(80,110,180,0.6)";
   ctx.fillText(`${player.hand.length}枚`, hx + 60, hy + 16);
 
+  const cardW = 102;
+  const cardH = hh - 28;
   player.hand.forEach((card, i) => {
-    const cx = hx + 16 + i * 100;
-    const cy = hy + 22;
+    const cx = hx + 12 + i * (cardW + 4);
+    const cy = hy + 20;
+    if (cx + cardW > hx + hw - 8) return;
     const isSelected = state.selected?.kind === "hand" && state.selected.playerId === player.id && state.selected.index === i;
-    drawCard(cx, cy, 88, hh - 30, card, { selected: isSelected, small: true });
-    addHit(cx, cy, 88, hh - 30, () => {
+    drawCard(cx, cy, cardW, cardH, card, { selected: isSelected, small: false });
+    addHit(cx, cy, cardW, cardH, () => {
       if (!requireActivePlayerControl()) return;
       state.selected = { kind: "hand", playerId: player.id, index: i, confirmed: false };
       state.message = `${card.name}: 内容を確認してから使用できます。`;
@@ -5473,21 +5503,148 @@ function drawTopHand() {
   const opponent = state.players[opponentOf(viewerPlayerId())];
   const { x, y, w, h } = layout.topHand;
   const grd = ctx.createLinearGradient(x, y, x, y + h);
-  grd.addColorStop(0, "rgba(10,18,42,0.98)");
-  grd.addColorStop(1, "rgba(16,26,58,0.96)");
-  roundRect(x, y, w, h, 8, grd, "rgba(180,40,40,0.5)", 1.5);
-  ctx.fillStyle = "rgba(230,140,140,0.5)";
-  roundRect(x, y + h - 2, w, 2, 1, "rgba(200,40,40,0.5)", null);
-
-  ctx.fillStyle = "rgba(220,150,150,0.65)";
-  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("HAND", x + 16, y + 16);
-  ctx.fillStyle = "rgba(180,80,80,0.6)";
-  ctx.fillText(`${opponent.hand.length}枚`, x + 60, y + 16);
-
+  grd.addColorStop(0, "rgba(10,18,42,0.97)");
+  grd.addColorStop(1, "rgba(16,26,58,0.94)");
+  roundRect(x, y, w, h, 6, grd, "rgba(180,40,40,0.45)", 1);
+  ctx.fillStyle = "rgba(220,140,140,0.55)";
+  ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`HAND  ${opponent.hand.length}枚`, x + 12, y + 22);
+  const cardW = 28; const cardH = h - 8;
   for (let i = 0; i < opponent.hand.length; i += 1) {
-    drawCardBack(x + 16 + i * 52, y + 22, 44, h - 30);
+    const cx2 = x + 90 + i * (cardW + 2);
+    if (cx2 + cardW > x + w - 4) break;
+    drawCardBack(cx2, y + 4, cardW, cardH);
   }
+}
+
+function drawLPDisplay(playerId, x, y, w, h) {
+  const player = state.players[playerId];
+  const isP1 = playerId === "p1";
+  const hp = player.core.hp;
+  const maxHp = player.core.maxHp || 20;
+  const ratio = Math.max(0, hp / maxHp);
+  const barColor = ratio > 0.5 ? (isP1 ? "#4090ff" : "#ff5040") : ratio > 0.25 ? "#e0a020" : "#ff2020";
+  const bg = isP1 ? "rgba(10,24,70,0.92)" : "rgba(70,12,12,0.92)";
+  roundRect(x, y, w, h, 5, bg, barColor, 1.5);
+  // Player name
+  ctx.fillStyle = "rgba(200,215,255,0.65)";
+  ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(player.name, x + 7, y + 13);
+  // LP label
+  ctx.fillStyle = "rgba(160,180,230,0.6)";
+  ctx.font = "700 9px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("LP", x + 7, y + 26);
+  // HP number (big)
+  ctx.save();
+  ctx.shadowColor = barColor; ctx.shadowBlur = 8;
+  ctx.fillStyle = "#f0f4ff";
+  ctx.font = `800 ${hp >= 10 ? 28 : 32}px 'Yu Gothic UI', sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillText(`${hp}`, x + w / 2, y + h - 16);
+  ctx.shadowBlur = 0; ctx.restore();
+  // HP bar at bottom
+  const barY = y + h - 8; const barW = w - 10;
+  ctx.fillStyle = "rgba(20,20,40,0.75)";
+  ctx.fillRect(x + 5, barY, barW, 5);
+  ctx.save();
+  ctx.shadowColor = barColor; ctx.shadowBlur = 4;
+  ctx.fillStyle = barColor;
+  ctx.fillRect(x + 5, barY, barW * ratio, 5);
+  ctx.shadowBlur = 0; ctx.restore();
+  // Make core clickable
+  if (playerId !== state.activePlayer) addHit(x, y, w, h, () => attackWithSelectedUnit({ kind: "core" }));
+}
+
+function drawStructBar(playerId, x, y, w, h) {
+  const player = state.players[playerId];
+  const isP1 = playerId === "p1";
+  const accentColor = isP1 ? "rgba(40,90,220,0.6)" : "rgba(220,40,40,0.6)";
+  const bg = isP1 ? "rgba(6,12,34,0.88)" : "rgba(34,6,6,0.88)";
+  roundRect(x, y, w, h, 6, bg, accentColor, 1);
+
+  // LP display (left portion)
+  const lpW = 136;
+  drawLPDisplay(playerId, x + 4, y + 4, lpW, h - 8);
+
+  // Struct zone label
+  ctx.fillStyle = "rgba(140,160,210,0.55)";
+  ctx.font = "700 9px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("STRUCT", x + lpW + 12, y + 13);
+
+  // Struct cards (horizontal)
+  const structStartX = x + lpW + 12;
+  const deckAreaW = 128; // right reserved for deck+grave
+  const structAreaW = w - lpW - 16 - deckAreaW;
+  const maxStructSlots = 6;
+  const slotW = Math.min(120, Math.floor(structAreaW / maxStructSlots) - 2);
+  const cardH = h - 12;
+
+  player.structs.forEach((card, i) => {
+    const cx2 = structStartX + i * (slotW + 2);
+    if (cx2 + slotW > x + w - deckAreaW - 4) return;
+    const selected = state.selected?.kind === "fieldStruct" && state.selected.playerId === playerId && state.selected.index === i;
+    drawCard(cx2, y + 6, slotW, cardH, card, { selected, small: true });
+    addHit(cx2, y + 6, slotW, cardH, () => {
+      const detailOpen = consumeFieldDoubleClick(`fieldStruct:${playerId}:${i}`);
+      state.selected = { kind: "fieldStruct", playerId, index: i, detailOpen };
+      state.message = detailOpen ? `${card.name}: detail` : `${card.name} を選択`;
+    });
+  });
+
+  // Deck + Grave piles (right side)
+  const deckX = x + w - deckAreaW + 2;
+  const pileW = 56; const pileH = h - 10;
+  // Deck
+  roundRect(deckX, y + 5, pileW, pileH, 4, "rgba(10,20,54,0.85)", "rgba(50,90,200,0.5)", 1);
+  ctx.fillStyle = "#7098c8";
+  ctx.font = "700 9px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("DECK", deckX + pileW / 2, y + 18);
+  ctx.font = "800 22px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "#c0d8ff";
+  ctx.fillText(String(player.mainDeck.length), deckX + pileW / 2, y + pileH - 4);
+  ctx.textAlign = "left";
+  // Grave (GY)
+  const gyX = deckX + pileW + 4;
+  roundRect(gyX, y + 5, pileW, pileH, 4, "rgba(14,36,14,0.85)", "rgba(40,130,60,0.5)", 1);
+  ctx.fillStyle = "#70b880";
+  ctx.font = "700 9px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("GY", gyX + pileW / 2, y + 18);
+  ctx.font = "800 22px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "#c0e8d0";
+  ctx.fillText(String(player.dump.length), gyX + pileW / 2, y + pileH - 4);
+  ctx.textAlign = "left";
+  addHit(gyX, y + 5, pileW, pileH, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
+}
+
+function drawResourceBar() {
+  const viewer = viewerPlayerId();
+  const player = state.players[viewer];
+  const { x, y, w, h } = layout.resourceBar;
+  const gained = state.turnStartSummary?.playerId === viewer ? state.turnStartSummary.gained || {} : {};
+  roundRect(x, y, w, h, 5, "rgba(6,10,28,0.92)", "rgba(30,60,160,0.4)", 1);
+  const pillW = 132; const pillH = h - 8;
+  RESOURCE_KEYS.forEach((key, i) => {
+    const px = x + 6 + i * (pillW + 3);
+    const py = y + 4;
+    const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(30,40,70,0.6)", border: "rgba(80,100,180,0.5)", text: "#a0b0d0", glow: "#6080c0" };
+    const amt = player.resources[key] || 0;
+    roundRect(px, py, pillW, pillH, 4, colors.bg, colors.border, 1);
+    ctx.save(); ctx.shadowColor = colors.glow; ctx.shadowBlur = 3;
+    ctx.fillStyle = colors.text;
+    ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(RESOURCE_LABELS[key], px + 6, py + 13);
+    ctx.font = "800 16px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(String(amt), px + 6, py + 27);
+    if (gained[key] > 0) {
+      ctx.textAlign = "right";
+      ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+      ctx.fillText(`+${gained[key]}`, px + pillW - 4, py + 27);
+      ctx.textAlign = "left";
+    }
+    ctx.shadowBlur = 0; ctx.restore();
+  });
 }
 
 function drawOnlinePendingOverlay() {
@@ -5510,24 +5667,26 @@ function drawOnlinePendingOverlay() {
 }
 
 function drawActionPanel() {
-  const x = 1168;
-  const y = 94;
+  const rx = layout.right.x;
+  const ry = layout.right.y;
   const unit = selectedUnit();
-  roundRect(x, y, 238, 72, 8, "rgba(6,10,24,0.9)", "rgba(40,70,160,0.5)", 1.5);
-  ctx.fillStyle = "rgba(160,190,240,0.75)";
-  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(state.message, x + 12, y + 18, 214);
+  // Action panel integrated into right panel top
   if (unit && unit.owner === state.activePlayer) {
+    const panelH = 76;
+    roundRect(rx, ry, layout.right.w, panelH, 6, "rgba(8,14,34,0.92)", "rgba(40,70,160,0.55)", 1.5);
+    ctx.fillStyle = "rgba(160,185,240,0.8)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(unit.name, rx + 8, ry + 16, layout.right.w - 12);
     const hasActivate = (unit.abilities || []).some((a) => a.trigger === "onActivate");
     if (hasActivate) {
-      drawButton(x + 10, y + 30, 46, 28, "前進", moveSelectedUnit);
-      drawButton(x + 62, y + 30, 46, 28, "後退", retreatSelectedUnit);
-      drawButton(x + 114, y + 30, 46, 28, "起動", activateSelectedUnit, null, { accent: "p2" });
-      drawButton(x + 166, y + 30, 60, 28, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
+      drawButton(rx + 4,  ry + 24, 42, 26, "前進", moveSelectedUnit);
+      drawButton(rx + 50, ry + 24, 42, 26, "後退", retreatSelectedUnit);
+      drawButton(rx + 96, ry + 24, 40, 26, "起動", activateSelectedUnit, null, { accent: "p2" });
+      drawButton(rx + 140, ry + 24, 40, 26, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
     } else {
-      drawButton(x + 10, y + 30, 64, 28, "前進", moveSelectedUnit);
-      drawButton(x + 84, y + 30, 64, 28, "後退", retreatSelectedUnit);
-      drawButton(x + 158, y + 30, 66, 28, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
+      drawButton(rx + 4,  ry + 24, 56, 26, "前進", moveSelectedUnit);
+      drawButton(rx + 64, ry + 24, 56, 26, "後退", retreatSelectedUnit);
+      drawButton(rx + 124, ry + 24, 56, 26, "攻撃", () => { state.message = "敵ユニットか敵コアを選択"; }, null, { accent: "p1" });
     }
   }
 }
@@ -6255,13 +6414,13 @@ function drawZoneViewerOverlay() {
 }
 
 function drawLog() {
-  const x = 36;
-  const y = 94;
-  ctx.fillStyle = "rgba(4,8,20,0.7)";
-  roundRect(x, y, 520, 60, 6, "rgba(4,8,20,0.7)", "rgba(30,60,140,0.25)", 1);
-  ctx.fillStyle = "rgba(140,170,220,0.75)";
-  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
-  state.log.slice(0, 3).forEach((line, i) => ctx.fillText(line, x + 12, y + 18 + i * 18));
+  const x = layout.left.x;
+  const y = layout.left.y;
+  const w = layout.left.w;
+  roundRect(x, y, w, 58, 6, "rgba(4,8,20,0.80)", "rgba(30,60,140,0.30)", 1);
+  ctx.fillStyle = "rgba(130,160,215,0.8)";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  state.log.slice(0, 3).forEach((line, i) => ctx.fillText(line, x + 8, y + 16 + i * 16, w - 12));
 }
 
 function drawCard(x, y, w, h, card, options = {}) {
