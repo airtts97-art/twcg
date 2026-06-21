@@ -116,6 +116,11 @@ const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
 const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1753611167885", // クリスタヴィアゴーレム
   "card_1753660736818", // 覆没の大暴走
+  "card_1753660200559", // デウス・エクス・マキナ
+  "card_1753680748888", // 連合王国歩兵
+  "card_1753664241159", // 諜報機関
+  "card_1753664708023", // ゴールドゴーレム
+  "card_1753664097092", // 改良型マーガト
   "card_1755655012242", // 忌地:山
   "card_1753611174564", // 肉の王城
   "card_1753660083940", // アトラス・コントロール
@@ -149,6 +154,11 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1753905404273", // 炎使いの騎士
   "card_1753968998785", // 炎の英傑
   "card_1753970684315", // 炎の大英傑
+  "card_1755657552300", // 不明な忌地
+  "card_1755671140352", // 【正体不明】骨の少女
+  "card_1755671320457", // 【正体不明】怪獣
+  "card_1757041693503", // 愚世の怪異
+  "card_1761808048476", // 幾龍の怪異
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -313,6 +323,7 @@ const abilityEffects = {
       const card = player.mainDeck.shift();
       if (card) {
         player.dump.push(card);
+        notifyDumpChanged(game, playerId);
         triggerAbilities(game, playerId, card, "onMill");
       }
     }
@@ -328,8 +339,16 @@ const abilityEffects = {
     cleanupAllDestroyed();
     for (const pid of ["p1", "p2"]) {
       const player = game.players[pid];
-      while (player.tactZone.length) player.dump.push(player.tactZone.pop());
-      while (player.structs.length) player.dump.push(player.structs.pop());
+      let dumpChanged = false;
+      while (player.tactZone.length) {
+        player.dump.push(player.tactZone.pop());
+        dumpChanged = true;
+      }
+      while (player.structs.length) {
+        player.dump.push(player.structs.pop());
+        dumpChanged = true;
+      }
+      if (dumpChanged) notifyDumpChanged(game, pid);
     }
     log(game, "全ユニット・タクト・ストラクトを破壊");
   },
@@ -352,6 +371,7 @@ const abilityEffects = {
     if (!structs.length) return;
     const removed = structs.splice(0, 1)[0];
     game.players[opponent].dump.push(removed);
+    notifyDumpChanged(game, opponent);
     log(game, `${game.players[playerId].name}: 「${removed.name}」を破壊`);
   },
   summonSelfFromDump({ game, playerId, card }) {
@@ -359,6 +379,7 @@ const abilityEffects = {
     const dumpIdx = player.dump.findLastIndex((c) => c.id === card.id);
     if (dumpIdx < 0) return;
     player.dump.splice(dumpIdx, 1);
+    notifyDumpChanged(game, playerId);
     const summonRow = player.summonRow;
     for (let col = 0; col < COLS; col++) {
       if (!game.board[summonRow][col]) {
@@ -490,6 +511,7 @@ const abilityEffects = {
     for (let i = 0; i < amount && opponent.hand.length; i++) {
       const index = Math.floor(Math.random() * opponent.hand.length);
       opponent.dump.push(opponent.hand.splice(index, 1)[0]);
+      notifyDumpChanged(game, opponentOf(playerId));
     }
     log(game, `${opponent.name}: 手札を${amount}枚捨てる`);
   },
@@ -730,6 +752,7 @@ const abilityEffects = {
     const dumpIdx = player.dump.findLastIndex((c) => c.id === card.id);
     if (dumpIdx < 0) return;
     player.dump.splice(dumpIdx, 1);
+    notifyDumpChanged(game, playerId);
     const summonRow = player.summonRow;
     for (let col = 0; col < COLS; col++) {
       if (!game.board[summonRow][col]) {
@@ -766,6 +789,7 @@ const abilityEffects = {
     if (!target) return;
     const dmg = hasKeyword(target, "oneDamage") ? Math.min(ability.amount, 1) : ability.amount;
     target.currentHp -= dmg;
+    triggerAbilities(game, target.owner, target, "onDamageReceived", { damage: dmg });
     log(game, `${target.name}: ${dmg}ダメージ`);
     cleanupAllDestroyed();
   },
@@ -1061,6 +1085,142 @@ const abilityEffects = {
       i--;
     }
     if (placed === 0) log(game, `${player.name}: 「${card.name}」— 対象カードが見つからない`);
+  },
+  grantTactPeopleDiscount({ game, playerId, card, ability }) {
+    if (!game.globalEffects) game.globalEffects = [];
+    game.globalEffects.push({
+      type: "tactPeopleDiscount",
+      playerId,
+      amount: ability.amount || 2,
+      untilPlayerTurnEnd: playerId,
+    });
+    log(game, `${game.players[playerId].name}: ${card.name} tact people cost -${ability.amount || 2}`);
+  },
+  adjacentTagBuff({ game, playerId, card, ability }) {
+    if (!card || card.adjacentBuffApplied) return;
+    const tag = ability.tag;
+    const count = adjacentCells(card.row, card.col).filter(([row, col]) => {
+      const unit = game.board[row]?.[col];
+      return unit?.owner === playerId && (!tag || (unit.tags || []).includes(tag));
+    }).length;
+    if (count < (ability.min || 1)) return;
+    card.atk = (card.atk || 0) + (ability.atk || 0);
+    card.maxHp = (card.maxHp || card.hp || 0) + (ability.hp || 0);
+    card.currentHp = (card.currentHp || card.hp || 0) + (ability.hp || 0);
+    card.adjacentBuffApplied = true;
+    log(game, `${game.players[playerId].name}: ${card.name} adjacent buff +${ability.atk || 0}/+${ability.hp || 0}`);
+  },
+  grantMobileIfAnyTag({ game, playerId, card, ability }) {
+    const tag = ability.tag;
+    const exists = ["p1", "p2"].some((pid) => unitsOwnedBy(pid).some((unit) => (unit.tags || []).includes(tag)));
+    if (!exists) return;
+    ensureKeyword(card, "mobile");
+    log(game, `${game.players[playerId].name}: ${card.name} gains mobile`);
+  },
+  grantConditionalKeywordsByCounter({ game, playerId, card, ability }) {
+    if ((card.counters || 0) <= 0) return;
+    for (const keyword of ability.keywords || []) ensureKeyword(card, keyword.id || keyword, keyword.value ?? null);
+    log(game, `${game.players[playerId].name}: ${card.name} counter keywords applied`);
+  },
+  goldGolemStrike({ game, playerId, card, target }) {
+    if (!target || target.owner === playerId) return;
+    const damage = calculateAttackDamage(card, target);
+    target.currentHp -= damage;
+    log(game, `${game.players[playerId].name}: ${card.name} special strike ${target.name} ${damage}`);
+    cleanupAllDestroyed(card);
+  },
+  payDestroyUpToEnemyCards({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    if (!pay(player, ability.cost || {})) {
+      log(game, `${player.name}: ${card.name} optional destruction cost not paid`);
+      return;
+    }
+    abilityEffects.destroyUpToEnemyCards({ game, playerId, card, ability: { amount: ability.amount || 3 } });
+    log(game, `${player.name}: ${card.name} destroys up to ${ability.amount || 3} enemy cards`);
+  },
+  registerDumpLifeGain({ game, playerId, card }) {
+    if (!game.globalEffects) game.globalEffects = [];
+    if (!game.globalEffects.some((e) => e.type === "dumpLifeGain" && e.playerId === playerId && e.cardId === card.id)) {
+      game.globalEffects.push({ type: "dumpLifeGain", playerId, cardId: card.id });
+    }
+    log(game, `${game.players[playerId].name}: ${card.name} watches dump changes`);
+  },
+  enterRestedLocked({ game, playerId, card, ability }) {
+    card.rested = true;
+    card.lockedRestTurns = ability.turns ?? 999;
+    log(game, `${game.players[playerId].name}: ${card.name} enters locked-rest`);
+  },
+  unrestSelf({ game, playerId, card }) {
+    card.rested = false;
+    card.lockedRestTurns = 0;
+    log(game, `${game.players[playerId].name}: ${card.name} unrests`);
+  },
+  summonTagFromDumpAndRest({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const tag = ability.tag;
+    const idx = player.dump.findIndex((c) => c.type === "unit" && (c.tags || []).includes(tag));
+    if (idx < 0) return;
+    const col = findFirstEmptyColInRow(game, player.summonRow);
+    if (col < 0) return;
+    const [unitCard] = player.dump.splice(idx, 1);
+    notifyDumpChanged(game, playerId);
+    const unit = makeUnit(unitCard.id, playerId, player.summonRow, col, { rested: true, fromDump: true });
+    game.board[player.summonRow][col] = unit;
+    card.rested = true;
+    triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
+    log(game, `${player.name}: ${card.name} summons ${unit.name} from dump`);
+  },
+  summonHandUnitToOpponent({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const opponentId = opponentOf(playerId);
+    const opponent = game.players[opponentId];
+    const idx = player.hand.findIndex((c) => c.type === "unit");
+    if (idx < 0) return;
+    const col = findFirstEmptyColInRow(game, opponent.summonRow);
+    if (col < 0) return;
+    const [unitCard] = player.hand.splice(idx, 1);
+    const unit = makeUnit(unitCard.id, opponentId, opponent.summonRow, col, { rested: true });
+    game.board[opponent.summonRow][col] = unit;
+    triggerAbilities(game, opponentId, unit, "onSummon");
+    log(game, `${game.players[playerId].name}: ${card.name} gives ${unit.name} to opponent`);
+  },
+  kaijuAwaken({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const ownUnit = unitsOwnedBy(playerId).find((unit) => unit.instanceId !== card.instanceId);
+    if (!ownUnit || !player.structs.length || !player.hand.length) {
+      log(game, `${player.name}: ${card.name} awaken cost unavailable`);
+      return;
+    }
+    game.board[ownUnit.row][ownUnit.col] = null;
+    player.exileZone.push(stripRuntime(ownUnit));
+    player.exileZone.push(player.structs.shift());
+    player.exileZone.push(player.hand.shift());
+    removeKeywords(card, ["immobile", "noAttack"]);
+    card.noRetreatUntilOpponentTurnEnd = opponentOf(playerId);
+    if (!game.globalEffects) game.globalEffects = [];
+    game.globalEffects.push({ type: "restoreKaijuLocks", playerId, instanceId: card.instanceId, untilPlayerTurnEnd: opponentOf(playerId) });
+    log(game, `${player.name}: ${card.name} awakens`);
+  },
+  damageOwnCore({ game, playerId, ability }) {
+    game.players[playerId].core.hp -= ability.amount || 1;
+    log(game, `${game.players[playerId].name}: own core ${ability.amount || 1} damage`);
+    checkWinner(game);
+  },
+  redirectDamageToOther({ game, playerId, card }) {
+    if (!card || card.redirectingDamage) return;
+    const lost = (card.maxHp || card.hp || 0) - (card.currentHp || 0);
+    if (lost <= 0) return;
+    card.currentHp += lost;
+    const other = [...unitsOwnedBy(playerId), ...unitsOwnedBy(opponentOf(playerId))].find((unit) => unit.instanceId !== card.instanceId);
+    if (other) {
+      other.currentHp -= lost;
+      log(game, `${card.name}: redirects ${lost} damage to ${other.name}`);
+      cleanupAllDestroyed(card);
+      return;
+    }
+    game.players[opponentOf(playerId)].core.hp -= lost;
+    log(game, `${card.name}: redirects ${lost} damage to opponent core`);
+    checkWinner(game);
   },
 };
 
@@ -2262,6 +2422,67 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onPlay", effect: "exileTargetNonNeutralNonUnifall", target: "enemyUnit" });
   }
 
+  if (card.id === "card_1753660200559") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "grantTactPeopleDiscount", amount: 2 });
+  }
+
+  if (card.id === "card_1753680748888") {
+    abilities.push({ trigger: "onSummon", effect: "adjacentTagBuff", tag: "\u7d14\u4eba\u9593", min: 2, atk: 1, hp: 1 });
+    abilities.push({ trigger: "onTurnStart", effect: "adjacentTagBuff", tag: "\u7d14\u4eba\u9593", min: 2, atk: 1, hp: 1 });
+  }
+
+  if (card.id === "card_1753664708023") {
+    for (let i = abilities.length - 1; i >= 0; i--) {
+      if (abilities[i].trigger === "onStructurePhase") abilities.splice(i, 1);
+    }
+    abilities.push({ trigger: "onActivate", effect: "goldGolemStrike", target: "enemyUnit", activationCost: { funds: 4, magic: 1 } });
+  }
+
+  if (card.id === "card_1753664097092") {
+    abilities.push({ trigger: "onSummon", effect: "grantMobileIfAnyTag", tag: "\u5c4d\u4eba" });
+  }
+
+  if (card.id === "card_1753775442028") {
+    abilities.push({ trigger: "onSummon", effect: "grantConditionalKeywordsByCounter", keywords: [{ id: "immobile" }, { id: "noAttack" }] });
+    abilities.push({ trigger: "onTurnStart", effect: "grantConditionalKeywordsByCounter", keywords: [{ id: "immobile" }, { id: "noAttack" }] });
+  }
+
+  if (card.id === "card_1753970684315") {
+    abilities.push({ trigger: "onSummon", effect: "payDestroyUpToEnemyCards", cost: { fuel: 1, magic: 3 }, amount: 3 });
+  }
+
+  if (card.id === "card_1755657552300") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
+    abilities.push({ trigger: "onPlay", effect: "registerDumpLifeGain" });
+  }
+
+  if (card.id === "card_1755701443493") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "enterRestedLocked", turns: 999 });
+    abilities.push({ trigger: "onDestroyEnemyUnit", effect: "unrestSelf" });
+    abilities.push({ trigger: "onActivate", effect: "summonTagFromDumpAndRest", tag: "\u602a\u7570" });
+  }
+
+  if (card.id === "card_1755671140352") {
+    abilities.push({ trigger: "onSummon", effect: "summonHandUnitToOpponent" });
+  }
+
+  if (card.id === "card_1755671320457") {
+    abilities.push({ trigger: "onActivate", effect: "kaijuAwaken", activationCost: {} });
+    abilities.push({ trigger: "onDestroy", effect: "damageOwnCore", amount: 5 });
+  }
+
+  if (card.id === "card_1757041693503") {
+    abilities.push({ trigger: "onDamageReceived", effect: "redirectDamageToOther" });
+  }
+
+  if (card.id === "card_1761808048476") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onTurnStart", effect: "payResourceOrCoreDamage", resource: "people", amount: 7, damage: 7 });
+  }
+
   return abilities;
 }
 
@@ -2292,6 +2513,8 @@ function fromDeckmakerCard(card) {
     if (card.id === "card_1753905404273") base.requiredSacrificeName = "炎使いの剣士";
     if (card.id === "card_1753968998785") base.requiredSacrificeName = "炎使いの騎士";
     if (card.id === "card_1753970684315") base.requiredSacrificeName = "炎の英傑";
+    if (card.id === "card_1761808048476") ensureKeyword(base, "oneDamage");
+    if (card.id === "card_1753664097092") removeKeywords(base, ["mobile"]);
   }
   if (localType === "core") {
     base.hp = Number(card.defense || card.hp) || 20;
@@ -3635,6 +3858,23 @@ function getKeyword(card, id) {
   return (card?.keywords || []).find((keyword) => keyword.id === id);
 }
 
+function ensureKeyword(card, id, value = null) {
+  if (!card) return;
+  if (!card.keywords) card.keywords = [];
+  const existing = card.keywords.find((keyword) => keyword.id === id);
+  if (existing) {
+    if (value != null) existing.value = value;
+    return;
+  }
+  card.keywords.push(value == null ? { id } : { id, value });
+}
+
+function removeKeywords(card, ids = []) {
+  if (!card?.keywords) return;
+  const blocked = new Set(ids);
+  card.keywords = card.keywords.filter((keyword) => !blocked.has(keyword.id));
+}
+
 function keywordValue(card, id, fallback = 0) {
   const keyword = getKeyword(card, id);
   if (!keyword) return fallback;
@@ -3691,6 +3931,20 @@ function addResources(player, key, amount) {
   player.resources[resourceKey] = (player.resources[resourceKey] || 0) + amount;
 }
 
+function notifyDumpChanged(game, changedPlayerId) {
+  const effects = (game.globalEffects || []).filter((effect) => effect.type === "dumpLifeGain");
+  if (!effects.length) return;
+  const timingKey = `${game.turn}:${game.activePlayer}:${changedPlayerId}:${game.log.length}`;
+  for (const effect of effects) {
+    if (effect.lastTimingKey === timingKey) continue;
+    effect.lastTimingKey = timingKey;
+    const player = game.players[effect.playerId];
+    if (!player?.core) continue;
+    player.core.hp += 1;
+    log(game, `${player.name}: dump change life +1`);
+  }
+}
+
 function resourceDelta(before = {}, after = {}) {
   const delta = emptyResources();
   for (const key of RESOURCE_KEYS) delta[key] = (after[key] || 0) - (before[key] || 0);
@@ -3716,11 +3970,32 @@ function pay(player, cost = {}) {
   return true;
 }
 
+function effectiveCostForCard(player, cost = {}, card = null) {
+  const effective = normalizeResourceObject(cost);
+  if (!card || !player?.id) return effective;
+  if (card.type === "tact") {
+    const discount = (state.globalEffects || [])
+      .filter((effect) => effect.type === "tactPeopleDiscount" && effect.playerId === player.id)
+      .reduce((sum, effect) => sum + (effect.amount || 0), 0);
+    if (discount > 0) effective.people = Math.max(0, (effective.people || 0) - discount);
+  }
+  if (card.id === "card_1753664241159" && (effective.people || 0) > 0) {
+    const shortage = Math.max(0, effective.people - (player.resources.people || 0));
+    const substitutable = Math.min(shortage, player.resources.electric || 0);
+    if (substitutable > 0) {
+      effective.people -= substitutable;
+      effective.electric = (effective.electric || 0) + substitutable;
+    }
+  }
+  return effective;
+}
+
 function payForCard(player, cost = {}, card = null) {
-  if (pay(player, cost)) return true;
+  const effectiveCost = effectiveCostForCard(player, cost, card);
+  if (pay(player, effectiveCost)) return true;
   if (!card || !hasKeyword(card, "soulPay")) return false;
 
-  const payable = { ...cost };
+  const payable = { ...effectiveCost };
   const missingMagic = Math.max(0, (payable.magic || 0) - (player.resources.magic || 0));
   if (missingMagic === 0 || player.dump.length < missingMagic) return false;
   payable.magic = (payable.magic || 0) - missingMagic;
@@ -3904,10 +4179,14 @@ function resolveMysticCaptureChoice({ exile = false } = {}) {
   state.selected = null;
   for (const card of selectedCards) {
     player.dump.push(card);
+    notifyDumpChanged(state, pending.playerId);
     triggerAbilities(state, pending.playerId, card, "onSummon", { zone: "dump" });
     if (exile) {
       const dumpIndex = player.dump.indexOf(card);
-      if (dumpIndex >= 0) player.dump.splice(dumpIndex, 1);
+      if (dumpIndex >= 0) {
+        player.dump.splice(dumpIndex, 1);
+        notifyDumpChanged(state, pending.playerId);
+      }
       player.exileZone.push(card);
       triggerAbilities(state, pending.playerId, card, "onSummon", { zone: "exile" });
     }
@@ -3987,6 +4266,7 @@ function resolveReviveFromDump(index) {
   if (!card) return false;
   const dumpIdx = player.dump.indexOf(card);
   if (dumpIdx >= 0) player.dump.splice(dumpIdx, 1);
+  if (dumpIdx >= 0) notifyDumpChanged(state, pending.playerId);
   const playerInfo = PLAYERS[pending.playerId];
   let placed = false;
   for (let col = 0; col < COLS; col++) {
@@ -4109,6 +4389,7 @@ function completeAbilitySource(game, item) {
   if (index >= 0) {
     const [card] = player.tactZone.splice(index, 1);
     player.dump.push(card);
+    notifyDumpChanged(game, item.playerId);
   }
 }
 
@@ -4300,6 +4581,14 @@ function endTurn() {
   for (const unit of unitsOwnedBy(endingPlayer)) {
     if (unit.indestructibleUntilTurnEnd === endingPlayer) delete unit.indestructibleUntilTurnEnd;
   }
+  for (const effect of (state.globalEffects || []).filter((e) => e.type === "restoreKaijuLocks" && e.untilPlayerTurnEnd === endingPlayer)) {
+    const unit = unitsOwnedBy(effect.playerId).find((candidate) => candidate.instanceId === effect.instanceId);
+    if (unit) {
+      ensureKeyword(unit, "immobile");
+      ensureKeyword(unit, "noAttack");
+      delete unit.noRetreatUntilOpponentTurnEnd;
+    }
+  }
   state.globalEffects = (state.globalEffects || []).filter(
     (effect) => effect.untilPlayerTurnEnd !== endingPlayer
   );
@@ -4345,6 +4634,7 @@ function applyUnitSacrificeRequirement(playerId, card) {
   if (!sacrifice) return true;
   state.board[sacrifice.row][sacrifice.col] = null;
   state.players[playerId].dump.push(stripRuntime(sacrifice));
+  notifyDumpChanged(state, playerId);
   log(state, `${state.players[playerId].name}: 「${sacrifice.name}」を墓地に送った`);
   return true;
 }
@@ -4392,9 +4682,31 @@ function playTactFromHand(handIndex) {
   revealCardUse(state.activePlayer, card, "play");
   player.hand.splice(handIndex, 1);
   player.tactZone.push(card);
+  if (tryCancelTactWithIntel(state.activePlayer, card)) {
+    syncOnlineAction("playTact", state.activePlayer);
+    return true;
+  }
   triggerAbilities(state, state.activePlayer, card, "onPlay", { zone: "tact" });
   log(state, `${player.name}: 「${card.name}」を使用`);
   syncOnlineAction("playTact", state.activePlayer);
+  return true;
+}
+
+function tryCancelTactWithIntel(tactOwnerId, tactCard) {
+  const responderId = opponentOf(tactOwnerId);
+  const responder = state.players[responderId];
+  const hasIntel = (responder.structs || []).some((struct) => struct.id === "card_1753664241159");
+  if (!hasIntel) return false;
+  const cost = (responder.resources.people || 0) >= 3 ? { people: 3 } : { electric: 3 };
+  if (!pay(responder, cost)) return false;
+  const owner = state.players[tactOwnerId];
+  const index = owner.tactZone.indexOf(tactCard);
+  if (index >= 0) {
+    const [cancelled] = owner.tactZone.splice(index, 1);
+    owner.dump.push(cancelled);
+    notifyDumpChanged(state, tactOwnerId);
+  }
+  log(state, `${responder.name}: intelligence agency cancelled ${tactCard.name}`);
   return true;
 }
 
@@ -4492,6 +4804,7 @@ function retreatSelectedUnit() {
   if (unit.owner !== state.activePlayer) return fail("現在のプレイヤーのユニットではありません。");
   if (unit.rested) return fail("このユニットはレスト状態です。");
   if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
+  if (unit.noRetreatUntilOpponentTurnEnd) return fail("This unit cannot retreat now.");
   const toRow = unit.row - player.forward;
   if (toRow < 0 || toRow >= ROWS) return fail("これ以上後退できません。");
   if (state.board[toRow][unit.col]) return fail("後方のマスが埋まっています。");
@@ -4584,6 +4897,7 @@ function attackWithSelectedUnit(target) {
   const rawDamage = calculateAttackDamage(unit, defender);
   const damage = hasKeyword(defender, "oneDamage") ? Math.min(rawDamage, 1) : rawDamage;
   defender.currentHp -= damage;
+  triggerAbilities(state, defender.owner, defender, "onDamageReceived", { source: unit, damage });
   if (damage > 0 && hasKeyword(unit, "shock")) defender.rested = true;
   applyCleave(unit, defender);
   if (canCounterAttack(defender, unit)) {
@@ -4711,6 +5025,7 @@ function cleanupDestroyed(unit, killer = null) {
     log(state, `${unit.name} → 手札に戻る（降臨効果）`);
   } else {
     state.players[unit.owner].dump.push(stripRuntime(unit));
+    notifyDumpChanged(state, unit.owner);
     log(state, `「${unit.name}」が破壊された`);
   }
   if (state.selected?.row === unit.row && state.selected?.col === unit.col) state.selected = null;
