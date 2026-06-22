@@ -6942,8 +6942,8 @@ function drawStructZoneRow(playerId, box, mirrored) {
   ctx.strokeStyle = isP1 ? "rgba(40,160,90,0.4)" : "rgba(180,40,40,0.38)"; ctx.lineWidth = 1;
   ctx.strokeRect(x, y, w, h);
 
-  // Structure Deck インジケーター
-  const sdCol = mirrored ? 6 : 0;
+  // Structure Deck インジケーター (player=左端col0, opp=右端col12)
+  const sdCol = mirrored ? 12 : 0;
   const sdX = x + sdCol * cW;
   const sdCount = player.structDeck.length;
   roundRect(sdX + 2, y + 2, cW - 4, h - 4, 4, "rgba(20,40,80,0.85)", "rgba(60,100,200,0.5)", 1);
@@ -6963,9 +6963,9 @@ function drawStructZoneRow(playerId, box, mirrored) {
     });
   }
 
-  // フィールドストラクト表示 (cols 1-5)
-  const structAreaStartCol = mirrored ? 1 : 1;
-  const structAreaEndCol   = mirrored ? 5 : 5;
+  // フィールドストラクト表示 (cols 1-11, 両端のデッキ指標の間)
+  const structAreaStartCol = 1;
+  const structAreaEndCol   = 11;
   const structStartX = x + structAreaStartCol * cW;
   const structEndX   = x + (structAreaEndCol + 1) * cW;
   const cardH = h - 6;
@@ -6994,8 +6994,8 @@ function drawStructZoneRow(playerId, box, mirrored) {
     ctx.textAlign = "left";
   }
 
-  // Main Deck インジケーター
-  const mdCol = mirrored ? 0 : 6;
+  // Main Deck インジケーター (player=右端col12, opp=左端col0)
+  const mdCol = mirrored ? 0 : 12;
   const mdX = x + mdCol * cW;
   roundRect(mdX + 2, y + 2, cW - 4, h - 4, 4, "rgba(14,30,60,0.85)", "rgba(40,80,180,0.4)", 1);
   ctx.fillStyle = "#7090c0"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
