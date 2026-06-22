@@ -1,0 +1,20 @@
+{
+  "id": "smallFieldGunFuel",
+  "name": "小さな野戦砲",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": ["砲兵", "純人間", "機械"],
+  "roles": [],
+  "costs": {
+    "play": { "mineral": 1, "gold": 1 },
+    "act": { "mineral": 1, "fuel": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 1,
+  "defense": 2,
+  "description": "小さな野戦砲だが、砲としての機能はしっかり持ち合わせている。\nキーワード: 衝撃 / 弧撃1",
+  "flavorText": "燃料牽引型",
+  "imageUrl": ""
+}

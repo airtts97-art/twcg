@@ -1,0 +1,20 @@
+{
+  "id": "precisionStrike",
+  "name": "精密攻撃",
+  "type": "タクト",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1, "electric": 1 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "敵ユニット1体に2ダメージ。対象を選択する。",
+  "flavorText": "",
+  "imageUrl": ""
+}

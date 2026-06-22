@@ -1,0 +1,20 @@
+{
+  "id": "antiArmorMageTeam328",
+  "name": "328-野戦対装甲魔導士隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["歩兵", "純人間", "魔法"],
+  "roles": [],
+  "costs": {
+    "play": { "human": 2, "gold": 1, "nature": 1 },
+    "act": { "magic": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 4,
+  "defense": 2,
+  "description": "強襲、攻撃、破壊、魔法により得られる可能性は大きい。\nキーワード: 強襲 / 貫通1",
+  "flavorText": "",
+  "imageUrl": ""
+}

@@ -1,0 +1,20 @@
+{
+  "id": "commonArmoredCar",
+  "name": "ありふれた装甲車",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": ["機甲", "車両", "機械"],
+  "roles": [],
+  "costs": {
+    "play": { "mineral": 1, "gold": 1 },
+    "act": { "mineral": 1, "fuel": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 3,
+  "defense": 2,
+  "description": "何処にでもあるような装甲車だが歩兵からすれば十分脅威だ\nキーワード: 装甲1 / 機動",
+  "flavorText": "",
+  "imageUrl": ""
+}

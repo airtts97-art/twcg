@@ -1,0 +1,20 @@
+{
+  "id": "lightInfantry",
+  "name": "軽歩兵",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": ["歩兵", "純人間"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1, "human": 1 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 1,
+  "defense": 2,
+  "description": "もっとも安価な部類の歩兵、侮ることはできない。\nキーワード: 警戒",
+  "flavorText": "",
+  "imageUrl": ""
+}

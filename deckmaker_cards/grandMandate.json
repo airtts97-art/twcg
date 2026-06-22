@@ -1,0 +1,20 @@
+{
+  "id": "grandMandate",
+  "name": "大号令",
+  "type": "グランド",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 4, "human": 2 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "このカードを Grand Zone に表側で配置する。味方ユニット全体のATKとHPを+1し、カードを1枚引く。",
+  "flavorText": "",
+  "imageUrl": ""
+}

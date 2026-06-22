@@ -1,0 +1,20 @@
+{
+  "id": "peoplesReconForce",
+  "name": "人民威力偵察部隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ヘルメネアの大地",
+  "tags": ["歩兵", "純人間", "魔法", "獣人"],
+  "roles": [],
+  "costs": {
+    "play": { "human": 2, "gold": 2 },
+    "act": { "human": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 2,
+  "defense": 3,
+  "description": "血を流し、人を消耗する、そして…次の作戦とその術が与えられる。\n処理: 敵ユニット破壊時: カード1枚ドロー、資金3を得る",
+  "flavorText": "",
+  "imageUrl": ""
+}

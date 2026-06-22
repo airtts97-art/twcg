@@ -1,0 +1,20 @@
+{
+  "id": "hiddenSupply",
+  "name": "隠匿補給",
+  "type": "タクト",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 2 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "このカードを Wild Zone に裏側で配置する。補給としてカードを1枚引き、自然2と燃料1を得る。\n元種別: Wild",
+  "flavorText": "",
+  "imageUrl": ""
+}

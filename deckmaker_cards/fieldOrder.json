@@ -1,0 +1,20 @@
+{
+  "id": "fieldOrder",
+  "name": "野戦命令",
+  "type": "タクト",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "カードを1枚引く。使用後墓地へ。",
+  "flavorText": "",
+  "imageUrl": ""
+}

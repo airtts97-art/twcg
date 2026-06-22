@@ -1,0 +1,20 @@
+{
+  "id": "mischievousFairy",
+  "name": "悪戯妖精",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": ["神秘", "妖精"],
+  "roles": [],
+  "costs": {
+    "play": { "magic": 1 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 1,
+  "defense": 1,
+  "description": "いたずらでは済まない。妖精の攻撃は意外と危険\n処理: 出撃時: 敵ユニット1体に2ダメージ（対象選択）",
+  "flavorText": "",
+  "imageUrl": ""
+}

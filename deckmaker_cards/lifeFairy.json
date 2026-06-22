@@ -1,0 +1,20 @@
+{
+  "id": "lifeFairy",
+  "name": "生命妖精",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": ["神秘", "妖精"],
+  "roles": [],
+  "costs": {
+    "play": { "magic": 1 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 0,
+  "defense": 1,
+  "description": "生命の妖精は多くの命を強化する\n処理: 出撃時: 味方ユニット全体のHPを+1",
+  "flavorText": "",
+  "imageUrl": ""
+}
