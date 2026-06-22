@@ -72,8 +72,8 @@ const RESOURCE_LABELS = {
   magic: "魔法",
 };
 const RESOURCE_ICON_PATHS = {
-  funds: "assets/resources/funds.png",
-  people: "assets/resources/people.png",
+  funds: "assets/resources/people.png",
+  people: "assets/resources/funds.png",
   nature: "assets/resources/nature.png",
   ore: "assets/resources/ore.png",
   fuel: "assets/resources/fuel.png",
