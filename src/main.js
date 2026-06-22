@@ -6694,23 +6694,24 @@ function drawBoard() {
       const cy = y + visualRow * cH;
 
       // ゾーン判定 (COLS=13)
-      // p1行: [0-1 Resource][2-4 Tact][5-11 Standard(7)][12 Grand]
-      // p2行: [0 Grand][1-7 Standard(7)][8-10 Tact][11-12 Resource]
+      // p1戦闘行: [0-2 Resource(3)][3-5 Tact(3)][6-12 Standard(7)]
+      // p2戦闘行: [0-6 Standard(7)][7-9 Tact(3)][10-12 Resource(3)]
+      // Grand Zone は召喚行のみ (isGrandSummon)
       const isP1Summon = row === PLAYERS.p1.summonRow;
       const isP2Summon = row === PLAYERS.p2.summonRow;
       const isSummon   = isP1Summon || isP2Summon;
 
-      const resStartCol   = isP1Row ? 0 : 11;
-      const isResCell     = !isSummon && (col === resStartCol || col === resStartCol + 1);
-      const isTactZone    = !isSummon && ((isP1Row && col >= 2 && col <= 4) || (!isP1Row && col >= 8 && col <= 10));
-      const isGrandZone   = !isSummon && ((isP1Row && col === 12) || (!isP1Row && col === 0));
+      const resStartCol   = isP1Row ? 0 : 10;
+      const isResCell     = !isSummon && (col >= resStartCol && col <= resStartCol + 2);
+      const isTactZone    = !isSummon && ((isP1Row && col >= 3 && col <= 5) || (!isP1Row && col >= 7 && col <= 9));
+      const isGrandZone   = false;
       const isTactSummon  = isSummon && ((isP1Summon && col >= 3 && col <= 5) || (isP2Summon && col >= 7 && col <= 9));
       const isGrandSummon = isSummon && ((isP1Summon && col === 12) || (isP2Summon && col === 0));
 
       // リソース表示セル (2列スパン、ユニット配置不可)
       if (isResCell) {
         if (col === resStartCol) {
-          drawResourceInBoardCell(cx, cy, cW * 2, cH, isP1Row ? "p1" : "p2");
+          drawResourceInBoardCell(cx, cy, cW * 3, cH, isP1Row ? "p1" : "p2");
         }
         continue;
       }
@@ -6792,21 +6793,16 @@ function drawBoard() {
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
       const cy0 = y + visualRow * cH;
-      // Resource|Tact 境界 (p1: col2, p2: col1)
-      const lBound = isP1Row ? 2 : 1;
+      // Resource|Tact 境界 (p1: col3, p2: Std|Tact col7)
+      const lBound = isP1Row ? 3 : 7;
       ctx.strokeStyle = isP1Row ? "rgba(50,190,110,0.40)" : "rgba(220,70,60,0.40)";
       const lx = x + lBound * cW;
       ctx.beginPath(); ctx.moveTo(lx, cy0); ctx.lineTo(lx, cy0 + cH); ctx.stroke();
-      // Tact|Standard 境界 (p1: col5, p2: col8)
-      const mBound = isP1Row ? 5 : 8;
+      // Tact|Standard 境界 (p1: col6, p2: Tact|Resource col10)
+      const mBound = isP1Row ? 6 : 10;
       ctx.strokeStyle = isP1Row ? "rgba(40,160,90,0.25)" : "rgba(200,60,50,0.25)";
       const mx = x + mBound * cW;
       ctx.beginPath(); ctx.moveTo(mx, cy0); ctx.lineTo(mx, cy0 + cH); ctx.stroke();
-      // Standard|Grand 境界 (p1: col12, p2: col11) ← 金
-      const rBound = isP1Row ? 12 : 11;
-      ctx.strokeStyle = "rgba(200,160,45,0.45)";
-      const rx = x + rBound * cW;
-      ctx.beginPath(); ctx.moveTo(rx, cy0); ctx.lineTo(rx, cy0 + cH); ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
     }
