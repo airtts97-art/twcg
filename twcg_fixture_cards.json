@@ -1,0 +1,268 @@
+{
+  "cards": [
+    {
+      "id": "militia",
+      "name": "民兵分隊",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 1, "human": 1 },
+        "act": { "gold": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 2,
+      "defense": 4,
+      "description": "基礎歩兵。低コストで前線を作る。",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "armoredCar",
+      "name": "装甲車",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 2, "human": 1, "fuel": 1 },
+        "act": { "fuel": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 4,
+      "defense": 5,
+      "description": "燃料で行動する軽装甲ユニット。\nキーワード: 装甲1 / 機動",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "mageBattery",
+      "name": "魔導砲兵",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": ["神秘", "砲兵", "魔法"],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 2, "human": 1, "magic": 1 },
+        "act": { "magic": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 5,
+      "defense": 3,
+      "description": "高火力だが魔法資源を要求する。\nキーワード: 弧撃2 / 範囲1\n処理: 出撃時: 敵コアに1ダメージ",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "shockTrooper",
+      "name": "衝撃歩兵",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 2, "human": 1, "electric": 1 },
+        "act": { "gold": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 3,
+      "defense": 4,
+      "description": "衝撃で与ダメージ時に対象をレストする。\nキーワード: 衝撃 / 貫通1",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "reconPlane",
+      "name": "偵察機",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 2, "fuel": 1 },
+        "act": { "fuel": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 2,
+      "defense": 3,
+      "description": "航空を持つ偵察攻撃ユニット。\nキーワード: 飛行3",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "guardian",
+      "name": "戦列守備兵",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 2, "human": 2 },
+        "act": { "gold": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 2,
+      "defense": 6,
+      "description": "両隣の味方を通常攻撃から守る。\nキーワード: 守護 / 警戒",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "raidBike",
+      "name": "奇襲バイク",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 1, "human": 1, "fuel": 1 },
+        "act": { "fuel": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 2,
+      "defense": 2,
+      "description": "敵支配下でなければ第2行に出撃できる。\nキーワード: 強襲 / 機動",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "bombDrone",
+      "name": "自爆ドローン",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 1, "electric": 1 },
+        "act": { "electric": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 1,
+      "defense": 1,
+      "description": "破壊時、隣接ユニットにダメージ。\nキーワード: 自爆2 / 攻撃不可",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "chargedLancer",
+      "name": "帯電槍兵",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 2, "human": 1, "electric": 1 },
+        "act": { "gold": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 3,
+      "defense": 4,
+      "description": "帯電攻撃で装甲を無視する。\nキーワード: 帯電",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "rapidGunner",
+      "name": "連撃射手",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 2, "human": 1 },
+        "act": { "gold": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 1,
+      "defense": 3,
+      "description": "2回攻撃してからレストする。\nキーワード: 連撃2",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "bunker",
+      "name": "掩体壕",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 2, "mineral": 1 },
+        "act": { "gold": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 2,
+      "defense": 7,
+      "description": "移動できない防衛ユニット。\nキーワード: 移動不可 / 装甲2",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "soulMage",
+      "name": "魂術師",
+      "type": "ユニット",
+      "rarity": "通常",
+      "world": "ニュートラル",
+      "tags": ["神秘", "魔法"],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 1, "magic": 2 },
+        "act": { "magic": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 3,
+      "defense": 3,
+      "description": "不足した魔法資源を墓地除外で支払える。\nキーワード: 魂払い",
+      "flavorText": "",
+      "imageUrl": ""
+    },
+    {
+      "id": "legendaryAce",
+      "name": "伝説のエース",
+      "type": "ユニット",
+      "rarity": "伝説",
+      "world": "ニュートラル",
+      "tags": [],
+      "roles": [],
+      "costs": {
+        "play": { "gold": 3, "human": 1, "fuel": 1 },
+        "act": { "fuel": 1 },
+        "choice": [],
+        "choiceAct": []
+      },
+      "attack": 5,
+      "defense": 5,
+      "description": "デッキに1枚しか入れられない伝説ユニット。\nキーワード: 伝説 / 飛行4",
+      "flavorText": "",
+      "imageUrl": ""
+    }
+  ],
+  "decks": [],
+  "worlds": [
+    { "id": "_", "name": "ニュートラル", "description": "" }
+  ]
+}
