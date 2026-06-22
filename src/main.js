@@ -6701,34 +6701,30 @@ function drawBoard() {
       const cy = y + visualRow * cH;
 
       // ゾーン判定 (COLS=13)
-      // p1戦闘行: [0-2 Resource(3)][3-5 Tact(3)][6-12 Standard(7)]
-      // p2戦闘行: [0-6 Standard(7)][7-9 Tact(3)][10-12 Resource(3)]
-      // Grand Zone は召喚行のみ (isGrandSummon)
+      // p1戦闘行: [0-9 Standard(10)][10-12 Tact(3)]
+      // p2戦闘行: [0-2 Tact(3)][3-12 Standard(10)]
+      // p1召喚行: [0-2 Resource(3)][3-5 SF(3)][6 Core][7-9 SF(3)][10 Dump][11 Out][12 Grand]
+      // p2召喚行: [0 Grand][1 Out][2 Dump][3-5 SF(3)][6 Core][7-9 SF(3)][10-12 Resource(3)]
       const isP1Summon = row === PLAYERS.p1.summonRow;
       const isP2Summon = row === PLAYERS.p2.summonRow;
       const isSummon   = isP1Summon || isP2Summon;
 
-      const resStartCol   = isP1Row ? 0 : 10;
-      const isResCell     = !isSummon && (col >= resStartCol && col <= resStartCol + 2);
       const isTactZone    = !isSummon && ((isP1Row && col >= 10 && col <= 12) || (!isP1Row && col >= 0 && col <= 2));
       const isGrandZone   = false;
       const isTactSummon  = isSummon && ((isP1Summon && col >= 10 && col <= 12) || (isP2Summon && col >= 0 && col <= 2));
       const isGrandSummon = isSummon && ((isP1Summon && col === 12) || (isP2Summon && col === 0));
 
-      // リソース表示セル (2列スパン、ユニット配置不可)
-      if (isResCell) {
-        if (col === resStartCol) {
-          drawResourceInBoardCell(cx, cy, cW * 3, cH, isP1Row ? "p1" : "p2");
-        }
-        continue;
-      }
-
-      // 召喚行: [0-2 CmdZone(3)][3-5 SF(3)][6 Core][7-9 SF(3)][10 Dump][11 Out][12 Grand]  (p1)
-      //        [0 Grand][1 Out][2 Dump][3-5 SF(3)][6 Core][7-9 SF(3)][10-12 CmdZone(3)]   (p2)
+      // 召喚行: [0-2 Resource(3)][3-5 SF(3)][6 Core][7-9 SF(3)][10 Dump][11 Out][12 Grand]  (p1)
+      //        [0 Grand][1 Out][2 Dump][3-5 SF(3)][6 Core][7-9 SF(3)][10-12 Resource(3)]   (p2)
       if (isSummon) {
         const sId = isP1Summon ? "p1" : "p2";
+        const resColStart = isP1Summon ? 0 : 10;
         const dumpCol = isP1Summon ? 10 : 2;
         const outCol  = isP1Summon ? 11 : 1;
+        if (col === resColStart) {
+          drawResourceInBoardCell(cx, cy, cW * 3, cH, sId); continue;
+        }
+        if (col === resColStart + 1 || col === resColStart + 2) continue;
         if (col === 6) {
           drawCoreInBoardCell(cx, cy, cW, cH, sId); continue;
         }
@@ -6795,10 +6791,6 @@ function drawBoard() {
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
       const cy0 = y + visualRow * cH;
-      // Resource|Standard 境界 (col3, 両プレイヤー共通)
-      ctx.strokeStyle = isP1Row ? "rgba(50,190,110,0.40)" : "rgba(220,70,60,0.40)";
-      const lx = x + 3 * cW;
-      ctx.beginPath(); ctx.moveTo(lx, cy0); ctx.lineTo(lx, cy0 + cH); ctx.stroke();
       // Standard|Tact 境界 (col10, 両プレイヤー共通)
       ctx.strokeStyle = isP1Row ? "rgba(50,190,110,0.40)" : "rgba(220,70,60,0.40)";
       const mx = x + 10 * cW;
