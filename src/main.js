@@ -5829,18 +5829,28 @@ function drawBackground() {
     const bx = layout.board.x, by = layout.board.y;
     const bw = layout.board.w, bh = layout.board.h;
     const midY = by + bh / 2;
-    // Opponent field - subtle crimson tint
+    const mg = 3; // board margin (battlefield frame)
+    // Battlefield base — clearly distinct from the outer UI background
+    ctx.fillStyle = "rgba(18,32,22,0.96)";
+    ctx.fillRect(bx + mg, by + mg, bw - mg * 2, bh - mg * 2);
+    // Opponent field - crimson tint
     const oppGrd = ctx.createLinearGradient(0, by, 0, midY);
-    oppGrd.addColorStop(0, "rgba(90,14,14,0.14)");
-    oppGrd.addColorStop(1, "rgba(60,10,10,0.04)");
+    oppGrd.addColorStop(0, "rgba(90,14,14,0.22)");
+    oppGrd.addColorStop(1, "rgba(60,10,10,0.06)");
     ctx.fillStyle = oppGrd;
-    ctx.fillRect(bx, by, bw, midY - by);
-    // Player field - subtle green tint (自陣は緑)
+    ctx.fillRect(bx + mg, by + mg, bw - mg * 2, midY - by - mg);
+    // Player field - green tint
     const playerGrd = ctx.createLinearGradient(0, midY, 0, by + bh);
-    playerGrd.addColorStop(0, "rgba(14,80,40,0.05)");
-    playerGrd.addColorStop(1, "rgba(10,60,30,0.13)");
+    playerGrd.addColorStop(0, "rgba(14,80,40,0.08)");
+    playerGrd.addColorStop(1, "rgba(10,60,30,0.20)");
     ctx.fillStyle = playerGrd;
-    ctx.fillRect(bx, midY, bw, bh / 2);
+    ctx.fillRect(bx + mg, midY, bw - mg * 2, bh / 2 - mg);
+    // Battlefield border
+    ctx.save();
+    ctx.strokeStyle = "rgba(60,110,80,0.55)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bx + mg, by + mg, bw - mg * 2, bh - mg * 2);
+    ctx.restore();
     // Row divider lines inside board
     ctx.strokeStyle = "rgba(40,90,60,0.18)";
     ctx.lineWidth = 1;
@@ -6709,7 +6719,7 @@ function drawBoard() {
       const isP2Summon = row === PLAYERS.p2.summonRow;
       const isSummon   = isP1Summon || isP2Summon;
 
-      const isTactZone    = false;
+      const isTactZone    = !isSummon && ((isP1Row && col >= 10 && col <= 12) || (!isP1Row && col >= 0 && col <= 2));
       const isGrandZone   = false;
       const isTactSummon  = isSummon && ((isP1Summon && col >= 10 && col <= 12) || (isP2Summon && col >= 0 && col <= 2));
       const isGrandSummon = isSummon && ((isP1Summon && col === 12) || (isP2Summon && col === 0));
@@ -6782,6 +6792,20 @@ function drawBoard() {
 
       addHit(cx, cy, cW, cH, () => handleCellClick(row, col));
       if (unit) drawBoardCard(cx, cy, cW, cH, unit);
+
+      // Standard|Tact 境界 (戦闘行のみ, col10)
+      const isSummonRowCheck = (row === PLAYERS.p1.summonRow || row === PLAYERS.p2.summonRow);
+      if (!isSummonRowCheck && col === 9) {
+        ctx.save();
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = isP1Row ? "rgba(50,190,110,0.40)" : "rgba(220,70,60,0.40)";
+        const bx2 = cx + cW;
+        const cy0 = y + visualRow * cH;
+        ctx.beginPath(); ctx.moveTo(bx2, cy0); ctx.lineTo(bx2, cy0 + cH); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
     }
 
   }
