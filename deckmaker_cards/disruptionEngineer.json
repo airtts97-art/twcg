@@ -1,0 +1,20 @@
+{
+  "id": "disruptionEngineer",
+  "name": "攪乱工兵",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["歩兵", "純人間", "魔法"],
+  "roles": [],
+  "costs": {
+    "play": { "human": 1, "magic": 2 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 1,
+  "defense": 3,
+  "description": "いかに強力な魔法であってもその概念を適切に乱せばその脅威は別の場所にそれる。\n【アウラ】隣接する味方ユニットに効果保護:1を与える。",
+  "flavorText": "",
+  "imageUrl": ""
+}

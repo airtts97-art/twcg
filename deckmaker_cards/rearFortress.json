@@ -1,0 +1,20 @@
+{
+  "id": "rearFortress",
+  "name": "後方要塞",
+  "type": "ストラクト",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": ["要塞"],
+  "roles": [],
+  "costs": {
+    "play": { "mineral": 2 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "構造挑発:1。相手がストラクトを選ぶ際、構造挑発値が最大のカードの中から選ぶ必要がある。このカードは効果保護:1を得る（効果貫通1以上を持つカード以外から効果を受けない）。",
+  "flavorText": "",
+  "imageUrl": ""
+}

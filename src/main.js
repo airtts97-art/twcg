@@ -102,6 +102,9 @@ const KEYWORD_DEFINITIONS = {
   soulPay: { label: "魂支払", description: "May exile dump cards to pay missing magic costs." },
   cleave: { label: "巨撃", description: "Also damages units horizontally adjacent to the attack target." },
   oneDamage: { label: "一傷防御", description: "Can only receive 1 damage per hit from any source." },
+  structTaunt: { label: "構造挑発", description: "Opponents must target structs with the highest struct taunt value first. This struct gains effect protection equal to its taunt value." },
+  effectProtect: { label: "効果保護", description: "Cannot be affected by card effects unless the source has effect penetration >= this value." },
+  effectPenetrate: { label: "効果貫通", description: "Bypasses effect protection up to this value." },
 };
 const PLAYERS = {
   p1: { id: "p1", name: "Player 1", side: "bottom", forward: -1, summonRow: 3, coreRow: 4, directRow: 1 },
@@ -406,7 +409,12 @@ const abilityEffects = {
     const opponent = opponentOf(playerId);
     const structs = game.players[opponent].structs;
     if (!structs.length) return;
-    const removed = structs.splice(0, 1)[0];
+    // 構造挑発: 最大値のストラクトを優先
+    const maxTaunt = Math.max(...structs.map((s) => keywordValue(s, "structTaunt")));
+    const pool = maxTaunt > 0 ? structs.filter((s) => keywordValue(s, "structTaunt") >= maxTaunt) : structs;
+    const target = pool[0];
+    const idx = structs.indexOf(target);
+    const [removed] = structs.splice(idx, 1);
     game.players[opponent].dump.push(removed);
     notifyDumpChanged(game, opponent);
     log(game, `${game.players[playerId].name}: 「${removed.name}」を破壊`);
@@ -454,6 +462,11 @@ const abilityEffects = {
       }
     }
     log(game, `${game.players[playerId].name}: 味方ユニットHP +${ability.amount}`);
+  },
+  // 隣接する味方ユニットに効果保護をアビリティとして付与（アウラ：動的チェック済みのため参照用）
+  grantEffectProtectToAdjacent({ game, playerId, card }) {
+    const value = (card.abilities || []).find((a) => a.effect === "grantEffectProtectToAdjacent")?.value || 1;
+    log(game, `${game.players[playerId].name}: 「${card.name}」隣接ユニットに効果保護${value}を付与（アウラ）`);
   },
   buffSelfAtk({ game, playerId, card, ability }) {
     card.atk = (card.atk || 0) + (ability.amount || 1);
@@ -1822,7 +1835,35 @@ const cardCatalog = {
       text: "Structure Phase: 魔法 +1",
       abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 }],
     },
+    rearFortress: {
+      id: "rearFortress",
+      type: "struct",
+      name: "後方要塞",
+      faction: "ニュートラル",
+      tags: ["要塞"],
+      cost: { ore: 2 },
+      keywords: [{ id: "structTaunt", value: 1 }, { id: "effectProtect", value: 1 }],
+      text: "構造挑発:1。相手がストラクトを選ぶ際、構造挑発値が最大のカードの中から選ぶ必要がある。このカードは効果保護:1を得る（効果保護X以上の効果貫通を持つカード以外から効果を受けない）。",
+      abilities: [],
+    },
   },
+  // ユニットカード（攪乱工兵）はmainに追加
+};
+
+// 攪乱工兵をmainに追加
+cardCatalog.main.disruptionEngineer = {
+  id: "disruptionEngineer",
+  type: "unit",
+  name: "攪乱工兵",
+  faction: "ユニフォール",
+  tags: ["歩兵", "純人間", "魔法"],
+  cost: { people: 1, magic: 2 },
+  actCost: {},
+  atk: 1,
+  hp: 3,
+  text: "いかに強力な魔法であってもその概念を適切に乱せばその脅威は別の場所にそれる。\n【アウラ】隣接する味方ユニットに効果保護:1を与える。",
+  keywords: [],
+  abilities: [{ trigger: "onSummon", effect: "grantEffectProtectToAdjacent", value: 1 }],
 };
 
 let nextInstanceId = 1;
@@ -4876,12 +4917,34 @@ function resolveKaijuAwakenChoice() {
   return true;
 }
 
+// Returns the effective effect-protection level of a board unit (own keyword + adjacent aura).
+function effectProtectLevel(game, unit) {
+  let level = keywordValue(unit, "effectProtect");
+  if (unit.row === undefined || unit.col === undefined) return level;
+  for (const dc of [-1, 1]) {
+    const adj = game.board[unit.row]?.[unit.col + dc];
+    if (adj && adj.owner === unit.owner) {
+      const aura = (adj.abilities || []).find((a) => a.effect === "grantEffectProtectToAdjacent");
+      if (aura) level = Math.max(level, aura.value || 1);
+    }
+  }
+  return level;
+}
+
 function isValidAbilityTarget(item, target) {
   if (!target) return false;
-  if (item.ability.target === "enemyUnit") return target.owner !== item.playerId;
-  if (item.ability.target === "friendlyUnit") return target.owner === item.playerId;
-  if (item.ability.target === "anyUnit") return true;
-  return false;
+  if (item.ability.target === "enemyUnit" && target.owner === item.playerId) return false;
+  if (item.ability.target === "friendlyUnit" && target.owner !== item.playerId) return false;
+  if (!["enemyUnit", "friendlyUnit", "anyUnit"].includes(item.ability.target)) return false;
+  // 効果保護チェック（敵ユニットを対象にする場合）
+  if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
+    const protection = effectProtectLevel(state, target);
+    if (protection > 0) {
+      const penetration = keywordValue(item.card, "effectPenetrate");
+      if (penetration < protection) return false;
+    }
+  }
+  return true;
 }
 
 function completeAbilitySource(game, item) {
