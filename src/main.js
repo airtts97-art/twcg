@@ -212,17 +212,17 @@ const DECKMAKER_TYPE_LABELS = {
 // y=156 盤面               (548px = 4×137px)
 // y=704 自ストラクトゾーン  (36px)
 // y=740 手札               (120px)
-// y=860 リソースバー        (40px)
-// y=900  ← 60+60+36+548+36+120+40=900
+// リソースは盤面左2列(p1)/右2列(p2)に統合 → リソースバー廃止
+// y=900  ← 60+60+36+548+76+120=900
 const layout = {
   board:        { x: 0, y: 156, w: 1440, h: 548 },
-  hand:         { x: 0, y: 740, w: 1440, h: 120 },
+  hand:         { x: 0, y: 780, w: 1440, h: 120 },
   topHand:      { x: 0, y: 60,  w: 1440, h: 60  },
   left:         { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
   right:        { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
   oppStruct:    { x: 0, y: 120, w: 1440, h: 36  },
-  playerStruct: { x: 0, y: 704, w: 1440, h: 36  },
-  resourceBar:  { x: 0, y: 860, w: 1440, h: 40  },
+  playerStruct: { x: 0, y: 704, w: 1440, h: 76  },
+  resourceBar:  { x: 0, y: 860, w: 1440, h: 0   }, // 廃止済み(drawResourceInBoardCellに移行)
 };
 layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
 // ゾーン列定義 (左0〜右10, COLS=11)
@@ -5701,7 +5701,6 @@ function render() {
   // 自分エリア (board → struct zone → hand)
   drawStructZoneRow(viewer, layout.playerStruct, false);
   drawHand();
-  drawResourceBar();
   drawActionPanel();
   drawLog();
   drawAnimations();
@@ -6477,6 +6476,42 @@ function drawCmdZoneInBoardCell(cx, cy, cW, cH, playerId) {
   ctx.textAlign = "left";
 }
 
+function drawResourceInBoardCell(cx, cy, cW2, cH, playerId) {
+  const player = state.players[playerId];
+  const isP1 = playerId === "p1";
+  roundRect(cx + 1, cy + 1, cW2 - 2, cH - 2, 4,
+    isP1 ? "rgba(6,12,34,0.88)" : "rgba(34,6,6,0.88)",
+    isP1 ? "rgba(30,70,180,0.45)" : "rgba(180,30,30,0.45)", 1);
+
+  const padX = 6, padY = 5;
+  const innerW = cW2 - padX * 2;
+  const innerH = cH - padY * 2;
+  const cols2 = 2;
+  const rows2 = Math.ceil(RESOURCE_KEYS.length / cols2); // 4行
+  const pillW = Math.floor((innerW - (cols2 - 1) * 3) / cols2);
+  const pillH = Math.floor((innerH - (rows2 - 1) * 3) / rows2);
+
+  RESOURCE_KEYS.forEach((key, i) => {
+    const ci = i % cols2;
+    const ri = Math.floor(i / cols2);
+    const px = cx + padX + ci * (pillW + 3);
+    const py = cy + padY + ri * (pillH + 3);
+    const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(30,40,70,0.6)", border: "rgba(80,100,180,0.5)", text: "#a0b0d0", glow: "#6080c0" };
+    const amt = player.resources?.[key] || 0;
+    roundRect(px, py, pillW, pillH, 2, colors.bg, colors.border, 0.8);
+    ctx.save();
+    ctx.shadowColor = colors.glow || "#804040"; ctx.shadowBlur = 2;
+    ctx.fillStyle = colors.text;
+    ctx.font = `600 7px 'Yu Gothic UI', sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText(RESOURCE_LABELS[key], px + pillW / 2, py + 9);
+    ctx.font = `700 ${pillH >= 26 ? 13 : 10}px 'Yu Gothic UI', sans-serif`;
+    ctx.fillText(String(amt), px + pillW / 2, py + pillH - 3);
+    ctx.shadowBlur = 0; ctx.restore();
+  });
+  ctx.textAlign = "left";
+}
+
 function drawBoard() {
   const { x, y, w, h } = layout.board;
   const cW = layout.cell.w;
@@ -6508,20 +6543,33 @@ function drawBoard() {
       const cx = x + col * cW;
       const cy = y + visualRow * cH;
 
-      // ゾーン判定 (Wild/Grand は戦闘行のみ)
+      // ゾーン判定 (COLS=11)
+      // p1行: [0-1 Resource][2-4 Tact][5-9 Standard][10 Grand]
+      // p2行: [0 Grand][1-5 Standard][6-8 Tact][9-10 Resource]
       const isP1Summon = row === PLAYERS.p1.summonRow;
       const isP2Summon = row === PLAYERS.p2.summonRow;
       const isSummon   = isP1Summon || isP2Summon;
-      const isWild  = !isSummon && ((isP1Row && col <= 1) || (!isP1Row && col >= 9));
-      const isGrand = !isSummon && ((isP1Row && col >= 9) || (!isP1Row && col <= 1));
 
-      // 召喚行: 2+3+1+3+2 配置 (COLS=11)
-      // p1: [0-1 CmdZone][2-4 SF][5 Core][6-8 SF][9-10 Dump]
-      // p2: [0-1 Dump][2-4 SF][5 Core][6-8 SF][9-10 CmdZone]
+      const resStartCol   = isP1Row ? 0 : 9;
+      const isResCell     = !isSummon && (col === resStartCol || col === resStartCol + 1);
+      const isTactZone    = !isSummon && ((isP1Row && col >= 2 && col <= 4) || (!isP1Row && col >= 6 && col <= 8));
+      const isGrandZone   = !isSummon && ((isP1Row && col === 10) || (!isP1Row && col === 0));
+      const isTactSummon  = isSummon && ((isP1Summon && col >= 2 && col <= 4) || (isP2Summon && col >= 6 && col <= 8));
+      const isGrandSummon = isSummon && ((isP1Summon && col === 10) || (isP2Summon && col === 0));
+
+      // リソース表示セル (2列スパン、ユニット配置不可)
+      if (isResCell) {
+        if (col === resStartCol) {
+          drawResourceInBoardCell(cx, cy, cW * 2, cH, isP1Row ? "p1" : "p2");
+        }
+        continue;
+      }
+
+      // 召喚行: [0-1 CmdZone][2-4 TactSF][5 Core][6-9 UnitSF][10 GrandZone]  (p1)
+      //        [0 GrandZone][1-4 UnitSF][5 Core][6-8 TactSF][9-10 CmdZone]   (p2)
       if (isSummon) {
         const sId = isP1Summon ? "p1" : "p2";
-        const cmdStartCol  = isP1Summon ? 0 : 9;
-        const dumpStartCol = isP1Summon ? 9 : 0;
+        const cmdStartCol = isP1Summon ? 0 : 9;
         if (col === cmdStartCol) {
           drawCmdZoneInBoardCell(cx, cy, cW * 2, cH, sId); continue;
         }
@@ -6529,17 +6577,15 @@ function drawBoard() {
         if (col === 5) {
           drawCoreInBoardCell(cx, cy, cW, cH, sId); continue;
         }
-        if (col === dumpStartCol) {
-          drawDeckGYInBoardCell(cx, cy, cW * 2, cH, sId); continue;
-        }
-        if (col === dumpStartCol + 1) continue;
-        // col 2-4 と col 6-8 は Summon Field として通常描画
+        // col 2-4 (p1) / 6-8 (p2): Tact Summon Field
+        // col 6-9 (p1) / 1-4 (p2): Unit Summon Field
+        // col 10 (p1) / 0 (p2): Grand Zone → 通常描画で下のスタイル適用
       }
 
       // 通常セル背景色
       let cellFill;
-      if (isWild)        cellFill = isP1Row ? "rgba(60,20,90,0.45)"  : "rgba(90,20,60,0.45)";
-      else if (isGrand)  cellFill = isP1Row ? "rgba(10,50,90,0.45)"  : "rgba(10,50,90,0.45)";
+      if (isTactZone || isTactSummon)       cellFill = isP1Row ? "rgba(40,15,70,0.55)"  : "rgba(70,15,40,0.55)";
+      else if (isGrandZone || isGrandSummon) cellFill = "rgba(10,45,80,0.60)";
       else if (isP1Summon) cellFill = "rgba(14,40,100,0.55)";
       else if (isP2Summon) cellFill = "rgba(100,20,20,0.45)";
       else               cellFill = "rgba(8,14,30,0.70)";
@@ -6548,22 +6594,25 @@ function drawBoard() {
 
       // セルボーダー
       ctx.save();
-      ctx.strokeStyle = isWild  ? "rgba(160,80,200,0.4)"
-        : isGrand ? "rgba(40,130,200,0.4)"
+      ctx.strokeStyle = (isTactZone || isTactSummon) ? "rgba(160,60,220,0.5)"
+        : (isGrandZone || isGrandSummon) ? "rgba(40,140,220,0.5)"
         : isP1Summon ? "rgba(50,120,255,0.6)"
         : isP2Summon ? "rgba(255,60,40,0.5)"
         : "rgba(30,55,130,0.3)";
-      ctx.lineWidth = isSummon ? 1.5 : 1;
+      ctx.lineWidth = (isSummon || isGrandZone || isTactZone) ? 1.5 : 1;
       ctx.strokeRect(cx + 2, cy + 2, cW - 4, cH - 4);
       ctx.restore();
 
       // ゾーンラベル (空きセルのみ)
       const unit = state.board[row][col];
       if (!unit) {
-        const label = isWild ? "Wild Zone" : isGrand ? "Grand Zone"
+        const label = (isGrandZone || isGrandSummon) ? "Grand Zone"
+          : (isTactZone || isTactSummon) ? "Tact Zone"
           : isSummon ? "Summon Field" : "";
         if (label) {
-          ctx.fillStyle = isWild ? "rgba(180,100,220,0.28)" : isGrand ? "rgba(80,160,220,0.28)" : "rgba(80,130,255,0.22)";
+          ctx.fillStyle = (isGrandZone || isGrandSummon) ? "rgba(60,140,220,0.28)"
+            : (isTactZone || isTactSummon) ? "rgba(160,60,220,0.28)"
+            : "rgba(80,130,255,0.22)";
           ctx.font = "500 10px 'Yu Gothic UI', sans-serif";
           ctx.textAlign = "center";
           ctx.fillText(label, cx + cW / 2, cy + cH / 2 + 4);
@@ -6575,17 +6624,27 @@ function drawBoard() {
       if (unit) drawBoardCard(cx, cy, cW, cH, unit);
     }
 
-    // Wild Zone と Standard の境界破線 (戦闘行のみ)
+    // ゾーン境界破線 (戦闘行のみ)
     const isSummonRow = (row === PLAYERS.p1.summonRow || row === PLAYERS.p2.summonRow);
     if (!isSummonRow) {
       ctx.save();
-      ctx.strokeStyle = isP1Row ? "rgba(160,80,220,0.5)" : "rgba(80,160,220,0.5)";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
-      const lx = x + 2 * cW;
       const cy0 = y + visualRow * cH;
+      // Resource|Tact 境界 (p1: col2, p2: col1) ← 紫
+      const lBound = isP1Row ? 2 : 1;
+      ctx.strokeStyle = "rgba(160,60,220,0.45)";
+      const lx = x + lBound * cW;
       ctx.beginPath(); ctx.moveTo(lx, cy0); ctx.lineTo(lx, cy0 + cH); ctx.stroke();
-      const rx = x + 9 * cW;
+      // Tact|Standard 境界 (p1: col5, p2: col6) ← 薄紫
+      const mBound = isP1Row ? 5 : 6;
+      ctx.strokeStyle = "rgba(120,50,180,0.30)";
+      const mx = x + mBound * cW;
+      ctx.beginPath(); ctx.moveTo(mx, cy0); ctx.lineTo(mx, cy0 + cH); ctx.stroke();
+      // Standard|Grand 境界 (p1: col10, p2: col9) ← 青
+      const rBound = isP1Row ? 10 : 9;
+      ctx.strokeStyle = "rgba(40,140,220,0.45)";
+      const rx = x + rBound * cW;
       ctx.beginPath(); ctx.moveTo(rx, cy0); ctx.lineTo(rx, cy0 + cH); ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
