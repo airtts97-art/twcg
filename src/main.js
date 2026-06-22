@@ -6698,8 +6698,9 @@ function drawBoard() {
       }
 
       // 通常セル背景色 (p1=緑, p2=赤, Grand=金)
+      // isTactSummon は通常の召喚フィールドと同じ扱い (戦闘行Tact Zoneと区別するため)
       let cellFill;
-      if (isTactZone || isTactSummon)
+      if (isTactZone)
         cellFill = isP1Row ? "rgba(10,40,25,0.65)" : "rgba(42,10,10,0.65)";
       else if (isGrandZone || isGrandSummon)
         cellFill = "rgba(30,24,5,0.68)";
@@ -6711,7 +6712,7 @@ function drawBoard() {
 
       // セルボーダー
       ctx.save();
-      ctx.strokeStyle = (isTactZone || isTactSummon)
+      ctx.strokeStyle = isTactZone
         ? (isP1Row ? "rgba(50,190,110,0.55)" : "rgba(220,70,60,0.55)")
         : (isGrandZone || isGrandSummon) ? "rgba(200,160,45,0.55)"
         : isP1Summon ? "rgba(50,190,110,0.65)"
@@ -6725,11 +6726,11 @@ function drawBoard() {
       const unit = state.board[row][col];
       if (!unit) {
         const label = (isGrandZone || isGrandSummon) ? "Grand Zone"
-          : (isTactZone || isTactSummon) ? "Tact Zone"
+          : isTactZone ? "Tact Zone"
           : isSummon ? "Summon Field" : "";
         if (label) {
           ctx.fillStyle = (isGrandZone || isGrandSummon) ? "rgba(200,160,50,0.30)"
-            : (isTactZone || isTactSummon) ? (isP1Row ? "rgba(50,190,110,0.30)" : "rgba(220,80,70,0.30)")
+            : isTactZone ? (isP1Row ? "rgba(50,190,110,0.30)" : "rgba(220,80,70,0.30)")
             : (isP1Row ? "rgba(50,180,100,0.22)" : "rgba(200,70,60,0.22)");
           ctx.font = "500 10px 'Yu Gothic UI', sans-serif";
           ctx.textAlign = "center";
