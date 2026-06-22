@@ -337,6 +337,7 @@ function drawAnimations() {
 
 // --- Zone viewer state ---
 let zoneViewerState = null; // { playerId, zone: "dump"|"exile", scroll: 0 }
+let structPhaseScroll = 0;
 // --- End zone viewer ---
 
 const abilityEffects = {
@@ -5184,6 +5185,36 @@ function playStruct(index) {
   return true;
 }
 
+function relocateUnit(unit, toRow, toCol, actionLabel, onlineAction) {
+  if (!requireActivePlayerControl()) return false;
+  if (!unit) return false;
+  const player = state.players[unit.owner];
+  if (unit.owner !== state.activePlayer) return fail("現在のプレイヤーのユニットではありません。");
+  if (unit.rested) return fail("このユニットはレスト状態です。");
+  if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
+  if (state.pendingChoice || state.pendingTarget) return false;
+  if (toRow < 0 || toRow >= ROWS || toCol < 0 || toCol >= COLS) return fail("移動先が無効です。");
+  if (state.board[toRow][toCol]) return fail("移動先のマスが埋まっています。");
+  if (!payForCard(player, unit.actCost, unit)) return fail("アクトコストが不足しています。");
+  const fromRow = unit.row;
+  const fromCol = unit.col;
+  state.board[unit.row][unit.col] = null;
+  unit.row = toRow;
+  unit.col = toCol;
+  state.board[unit.row][unit.col] = unit;
+  if (hasKeyword(unit, "mobile") && !unit.mobileMoveUsed) {
+    unit.mobileMoveUsed = true;
+  } else {
+    unit.rested = true;
+  }
+  state.selected = { kind: "unit", row: unit.row, col: unit.col };
+  log(state, `${player.name}: 「${unit.name}」が${actionLabel}`);
+  refreshContinuousEffects(state);
+  startMoveAnimation(unit, fromRow, fromCol, toRow, toCol);
+  syncOnlineAction(onlineAction, unit.owner);
+  return true;
+}
+
 function moveSelectedUnit() {
   if (!requireActivePlayerControl()) return false;
   const unit = selectedUnit();
@@ -5194,27 +5225,10 @@ function moveSelectedUnit() {
   if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
   const toRow = unit.row + player.forward;
   if (toRow < 0 || toRow >= ROWS) return fail("これ以上前進できません。");
-  if (state.board[toRow].some((candidate) => candidate && candidate.owner !== unit.owner)) {
-    return fail("正面の行に敵ユニットがいるため前進できません。");
-  }
-  if (state.board[toRow][unit.col]) return fail("前方のマスが埋まっています。");
-  if (!payForCard(player, unit.actCost, unit)) return fail("アクトコストが不足しています。");
-  const fromRow = unit.row;
-  const fromCol = unit.col;
-  state.board[unit.row][unit.col] = null;
-  unit.row = toRow;
-  state.board[unit.row][unit.col] = unit;
-  if (hasKeyword(unit, "mobile") && !unit.mobileMoveUsed) {
-    unit.mobileMoveUsed = true;
-  } else {
-    unit.rested = true;
-  }
-  state.selected = { kind: "unit", row: unit.row, col: unit.col };
-  log(state, `${player.name}: 「${unit.name}」が前進`);
-  refreshContinuousEffects(state);
-  startMoveAnimation(unit, fromRow, fromCol, toRow, unit.col);
-  syncOnlineAction("moveUnit", unit.owner);
-  return true;
+  const candidateCols = [unit.col, unit.col - 1, unit.col + 1].filter((c) => c >= 0 && c < COLS);
+  const destCol = candidateCols.find((c) => !state.board[toRow][c]);
+  if (destCol == null) return fail("前方のマスが埋まっています。");
+  return relocateUnit(unit, toRow, destCol, "前進", "moveUnit");
 }
 
 function retreatSelectedUnit() {
@@ -5228,23 +5242,10 @@ function retreatSelectedUnit() {
   if (unit.noRetreatUntilOpponentTurnEnd) return fail("This unit cannot retreat now.");
   const toRow = unit.row - player.forward;
   if (toRow < 0 || toRow >= ROWS) return fail("これ以上後退できません。");
-  if (state.board[toRow][unit.col]) return fail("後方のマスが埋まっています。");
-  if (!payForCard(player, unit.actCost, unit)) return fail("アクトコストが不足しています。");
-  const fromRowR = unit.row;
-  state.board[unit.row][unit.col] = null;
-  unit.row = toRow;
-  state.board[unit.row][unit.col] = unit;
-  if (hasKeyword(unit, "mobile") && !unit.mobileMoveUsed) {
-    unit.mobileMoveUsed = true;
-  } else {
-    unit.rested = true;
-  }
-  state.selected = { kind: "unit", row: unit.row, col: unit.col };
-  log(state, `${player.name}: 「${unit.name}」が後退`);
-  refreshContinuousEffects(state);
-  startMoveAnimation(unit, fromRowR, unit.col, toRow, unit.col);
-  syncOnlineAction("retreatUnit", unit.owner);
-  return true;
+  const candidateCols = [unit.col, unit.col - 1, unit.col + 1].filter((c) => c >= 0 && c < COLS);
+  const destCol = candidateCols.find((c) => !state.board[toRow][c]);
+  if (destCol == null) return fail("後方のマスが埋まっています。");
+  return relocateUnit(unit, toRow, destCol, "後退", "retreatUnit");
 }
 
 function activateSelectedUnit() {
@@ -5323,8 +5324,8 @@ function attackWithSelectedUnit(target) {
   if (damage > 0 && hasKeyword(unit, "shock")) defender.rested = true;
   applyCleave(unit, defender);
   if (canCounterAttack(defender, unit)) {
-    const counterRaw = defender.atk;
-    unit.currentHp -= hasKeyword(unit, "oneDamage") ? Math.min(counterRaw, 1) : counterRaw;
+    const counterDamage = calculateAttackDamage(defender, unit);
+    unit.currentHp -= hasKeyword(unit, "oneDamage") ? Math.min(counterDamage, 1) : counterDamage;
   }
   if (damage > 0) {
     for (const ability of (unit.abilities || [])) {
@@ -7080,6 +7081,21 @@ function handleCellClick(row, col) {
       return placeUnitFromHand(selected.index, row, col);
     }
   }
+  if (selected?.kind === "unit" && !unit) {
+    const unitCard = selectedUnit();
+    if (unitCard && unitCard.owner === state.activePlayer) {
+      const player = state.players[unitCard.owner];
+      const forwardRow = unitCard.row + player.forward;
+      const retreatRow = unitCard.row - player.forward;
+      const colDiff = Math.abs(col - unitCard.col);
+      if (colDiff <= 1 && row === forwardRow) {
+        return relocateUnit(unitCard, row, col, "前進", "moveUnit");
+      }
+      if (colDiff <= 1 && row === retreatRow) {
+        return relocateUnit(unitCard, row, col, "後退", "retreatUnit");
+      }
+    }
+  }
   if (selected?.kind === "unit" && unit?.owner !== state.activePlayer) {
     if (!requireActivePlayerControl()) return;
     return attackWithSelectedUnit({ kind: "unit", row, col });
@@ -7871,7 +7887,7 @@ function canAffordStructActivation(struct, player) {
 
 function drawStructPhaseOverlay() {
   const pending = state.pendingStructPhase;
-  if (!pending) return;
+  if (!pending) { structPhaseScroll = 0; return; }
   const player = state.players[pending.playerId];
   const structs = player.structs
     .map((s, origIdx) => ({ s, origIdx }))
@@ -7881,11 +7897,14 @@ function drawStructPhaseOverlay() {
   ctx.fillStyle = "rgba(0,0,8,0.76)";
   ctx.fillRect(0, 0, W, H);
 
-  // カード画像メインのレイアウト
+  // カード画像メインのレイアウト（ページング）
   const cardW = 96;
   const cardH = Math.round(cardW / CARD_ASPECT); // 134
   const cardGap = 14;
-  const cols = Math.min(5, structs.length || 1);
+  const maxCols = 5;
+  structPhaseScroll = Math.max(0, Math.min(structPhaseScroll, Math.max(0, structs.length - maxCols)));
+  const visibleStructs = structs.slice(structPhaseScroll, structPhaseScroll + maxCols);
+  const cols = Math.min(maxCols, visibleStructs.length || 1);
   const contentW = cols * (cardW + cardGap) - cardGap;
 
   const headerH = 72;
@@ -7923,7 +7942,24 @@ function drawStructPhaseOverlay() {
   const cardsAreaX = x + Math.round((w - contentW) / 2);
   const cardsAreaY = y + headerH;
 
-  structs.forEach(({ s: struct, origIdx }, i) => {
+  // ページナビゲーション（5枚を超える場合）
+  const navBtnW = 28; const navBtnH = 32;
+  const navBtnY = cardsAreaY + Math.round((cardH - navBtnH) / 2);
+  if (structPhaseScroll > 0) {
+    drawButton(x + 6, navBtnY, navBtnW, navBtnH, "◀", () => { structPhaseScroll--; });
+  }
+  if (structPhaseScroll + maxCols < structs.length) {
+    drawButton(x + w - navBtnW - 6, navBtnY, navBtnW, navBtnH, "▶", () => { structPhaseScroll++; });
+  }
+  if (structs.length > maxCols) {
+    ctx.fillStyle = "rgba(120,190,150,0.8)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText(`${structPhaseScroll + 1}〜${Math.min(structPhaseScroll + maxCols, structs.length)} / ${structs.length}`, x + w - 10, y + 52);
+    ctx.textAlign = "left";
+  }
+
+  visibleStructs.forEach(({ s: struct, origIdx }, i) => {
     const activated = pending.activatedIndexes.includes(origIdx);
     const affordable = canAffordStructActivation(struct, player);
     const cx = cardsAreaX + i * (cardW + cardGap);
