@@ -1843,7 +1843,7 @@ const cardCatalog = {
       tags: ["要塞"],
       cost: { ore: 2 },
       keywords: [{ id: "structTaunt", value: 1 }, { id: "effectProtect", value: 1 }],
-      text: "構造挑発:1。相手がストラクトを選ぶ際、構造挑発値が最大のカードの中から選ぶ必要がある。このカードは効果保護:1を得る（効果保護X以上の効果貫通を持つカード以外から効果を受けない）。",
+      text: "[構造挑発①] 相手がストラクトを選ぶ時、[構造挑発]値が最も高いカードの中から選ぶ必要がある。このカードは[効果保護①]を得る。（[効果貫通①]以上を持つカード以外から効果を受けない）",
       abilities: [],
     },
   },
@@ -1861,7 +1861,7 @@ cardCatalog.main.disruptionEngineer = {
   actCost: {},
   atk: 1,
   hp: 3,
-  text: "いかに強力な魔法であってもその概念を適切に乱せばその脅威は別の場所にそれる。\n【アウラ】隣接する味方ユニットに効果保護:1を与える。",
+  text: "いかに強力な魔法であってもその概念を適切に乱せばその脅威は別の場所にそれる。\nこのユニットに隣接する味方ユニットは[効果保護①]を得る。",
   keywords: [],
   abilities: [{ trigger: "onSummon", effect: "grantEffectProtectToAdjacent", value: 1 }],
 };

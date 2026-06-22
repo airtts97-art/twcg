@@ -5,16 +5,32 @@
   "rarity": "通常",
   "world": "ユニフォール",
   "tags": ["歩兵", "純人間", "魔法"],
-  "roles": [],
   "costs": {
-    "play": { "human": 1, "magic": 2 },
-    "act": {},
+    "play": {
+      "gold": 0,
+      "human": 1,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 2
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
     "choice": [],
     "choiceAct": []
   },
+  "generates": {},
   "attack": 1,
   "defense": 3,
-  "description": "いかに強力な魔法であってもその概念を適切に乱せばその脅威は別の場所にそれる。\n【アウラ】隣接する味方ユニットに効果保護:1を与える。",
+  "description": "いかに強力な魔法であってもその概念を適切に乱せばその脅威は別の場所にそれる。\nこのユニットに隣接する味方ユニットは[効果保護①]を得る。",
   "flavorText": "",
   "imageUrl": ""
 }
