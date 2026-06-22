@@ -249,7 +249,7 @@ function cellPortraitCardBounds(row, col) {
   const cy = layout.board.y + visualRow * layout.cell.h;
   const padX = 6, padY = 4, statsH = 22;
   const avW = layout.cell.w - padX * 2;
-  const avH = layout.cell.h - padY - statsH;
+  const avH = layout.cell.h - padY * 2 - statsH;
   const cardH = Math.min(avH, avW / CARD_ASPECT);
   const cardW = cardH * CARD_ASPECT;
   return {
@@ -6337,57 +6337,51 @@ function drawHeader() {
 function drawBoardCard(cx, cy, cellW, cellH, unit) {
   const isSelected = selectedUnit() === unit;
   const padX = 6, padY = 4;
-  const statsH = 22;  // カード外下部のATK/HP表示エリア
+  const statsH = 22;
   const avW = cellW - padX * 2;
-  const avH = cellH - padY * 2 - statsH;  // アート用の縦スペース
+  const avH = cellH - padY * 2 - statsH;
 
-  // ポートレートカードサイズ (63:88比率)
+  // 全カード共通: 同一ポートレートサイズ (63:88)
   const cardH = Math.min(avH, avW / CARD_ASPECT);
   const cardW = cardH * CARD_ASPECT;
+  const offX = cx + padX + (avW - cardW) / 2;
+  const offY = cy + padY + (avH - cardH) / 2;
 
   const isEnemy = unit.owner !== viewerPlayerId();
 
+  drawCard(offX, offY, cardW, cardH, unit, { selected: isSelected, artOnly: true });
+
+  // レスト: 青みがかった半透明オーバーレイ + 右上に "REST" バッジ
   if (unit.rested) {
-    // レスト時: 90°時計回りに回転して横向き表示
-    let rW = avH;
-    let rH = rW * CARD_ASPECT;
-    if (rH > avW) { rH = avW; rW = rH / CARD_ASPECT; }
-
-    const centerX = cx + cellW / 2;
-    const centerY = cy + padY + avH / 2;
-
     ctx.save();
-    ctx.translate(centerX, centerY);
-    ctx.rotate(Math.PI / 2);
-    drawCard(-rH / 2, -rW / 2, rH, rW, unit, {
-      selected: isSelected, noHover: true, noRestOverlay: true, artOnly: true,
-    });
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = "#2060ff";
+    ctx.fillRect(offX, offY, cardW, cardH);
+    ctx.globalAlpha = 1;
     ctx.restore();
-    // 敵ユニット: 赤色オーバーレイ（レスト時は視覚領域 rW×rH を横向きで適用）
-    if (isEnemy) {
-      ctx.save();
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = "#ff2020";
-      ctx.fillRect(centerX - rW / 2, centerY - rH / 2, rW, rH);
-      ctx.globalAlpha = 1;
-      ctx.restore();
-    }
-    addCardHover(cx, cy, cellW, cellH, unit);
-  } else {
-    // 通常時: ポートレートカードをアートのみで表示
-    const offX = cx + padX + (avW - cardW) / 2;
-    const offY = cy + padY + (avH - cardH) / 2;
-    drawCard(offX, offY, cardW, cardH, unit, { selected: isSelected, artOnly: true });
-    // 敵ユニット: 赤色オーバーレイ
-    if (isEnemy) {
-      ctx.save();
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = "#ff2020";
-      ctx.fillRect(offX, offY, cardW, cardH);
-      ctx.globalAlpha = 1;
-      ctx.restore();
-    }
+    // REST バッジ
+    const badgeW = 28, badgeH = 12;
+    const bx = offX + cardW - badgeW - 2, by = offY + 2;
+    ctx.fillStyle = "rgba(10,30,100,0.85)";
+    ctx.fillRect(bx, by, badgeW, badgeH);
+    ctx.fillStyle = "#80b0ff";
+    ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("REST", bx + badgeW / 2, by + 9);
+    ctx.textAlign = "left";
   }
+
+  // 敵ユニット: 赤色オーバーレイ
+  if (isEnemy) {
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = "#ff2020";
+    ctx.fillRect(offX, offY, cardW, cardH);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  addCardHover(cx, cy, cellW, cellH, unit);
 
   // ATK / HP / HP bar をカードの外（セル下部）に表示
   if (unit.type === "unit") {
