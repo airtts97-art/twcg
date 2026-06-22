@@ -6700,6 +6700,10 @@ function drawBoard() {
   ctx.fillText(phBadge, x + w / 2, midY + 3);
   ctx.textAlign = "left";
 
+  // 非フリップ時: p1は戦闘行から下向きに描画、p2は召喚行から下向きに描画
+  // フリップ時 (p2視点): p1は召喚行から、p2は戦闘行から
+  const drawP1ResFromBattle = !isViewerFlipped();
+
   for (let visualRow = 0; visualRow < ROWS; visualRow += 1) {
     const row = visualRowToBoardRow(visualRow);
     // p1 占有は board rows 2-3 (p1.summonRow=3, p2.summonRow=0)
@@ -6711,10 +6715,8 @@ function drawBoard() {
       const cy = y + visualRow * cH;
 
       // ゾーン判定 (COLS=13)
-      // p1戦闘行: [0-9 Standard(10)][10-12 Tact(3)]
-      // p2戦闘行: [0-2 Tact(3)][3-12 Standard(10)]
-      // p1召喚行: [0-2 Resource(3)][3-5 SF(3)][6 Core][7-9 SF(3)][10 Dump][11 Out][12 Grand]
-      // p2召喚行: [0 Grand][1 Out][2 Dump][3-5 SF(3)][6 Core][7-9 SF(3)][10-12 Resource(3)]
+      // p1戦闘行: [0-2 Resource一体化][3-9 Standard][10-12 Tact]  (battle+summon 2行分のパネル)
+      // p2戦闘行: [0-2 Tact][3-9 Standard][10-12 Resource一体化]
       const isP1Summon = row === PLAYERS.p1.summonRow;
       const isP2Summon = row === PLAYERS.p2.summonRow;
       const isSummon   = isP1Summon || isP2Summon;
@@ -6724,15 +6726,34 @@ function drawBoard() {
       const isTactSummon  = isSummon && ((isP1Summon && col >= 10 && col <= 12) || (isP2Summon && col >= 0 && col <= 2));
       const isGrandSummon = isSummon && ((isP1Summon && col === 12) || (isP2Summon && col === 0));
 
-      // 召喚行: [0-2 Resource(3)][3-5 SF(3)][6 Core][7-9 SF(3)][10 Dump][11 Out][12 Grand]  (p1)
-      //        [0 Grand][1 Out][2 Dump][3-5 SF(3)][6 Core][7-9 SF(3)][10-12 Resource(3)]   (p2)
+      // 資源一体化パネル: 戦闘行+召喚行 を 2*cH の高さで1枚描画
+      // 描画元の行 (上側) だけ描き、下側行はスキップ
+      if (!isSummon && isP1Row && col <= 2) {
+        // p1 戦闘行 左端 → drawP1ResFromBattle のときここから2行分描く
+        if (col === 0 && drawP1ResFromBattle)
+          drawResourceInBoardCell(cx, cy, cW * 3, cH * 2, "p1");
+        continue;
+      }
+      if (!isSummon && !isP1Row && col >= 10) {
+        // p2 戦闘行 右端 → フリップ時ここから2行分描く
+        if (col === 10 && !drawP1ResFromBattle)
+          drawResourceInBoardCell(cx, cy, cW * 3, cH * 2, "p2");
+        continue;
+      }
+
+      // 召喚行: [0-2 Resource(下側スキップ or フリップ時上側描画)][3-5 SF][6 Core][7-9 SF][10 Dump][11 Out][12 Grand]  (p1)
+      //        [0 Grand][1 Out][2 Dump][3-5 SF][6 Core][7-9 SF][10-12 Resource(下側スキップ or 非フリップ時上側描画)]  (p2)
       if (isSummon) {
         const sId = isP1Summon ? "p1" : "p2";
         const resColStart = isP1Summon ? 0 : 10;
         const dumpCol = isP1Summon ? 10 : 2;
         const outCol  = isP1Summon ? 11 : 1;
         if (col === resColStart) {
-          drawResourceInBoardCell(cx, cy, cW * 3, cH, sId); continue;
+          // 非フリップ: p2召喚行は上側なので描画。p1召喚行は下側なのでスキップ。
+          // フリップ時: p1召喚行が上側→描画。p2召喚行は下側→スキップ。
+          const shouldDraw = isP1Summon ? !drawP1ResFromBattle : drawP1ResFromBattle;
+          if (shouldDraw) drawResourceInBoardCell(cx, cy, cW * 3, cH * 2, sId);
+          continue;
         }
         if (col === resColStart + 1 || col === resColStart + 2) continue;
         if (col === 6) {
