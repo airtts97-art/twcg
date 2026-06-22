@@ -6593,29 +6593,30 @@ function drawDeckGYInBoardCell(cx, cy, cW, cH, playerId) {
   addHit(gyX + 1, cy + 2, half - 3, cH - 4, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
 }
 
-// 召喚行 DUMP + OUT (Exile) 分割セル
-function drawDumpOutInBoardCell(cx, cy, cW, cH, playerId) {
+// 召喚行 DUMP セル (1マス)
+function drawDumpInBoardCell(cx, cy, cW, cH, playerId) {
   const player = state.players[playerId];
-  const half = Math.floor(cW / 2);
-
-  // DUMP panel
-  roundRect(cx + 2, cy + 2, half - 3, cH - 4, 4, "rgba(14,36,14,0.88)", "rgba(40,130,60,0.5)", 1);
+  roundRect(cx + 2, cy + 2, cW - 4, cH - 4, 4, "rgba(14,36,14,0.88)", "rgba(40,130,60,0.5)", 1);
   ctx.fillStyle = "#70b880"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("DUMP", cx + half / 2, cy + 16);
+  ctx.fillText("DUMP", cx + cW / 2, cy + 16);
   ctx.fillStyle = "#c0e8d0"; ctx.font = `700 ${Math.round(cH * 0.22)}px 'Yu Gothic UI', sans-serif`;
-  ctx.fillText((player.dump || []).length, cx + half / 2, cy + cH / 2 + 8);
-  addHit(cx + 2, cy + 2, half - 3, cH - 4, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
-
-  // OUT (Exile) panel
-  const outX = cx + half;
-  roundRect(outX + 1, cy + 2, half - 3, cH - 4, 4, "rgba(50,30,10,0.88)", "rgba(180,120,30,0.5)", 1);
-  ctx.fillStyle = "#d0a040"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("OUT", outX + half / 2, cy + 16);
-  ctx.fillStyle = "#e8d080"; ctx.font = `700 ${Math.round(cH * 0.22)}px 'Yu Gothic UI', sans-serif`;
-  ctx.fillText((player.exileZone || []).length, outX + half / 2, cy + cH / 2 + 8);
+  ctx.fillText((player.dump || []).length, cx + cW / 2, cy + cH / 2 + 8);
   ctx.textAlign = "left";
-  addHit(outX + 1, cy + 2, half - 3, cH - 4, () => { zoneViewerState = { playerId, zone: "exile", scroll: 0 }; });
+  addHit(cx + 2, cy + 2, cW - 4, cH - 4, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
+}
+
+// 召喚行 OUT (Exile) セル (1マス)
+function drawOutInBoardCell(cx, cy, cW, cH, playerId) {
+  const player = state.players[playerId];
+  roundRect(cx + 2, cy + 2, cW - 4, cH - 4, 4, "rgba(50,30,10,0.88)", "rgba(180,120,30,0.5)", 1);
+  ctx.fillStyle = "#d0a040"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("OUT", cx + cW / 2, cy + 16);
+  ctx.fillStyle = "#e8d080"; ctx.font = `700 ${Math.round(cH * 0.22)}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText((player.exileZone || []).length, cx + cW / 2, cy + cH / 2 + 8);
+  ctx.textAlign = "left";
+  addHit(cx + 2, cy + 2, cW - 4, cH - 4, () => { zoneViewerState = { playerId, zone: "exile", scroll: 0 }; });
 }
 
 // 召喚行 Command側セル: Wild/Grand カウント
@@ -6703,7 +6704,7 @@ function drawBoard() {
       const isResCell     = !isSummon && (col === resStartCol || col === resStartCol + 1);
       const isTactZone    = !isSummon && ((isP1Row && col >= 2 && col <= 4) || (!isP1Row && col >= 8 && col <= 10));
       const isGrandZone   = !isSummon && ((isP1Row && col === 12) || (!isP1Row && col === 0));
-      const isTactSummon  = isSummon && ((isP1Summon && col >= 2 && col <= 5) || (isP2Summon && col >= 7 && col <= 10));
+      const isTactSummon  = isSummon && ((isP1Summon && col >= 3 && col <= 5) || (isP2Summon && col >= 7 && col <= 9));
       const isGrandSummon = isSummon && ((isP1Summon && col === 12) || (isP2Summon && col === 0));
 
       // リソース表示セル (2列スパン、ユニット配置不可)
@@ -6714,23 +6715,27 @@ function drawBoard() {
         continue;
       }
 
-      // 召喚行: [0-1 CmdZone][2-5 SF(4)][6 Core][7-10 SF(4)][11 DumpOut][12 Grand]  (p1)
-      //        [0 Grand][1 DumpOut][2-5 SF(4)][6 Core][7-10 SF(4)][11-12 CmdZone]   (p2)
+      // 召喚行: [0-2 CmdZone(3)][3-5 SF(3)][6 Core][7-9 SF(3)][10 Dump][11 Out][12 Grand]  (p1)
+      //        [0 Grand][1 Out][2 Dump][3-5 SF(3)][6 Core][7-9 SF(3)][10-12 CmdZone(3)]   (p2)
       if (isSummon) {
         const sId = isP1Summon ? "p1" : "p2";
-        const cmdStartCol = isP1Summon ? 0 : 11;
-        const dumpOutCol  = isP1Summon ? 11 : 1;
+        const cmdStartCol = isP1Summon ? 0 : 10;
+        const dumpCol = isP1Summon ? 10 : 2;
+        const outCol  = isP1Summon ? 11 : 1;
         if (col === cmdStartCol) {
-          drawCmdZoneInBoardCell(cx, cy, cW * 2, cH, sId); continue;
+          drawCmdZoneInBoardCell(cx, cy, cW * 3, cH, sId); continue;
         }
-        if (col === cmdStartCol + 1) continue;
+        if (col === cmdStartCol + 1 || col === cmdStartCol + 2) continue;
         if (col === 6) {
           drawCoreInBoardCell(cx, cy, cW, cH, sId); continue;
         }
-        if (col === dumpOutCol) {
-          drawDumpOutInBoardCell(cx, cy, cW, cH, sId); continue;
+        if (col === dumpCol) {
+          drawDumpInBoardCell(cx, cy, cW, cH, sId); continue;
         }
-        // col 2-5 / 7-10: Summon Field → falls through to regular cell rendering
+        if (col === outCol) {
+          drawOutInBoardCell(cx, cy, cW, cH, sId); continue;
+        }
+        // col 3-5 / 7-9: Summon Field → falls through to regular cell rendering
         // col 12 (p1) / 0 (p2): Grand Zone → falls through
       }
 
