@@ -6670,23 +6670,14 @@ function drawResourceInBoardCell(cx, cy, cW2, cH, playerId) {
     const amt = player.resources?.[key] || 0;
     roundRect(px, py, pillW, pillH, 2, colors.bg, colors.border, 0.8);
     const iconSize = Math.min(pillH - 2, 22);
-    if (amt >= 1 && amt <= 5) {
-      // アイコンを並べて表示 (×amt 個)
-      const iSz = Math.min(Math.floor((pillW - 6) / amt) - 2, iconSize);
-      const totalW = amt * iSz + (amt - 1) * 2;
-      const sx = px + Math.max(3, Math.floor((pillW - totalW) / 2));
-      const sy = py + Math.max(0, Math.floor((pillH - iSz) / 2));
-      for (let j = 0; j < amt; j++) drawResourceIcon(key, sx + j * (iSz + 2), sy, iSz, {});
-    } else {
-      // アイコン + ×数字 形式 (0 or 6+)
-      drawResourceIcon(key, px + 3, py + Math.max(0, (pillH - iconSize) / 2), iconSize, {});
-      const numSize = Math.max(11, Math.floor(pillH * 0.55));
-      ctx.fillStyle = "#f4f7ff";
-      ctx.font = `800 ${numSize}px 'Yu Gothic UI', sans-serif`;
-      ctx.textAlign = "right"; ctx.textBaseline = "middle";
-      ctx.fillText(amt === 0 ? "×0" : `×${amt}`, px + pillW - 4, py + pillH / 2);
-      ctx.textBaseline = "alphabetic";
-    }
+    // アイコン + ×n 形式で常に数量を表示
+    drawResourceIcon(key, px + 3, py + Math.max(0, (pillH - iconSize) / 2), iconSize, {});
+    const numSize = Math.max(11, Math.floor(pillH * 0.55));
+    ctx.fillStyle = "#f4f7ff";
+    ctx.font = `800 ${numSize}px 'Yu Gothic UI', sans-serif`;
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText(`×${amt}`, px + pillW - 4, py + pillH / 2);
+    ctx.textBaseline = "alphabetic";
   });
   ctx.textAlign = "left";
 }
