@@ -205,20 +205,20 @@ const DECKMAKER_TYPE_LABELS = {
 // y=110 相手コマンドロー   (60px)
 // y=170 バトルボード       (472px = 4行×118px)
 // y=642 自コマンドロー     (60px)
-// y=702 自ストラクトゾーン  (50px)
+// y=716 自ストラクトゾーン  (36px)
 // y=752 手札               (108px)
 // y=860 リソースバー        (40px)
-// y=900
+// y=900  ← 60+36+44+532+44+36+108+40=900
 const layout = {
-  board:        { x: 0, y: 170, w: 1440, h: 472 },
+  board:        { x: 0, y: 140, w: 1440, h: 532 },
   hand:         { x: 0, y: 752, w: 1440, h: 108 },
   topHand:      { x: 0, y: 60,  w: 1440, h: 20  },
   left:         { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
   right:        { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
-  oppStruct:    { x: 0, y: 60,  w: 1440, h: 50  },
-  oppCmd:       { x: 0, y: 110, w: 1440, h: 60  },
-  playerCmd:    { x: 0, y: 642, w: 1440, h: 60  },
-  playerStruct: { x: 0, y: 702, w: 1440, h: 50  },
+  oppStruct:    { x: 0, y: 60,  w: 1440, h: 36  },
+  oppCmd:       { x: 0, y: 96,  w: 1440, h: 44  },
+  playerCmd:    { x: 0, y: 672, w: 1440, h: 44  },
+  playerStruct: { x: 0, y: 716, w: 1440, h: 36  },
   resourceBar:  { x: 0, y: 860, w: 1440, h: 40  },
 };
 layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
