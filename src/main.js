@@ -5,7 +5,7 @@ const ctx = canvas.getContext("2d");
 const W = canvas.width;
 const H = canvas.height;
 const ROWS = 4;
-const COLS = 7;
+const COLS = 11;
 const CARD_ASPECT = 63 / 88; // portrait width:height ratio (standard TCG card)
 const RESOURCE_KEYS = ["funds", "people", "nature", "ore", "fuel", "electric", "magic"];
 const CARD_TYPE_LABELS = {
@@ -222,8 +222,8 @@ const layout = {
   resourceBar:  { x: 0, y: 860, w: 1440, h: 40  },
 };
 layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
-// ゾーン列定義 (左0〜右6)
-// Col 0-1: Wild Zone / Command Zone, Col 2-4: Standard, Col 5-6: Grand Zone / Dump
+// ゾーン列定義 (左0〜右10, COLS=11)
+// Col 0-1: Wild Zone / Command Zone, Col 2-8: Standard (7列), Col 9-10: Grand Zone / Dump
 const ZONE_WILD_COLS  = [0, 1];  // Wild Zone
 const ZONE_STD_COLS   = [2, 3, 4]; // Standard / Core
 const ZONE_GRAND_COLS = [5, 6];  // Grand Zone
@@ -6508,28 +6508,28 @@ function drawBoard() {
       const isP1Summon = row === PLAYERS.p1.summonRow;
       const isP2Summon = row === PLAYERS.p2.summonRow;
       const isSummon   = isP1Summon || isP2Summon;
-      const isWild  = !isSummon && ((isP1Row && col <= 1) || (!isP1Row && col >= 5));
-      const isGrand = !isSummon && ((isP1Row && col >= 5) || (!isP1Row && col <= 1));
+      const isWild  = !isSummon && ((isP1Row && col <= 1) || (!isP1Row && col >= 9));
+      const isGrand = !isSummon && ((isP1Row && col >= 9) || (!isP1Row && col <= 1));
 
-      // 召喚行: 2+1+1+1+2 配置
-      // p1: [0-1 CmdZone][2 SF][3 Core][4 SF][5-6 Dump]
-      // p2: [0-1 Dump][2 SF][3 Core][4 SF][5-6 CmdZone]
+      // 召喚行: 2+3+1+3+2 配置 (COLS=11)
+      // p1: [0-1 CmdZone][2-4 SF][5 Core][6-8 SF][9-10 Dump]
+      // p2: [0-1 Dump][2-4 SF][5 Core][6-8 SF][9-10 CmdZone]
       if (isSummon) {
         const sId = isP1Summon ? "p1" : "p2";
-        const cmdStartCol  = isP1Summon ? 0 : 5;
-        const dumpStartCol = isP1Summon ? 5 : 0;
+        const cmdStartCol  = isP1Summon ? 0 : 9;
+        const dumpStartCol = isP1Summon ? 9 : 0;
         if (col === cmdStartCol) {
           drawCmdZoneInBoardCell(cx, cy, cW * 2, cH, sId); continue;
         }
         if (col === cmdStartCol + 1) continue;
-        if (col === 3) {
+        if (col === 5) {
           drawCoreInBoardCell(cx, cy, cW, cH, sId); continue;
         }
         if (col === dumpStartCol) {
           drawDeckGYInBoardCell(cx, cy, cW * 2, cH, sId); continue;
         }
         if (col === dumpStartCol + 1) continue;
-        // col 2 と col 4 は Summon Field として通常描画
+        // col 2-4 と col 6-8 は Summon Field として通常描画
       }
 
       // 通常セル背景色
@@ -6578,10 +6578,10 @@ function drawBoard() {
       ctx.strokeStyle = isP1Row ? "rgba(160,80,220,0.5)" : "rgba(80,160,220,0.5)";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
-      const lx = x + (isP1Row ? 2 : 5) * cW;
+      const lx = x + 2 * cW;
       const cy0 = y + visualRow * cH;
       ctx.beginPath(); ctx.moveTo(lx, cy0); ctx.lineTo(lx, cy0 + cH); ctx.stroke();
-      const rx = x + (isP1Row ? 5 : 2) * cW;
+      const rx = x + 9 * cW;
       ctx.beginPath(); ctx.moveTo(rx, cy0); ctx.lineTo(rx, cy0 + cH); ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
