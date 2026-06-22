@@ -6504,28 +6504,32 @@ function drawBoard() {
       const cx = x + col * cW;
       const cy = y + visualRow * cH;
 
-      // ゾーン判定
-      const isWild    = (isP1Row && col <= 1) || (!isP1Row && col >= 5);
-      const isGrand   = (isP1Row && col >= 5) || (!isP1Row && col <= 1);
+      // ゾーン判定 (Wild/Grand は戦闘行のみ)
       const isP1Summon = row === PLAYERS.p1.summonRow;
       const isP2Summon = row === PLAYERS.p2.summonRow;
       const isSummon   = isP1Summon || isP2Summon;
-      const summonOwner = isP1Summon ? "p1" : "p2";
+      const isWild  = !isSummon && ((isP1Row && col <= 1) || (!isP1Row && col >= 5));
+      const isGrand = !isSummon && ((isP1Row && col >= 5) || (!isP1Row && col <= 1));
 
-      // 召喚行の特殊セル: col 3 = Core Card, col 0/6 = Deck+GY, col 6/0 = Command Zone
-      // p1 召喚行: col0=Command, col3=Core, col6=Deck+GY
-      // p2 召喚行: col0=Deck+GY,  col3=Core, col6=Command
-      const coreCol = 3;
-      const deckCol = isP1Summon ? 6 : 0;
-      const cmdCol  = isP1Summon ? 0 : 6;
-
-      if (isSummon && (col === coreCol || col === deckCol || col === cmdCol)) {
-        if (col === coreCol)  drawCoreInBoardCell(cx, cy, cW, cH, summonOwner);
-        else if (col === deckCol) drawDeckGYInBoardCell(cx, cy, cW, cH, summonOwner);
-        else                      drawCmdZoneInBoardCell(cx, cy, cW, cH, summonOwner);
-        const unit = state.board[row][col];
-        if (unit) drawBoardCard(cx, cy, cW, cH, unit);
-        continue;
+      // 召喚行: 2+1+1+1+2 配置
+      // p1: [0-1 CmdZone][2 SF][3 Core][4 SF][5-6 Dump]
+      // p2: [0-1 Dump][2 SF][3 Core][4 SF][5-6 CmdZone]
+      if (isSummon) {
+        const sId = isP1Summon ? "p1" : "p2";
+        const cmdStartCol  = isP1Summon ? 0 : 5;
+        const dumpStartCol = isP1Summon ? 5 : 0;
+        if (col === cmdStartCol) {
+          drawCmdZoneInBoardCell(cx, cy, cW * 2, cH, sId); continue;
+        }
+        if (col === cmdStartCol + 1) continue;
+        if (col === 3) {
+          drawCoreInBoardCell(cx, cy, cW, cH, sId); continue;
+        }
+        if (col === dumpStartCol) {
+          drawDeckGYInBoardCell(cx, cy, cW * 2, cH, sId); continue;
+        }
+        if (col === dumpStartCol + 1) continue;
+        // col 2 と col 4 は Summon Field として通常描画
       }
 
       // 通常セル背景色
@@ -6567,22 +6571,21 @@ function drawBoard() {
       if (unit) drawBoardCard(cx, cy, cW, cH, unit);
     }
 
-    // Wild Zone と Standard の境界斜線
-    // player rows: col1→col2 boundary; opp rows: col4→col5 boundary
-    const diagColLeft  = isP1Row ? 2 : 5;  // standard/grand境界
-    const diagColRight = isP1Row ? 5 : 2;  // wild/standard境界
-    ctx.save();
-    ctx.strokeStyle = isP1Row ? "rgba(160,80,220,0.5)" : "rgba(80,160,220,0.5)";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 4]);
-    // 左境界 (Wild|Standard または Grand|Standard)
-    const lx = x + (isP1Row ? 2 : 5) * cW;
-    ctx.beginPath(); ctx.moveTo(lx, cy); ctx.lineTo(lx, cy + cH); ctx.stroke();
-    // 右境界 (Standard|Grand または Standard|Wild)
-    const rx = x + (isP1Row ? 5 : 2) * cW;
-    ctx.beginPath(); ctx.moveTo(rx, cy); ctx.lineTo(rx, cy + cH); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
+    // Wild Zone と Standard の境界破線 (戦闘行のみ)
+    const isSummonRow = (row === PLAYERS.p1.summonRow || row === PLAYERS.p2.summonRow);
+    if (!isSummonRow) {
+      ctx.save();
+      ctx.strokeStyle = isP1Row ? "rgba(160,80,220,0.5)" : "rgba(80,160,220,0.5)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      const lx = x + (isP1Row ? 2 : 5) * cW;
+      const cy0 = y + visualRow * cH;
+      ctx.beginPath(); ctx.moveTo(lx, cy0); ctx.lineTo(lx, cy0 + cH); ctx.stroke();
+      const rx = x + (isP1Row ? 5 : 2) * cW;
+      ctx.beginPath(); ctx.moveTo(rx, cy0); ctx.lineTo(rx, cy0 + cH); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
   }
 }
 
