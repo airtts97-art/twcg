@@ -2971,6 +2971,29 @@ function exportDeckmakerAllData() {
   app.deckBuilder.message = `Deckmaker用JSONを出力しました。カード${payload.cards.length}枚 / デッキ${payload.decks.length}個`;
 }
 
+function exportNoImageCustomCards() {
+  const groups = persistedCustomCardGroups();
+  const allCustom = [
+    ...Object.values(groups.cores),
+    ...Object.values(groups.main),
+    ...Object.values(groups.structs),
+  ];
+  const noImage = allCustom.filter((c) => !c.imageUrl && !c.image);
+  if (!noImage.length) {
+    app.deckBuilder.message = "画像なしのカスタムカードはありません。";
+    render();
+    return;
+  }
+  noImage.forEach((card, i) => {
+    setTimeout(() => {
+      const dm = toDeckmakerCard(card);
+      downloadJsonFile(dm, `${dm.id || safeDeckmakerId(card)}.json`);
+    }, i * 400);
+  });
+  app.deckBuilder.message = `画像なしカード ${noImage.length} 枚をダウンロード中...`;
+  render();
+}
+
 function currentDeckPayload() {
   return {
     core: app.deck.core,
@@ -6045,6 +6068,7 @@ function drawDeckBuilderScreen() {
   drawButton(674, btnY, 108, 32, "試合へ", openMatchLobby, null, { accent: "p1" });
   drawButton(792, btnY, 154, 32, "Deckmaker読込", importDeckmakerDeckFile);
   drawButton(956, btnY, 154, 32, "Deckmaker出力", exportDeckmakerAllData);
+  drawButton(1120, btnY, 154, 32, "画像なし出力", exportNoImageCustomCards);
 
   roundRect(58, 178, 500, 646, 10, "rgba(14,22,50,0.96)", "rgba(50,90,220,0.6)", 1.5);
   roundRect(572, 178, 442, 646, 10, "rgba(14,22,50,0.96)", "rgba(50,90,220,0.6)", 1.5);
