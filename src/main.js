@@ -575,19 +575,27 @@ const abilityEffects = {
     const idx = player.hand.findIndex((c) => c.name === ability.cardName || c.id === ability.cardId);
     if (idx < 0) return;
     const targetCard = player.hand[idx];
+    if (ability.lifeCounterFromPeople) {
+      game.pendingChoice = {
+        type: "lifeCounterPayment",
+        playerId,
+        cardName: card.name,
+        targetHandIndex: idx,
+        targetCard,
+        maxLifeCounters: ability.maxLifeCounters || 5,
+        counters: ability.counters || 0,
+        queueItem: { playerId, card, ability, source: { zone: "tact" } },
+      };
+      game.selected = { kind: "choice", choice: "lifeCounterPayment" };
+      game.message = `${card.name}: 支払う人資源を選んでください。`;
+      return "pending";
+    }
     if (!payForCard(player, targetCard.cost || {}, targetCard)) return;
     const col = findFirstEmptyColInRow(game, player.summonRow);
     if (col < 0) return;
     player.hand.splice(idx, 1);
     const unit = makeUnit(targetCard.id, playerId, player.summonRow, col, { rested: true });
     unit.counters = ability.counters || 0;
-    if (ability.lifeCounterFromPeople) {
-      const paidPeople = Math.min(player.resources.people || 0, ability.maxLifeCounters || 5);
-      player.resources.people -= paidPeople;
-      unit.counters = paidPeople;
-      unit.lifeCounterUnit = true;
-      unit.abilities = [...(unit.abilities || []), { trigger: "onTurnStart", effect: "removeLifeCounterOrBottomDeck" }];
-    }
     game.board[player.summonRow][col] = unit;
     triggerAbilities(game, playerId, unit, "onSummon");
     log(game, `${player.name}: 「${card.name}」で「${targetCard.name}」を出撃`);
@@ -1165,13 +1173,18 @@ const abilityEffects = {
     cleanupAllDestroyed(card);
   },
   payDestroyUpToEnemyCards({ game, playerId, card, ability }) {
-    const player = game.players[playerId];
-    if (!pay(player, ability.cost || {})) {
-      log(game, `${player.name}: ${card.name} optional destruction cost not paid`);
-      return;
-    }
-    abilityEffects.destroyUpToEnemyCards({ game, playerId, card, ability: { amount: ability.amount || 3 } });
-    log(game, `${player.name}: ${card.name} destroys up to ${ability.amount || 3} enemy cards`);
+    game.pendingChoice = {
+      type: "selectDestroyCards",
+      playerId,
+      cardName: card.name,
+      amount: ability.amount || 3,
+      cost: ability.cost || {},
+      selected: [],
+      queueItem: { playerId, card, ability, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "selectDestroyCards" };
+    game.message = `${card.name}: 破壊するカードを選んでください。`;
+    return "pending";
   },
   registerDumpLifeGain({ game, playerId, card }) {
     if (!game.globalEffects) game.globalEffects = [];
@@ -1221,20 +1234,24 @@ const abilityEffects = {
   },
   kaijuAwaken({ game, playerId, card }) {
     const player = game.players[playerId];
-    const ownUnit = unitsOwnedBy(playerId).find((unit) => unit.instanceId !== card.instanceId);
-    if (!ownUnit || !player.structs.length || !player.hand.length) {
+    const hasUnit = unitsOwnedBy(playerId).some((unit) => unit.instanceId !== card.instanceId);
+    if (!hasUnit || !player.structs.length || !player.hand.length) {
       log(game, `${player.name}: ${card.name} awaken cost unavailable`);
       return;
     }
-    game.board[ownUnit.row][ownUnit.col] = null;
-    player.exileZone.push(stripRuntime(ownUnit));
-    player.exileZone.push(player.structs.shift());
-    player.exileZone.push(player.hand.shift());
-    removeKeywords(card, ["immobile", "noAttack"]);
-    card.noRetreatUntilOpponentTurnEnd = opponentOf(playerId);
-    if (!game.globalEffects) game.globalEffects = [];
-    game.globalEffects.push({ type: "restoreKaijuLocks", playerId, instanceId: card.instanceId, untilPlayerTurnEnd: opponentOf(playerId) });
-    log(game, `${player.name}: ${card.name} awakens`);
+    game.pendingChoice = {
+      type: "kaijuAwaken",
+      playerId,
+      cardName: card.name,
+      unitInstanceId: card.instanceId,
+      selectedUnitInstanceId: null,
+      selectedStructIndex: null,
+      selectedHandIndex: null,
+      queueItem: { playerId, card, ability: { effect: "kaijuAwaken" }, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "kaijuAwaken" };
+    game.message = `${card.name}: 除外するユニット・施設・手札を選んでください。`;
+    return "pending";
   },
   damageOwnCore({ game, playerId, ability }) {
     game.players[playerId].core.hp -= ability.amount || 1;
@@ -4500,6 +4517,150 @@ function resolveChooseGainResource(optionId) {
   return true;
 }
 
+function resolveLifeCounterPayment(amount) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "lifeCounterPayment") return false;
+  const player = state.players[pending.playerId];
+  const targetCard = player.hand[pending.targetHandIndex];
+  if (!targetCard || targetCard.id !== pending.targetCard.id) {
+    state.message = "対象カードが手札にありません。";
+    return false;
+  }
+  const payAmount = Math.max(0, Math.min(Number(amount) || 0, pending.maxLifeCounters || 0, player.resources.people || 0));
+  const col = findFirstEmptyColInRow(state, player.summonRow);
+  if (col < 0) {
+    state.message = "サモン行に空きがありません。";
+    return false;
+  }
+  if (!payForCard(player, targetCard.cost || {}, targetCard)) {
+    state.message = "出撃コストが不足しています。";
+    return false;
+  }
+  player.resources.people -= payAmount;
+  player.hand.splice(pending.targetHandIndex, 1);
+  const unit = makeUnit(targetCard.id, pending.playerId, player.summonRow, col, { rested: true });
+  unit.counters = payAmount;
+  unit.lifeCounterUnit = true;
+  unit.abilities = [...(unit.abilities || []), { trigger: "onTurnStart", effect: "removeLifeCounterOrBottomDeck" }];
+  state.board[player.summonRow][col] = unit;
+  triggerAbilities(state, pending.playerId, unit, "onSummon");
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = { kind: "unit", row: player.summonRow, col };
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function destroyChoiceItems(pending) {
+  const destroyed = [];
+  const ordered = [...(pending.selected || [])].sort((a, b) => {
+    const [ka, pa, ia] = a.split(":");
+    const [kb, pb, ib] = b.split(":");
+    if (ka === "struct" && kb === "struct" && pa === pb) return Number(ib) - Number(ia);
+    return 0;
+  });
+  for (const key of ordered) {
+    const [kind, a, b] = key.split(":");
+    if (kind === "unit") {
+      const row = Number(a);
+      const col = Number(b);
+      const unit = state.board[row]?.[col];
+      if (unit) {
+        unit.currentHp = 0;
+        destroyed.push(unit.name);
+      }
+    } else if (kind === "struct") {
+      const playerId = a;
+      const index = Number(b);
+      const player = state.players[playerId];
+      const struct = player?.structs?.[index];
+      if (struct) {
+        player.structs.splice(index, 1);
+        player.dump.push(struct);
+        notifyDumpChanged(state, playerId);
+        destroyed.push(struct.name);
+      }
+    }
+  }
+  cleanupAllDestroyed();
+  return destroyed;
+}
+
+function toggleDestroyChoice(key) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "selectDestroyCards") return false;
+  const selected = new Set(pending.selected || []);
+  if (selected.has(key)) selected.delete(key);
+  else if (selected.size < (pending.amount || 1)) selected.add(key);
+  pending.selected = [...selected];
+  render();
+  return true;
+}
+
+function resolveDestroyChoice({ payCost = true } = {}) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "selectDestroyCards") return false;
+  const player = state.players[pending.playerId];
+  if (payCost && !pay(player, pending.cost || {})) {
+    state.message = "追加コストが不足しています。";
+    render();
+    return false;
+  }
+  if (payCost) destroyChoiceItems(pending);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function toggleKaijuAwakenChoice(kind, value) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "kaijuAwaken") return false;
+  if (kind === "unit") pending.selectedUnitInstanceId = pending.selectedUnitInstanceId === value ? null : value;
+  if (kind === "struct") pending.selectedStructIndex = pending.selectedStructIndex === value ? null : value;
+  if (kind === "hand") pending.selectedHandIndex = pending.selectedHandIndex === value ? null : value;
+  render();
+  return true;
+}
+
+function resolveKaijuAwakenChoice() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "kaijuAwaken") return false;
+  const player = state.players[pending.playerId];
+  const unit = unitsOwnedBy(pending.playerId).find((candidate) => candidate.instanceId === pending.selectedUnitInstanceId);
+  const struct = player.structs[pending.selectedStructIndex];
+  const handCard = player.hand[pending.selectedHandIndex];
+  const kaiju = unitsOwnedBy(pending.playerId).find((candidate) => candidate.instanceId === pending.unitInstanceId);
+  if (!unit || !struct || !handCard || !kaiju || unit.instanceId === kaiju.instanceId) {
+    state.message = "ユニット・施設・手札を1枚ずつ選んでください。";
+    render();
+    return false;
+  }
+  state.board[unit.row][unit.col] = null;
+  player.exileZone.push(stripRuntime(unit));
+  player.exileZone.push(player.structs.splice(pending.selectedStructIndex, 1)[0]);
+  player.exileZone.push(player.hand.splice(pending.selectedHandIndex, 1)[0]);
+  removeKeywords(kaiju, ["immobile", "noAttack"]);
+  kaiju.noRetreatUntilOpponentTurnEnd = opponentOf(pending.playerId);
+  if (!state.globalEffects) state.globalEffects = [];
+  state.globalEffects.push({ type: "restoreKaijuLocks", playerId: pending.playerId, instanceId: kaiju.instanceId, untilPlayerTurnEnd: opponentOf(pending.playerId) });
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = { kind: "unit", row: kaiju.row, col: kaiju.col };
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function isValidAbilityTarget(item, target) {
   if (!target) return false;
   if (item.ability.target === "enemyUnit") return target.owner !== item.playerId;
@@ -6795,6 +6956,9 @@ function drawChoiceOverlay() {
   else if (pending.type === "reviveFromDump") drawReviveFromDumpPanel(pending);
   else if (pending.type === "chooseActivationResource") drawChooseActivationResourcePanel(pending);
   else if (pending.type === "chooseGainResource") drawChooseGainResourcePanel(pending);
+  else if (pending.type === "lifeCounterPayment") drawLifeCounterPaymentPanel(pending);
+  else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
+  else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
 }
 
 function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
@@ -6988,6 +7152,121 @@ function drawChooseGainResourcePanel(pending) {
       const label = opt.label || Object.entries(opt.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join(" ");
       drawButton(bx, by, btnW, btnH, label, () => resolveChooseGainResource(opt.id || opt.resource), null, { accent: "p1" });
     });
+  }
+}
+
+function drawLifeCounterPaymentPanel(pending) {
+  const x = 430, y = 250, w = 580, h = 270;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,120,200,0.75)", "#4080ff");
+  const player = state.players[pending.playerId];
+  const maxPay = Math.max(0, Math.min(pending.maxLifeCounters || 0, player.resources.people || 0));
+  ctx.fillStyle = "#b8dcff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 生命カウンター`, x + 28, y + 38);
+  ctx.fillStyle = "rgba(190,220,255,0.85)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.targetCard.name} に置く生命カウンター数を選択してください。現在の人: ${player.resources.people}`, x + 28, y + 68, w - 56);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const btnW = 76, btnH = 42, gap = 12;
+  const totalW = (maxPay + 1) * btnW + maxPay * gap;
+  const startX = x + Math.max(28, Math.floor((w - totalW) / 2));
+  for (let amount = 0; amount <= maxPay; amount++) {
+    const bx = startX + amount * (btnW + gap);
+    const by = y + 122;
+    drawButton(bx, by, btnW, btnH, `${amount}`, isController ? () => resolveLifeCounterPayment(amount) : null, null, amount > 0 ? { accent: "p1" } : {});
+  }
+  ctx.fillStyle = "rgba(150,180,230,0.7)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("選んだ数だけ人資源を支払い、その数の生命カウンターを置きます。", x + 28, y + h - 42, w - 56);
+}
+
+function destroyChoiceCandidates() {
+  const items = [];
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      const unit = state.board[row]?.[col];
+      if (unit) items.push({ key: `unit:${row}:${col}`, label: unit.name, sub: `Unit ${unit.owner} R${row + 1}C${col + 1}` });
+    }
+  }
+  for (const pid of ["p1", "p2"]) {
+    state.players[pid].structs.forEach((struct, index) => {
+      items.push({ key: `struct:${pid}:${index}`, label: struct.name, sub: `Struct ${state.players[pid].name}` });
+    });
+  }
+  return items;
+}
+
+function drawSelectDestroyCardsPanel(pending) {
+  const x = 330, y = 162, w = 780, h = 474;
+  drawChoicePanelBase(x, y, w, h, "rgba(180,70,50,0.75)", "#ff5040");
+  const player = state.players[pending.playerId];
+  const selected = new Set(pending.selected || []);
+  const candidates = destroyChoiceCandidates();
+  ctx.fillStyle = "#ffd0c0";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 破壊対象`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(255,210,190,0.82)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`追加コスト ${formatCost(pending.cost || {}) || "なし"} / ${pending.amount}枚まで選択。現在: ${selected.size}枚`, x + 28, y + 64, w - 56);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  candidates.slice(0, 18).forEach((item, i) => {
+    const cx = x + 28 + (i % 3) * 242;
+    const cy = y + 92 + Math.floor(i / 3) * 52;
+    const active = selected.has(item.key);
+    roundRect(cx, cy, 224, 42, 6, active ? "rgba(160,50,40,0.8)" : "rgba(30,24,34,0.82)", active ? "rgba(255,140,100,0.9)" : "rgba(120,70,70,0.5)", active ? 2 : 1);
+    ctx.fillStyle = active ? "#ffe0d0" : "#c8b8b8";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${active ? "✓ " : ""}${item.label}`, cx + 9, cy + 17, 206);
+    ctx.fillStyle = "rgba(210,170,160,0.7)";
+    ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(item.sub, cx + 9, cy + 33, 206);
+    if (isController) addHit(cx, cy, 224, 42, () => toggleDestroyChoice(item.key));
+  });
+  if (isController) {
+    const canPayCost = canPay(player, pending.cost || {});
+    drawButton(x + 28, y + h - 56, 180, 36, "支払わず解決", () => resolveDestroyChoice({ payCost: false }));
+    drawButton(x + w - 238, y + h - 56, 210, 36, "支払い破壊", canPayCost ? () => resolveDestroyChoice({ payCost: true }) : null, null, canPayCost ? { accent: "p1" } : { accent: "dim" });
+  }
+}
+
+function drawKaijuAwakenPanel(pending) {
+  const x = 300, y = 142, w = 840, h = 520;
+  drawChoicePanelBase(x, y, w, h, "rgba(120,50,160,0.78)", "#b040ff");
+  const player = state.players[pending.playerId];
+  const units = unitsOwnedBy(pending.playerId).filter((unit) => unit.instanceId !== pending.unitInstanceId);
+  const structs = player.structs || [];
+  const hand = player.hand || [];
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  ctx.fillStyle = "#e0c0ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 覚醒コスト`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(220,190,255,0.82)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("自分のユニット、ストラクト、手札を1枚ずつ除外してください。", x + 28, y + 64, w - 56);
+  const drawColumn = (title, items, selectedValue, kind, baseX) => {
+    ctx.fillStyle = "#caa0ff";
+    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(title, baseX, y + 100);
+    items.slice(0, 7).forEach((item, i) => {
+      const value = item.value;
+      const active = selectedValue === value;
+      const by = y + 118 + i * 48;
+      roundRect(baseX, by, 246, 38, 6, active ? "rgba(110,55,170,0.85)" : "rgba(22,20,42,0.82)", active ? "rgba(210,140,255,0.95)" : "rgba(100,80,150,0.55)", active ? 2 : 1);
+      ctx.fillStyle = active ? "#f0dcff" : "#c8b8e8";
+      ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+      ctx.fillText(`${active ? "✓ " : ""}${item.label}`, baseX + 9, by + 16, 228);
+      ctx.fillStyle = "rgba(180,160,210,0.72)";
+      ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+      ctx.fillText(item.sub || "", baseX + 9, by + 31, 228);
+      if (isController) addHit(baseX, by, 246, 38, () => toggleKaijuAwakenChoice(kind, value));
+    });
+  };
+  drawColumn("ユニット", units.map((unit) => ({ value: unit.instanceId, label: unit.name, sub: `R${unit.row + 1}C${unit.col + 1}` })), pending.selectedUnitInstanceId, "unit", x + 28);
+  drawColumn("ストラクト", structs.map((struct, index) => ({ value: index, label: struct.name, sub: formatCost(struct.cost || {}) })), pending.selectedStructIndex, "struct", x + 298);
+  drawColumn("手札", hand.map((card, index) => ({ value: index, label: card.name, sub: `${card.type} ${formatCost(card.cost || {})}` })), pending.selectedHandIndex, "hand", x + 568);
+  if (isController) {
+    const ready = pending.selectedUnitInstanceId != null && pending.selectedStructIndex != null && pending.selectedHandIndex != null;
+    drawButton(x + w - 198, y + h - 56, 170, 36, "覚醒する", ready ? resolveKaijuAwakenChoice : null, null, ready ? { accent: "p1" } : { accent: "dim" });
   }
 }
 
@@ -7971,8 +8250,14 @@ function gameSummary() {
       ? {
           type: state.pendingChoice.type,
           card: state.pendingChoice.cardName,
-          selectedHandIndexes: [...state.pendingChoice.selectedHandIndexes],
-          choices: mysticCaptureChoices().map(({ card, handIndex }) => ({ handIndex, name: card.name, tags: tagLabels(card) })),
+          selectedHandIndexes: [...(state.pendingChoice.selectedHandIndexes || [])],
+          selected: state.pendingChoice.selected || [],
+          selectedUnitInstanceId: state.pendingChoice.selectedUnitInstanceId ?? null,
+          selectedStructIndex: state.pendingChoice.selectedStructIndex ?? null,
+          selectedHandIndex: state.pendingChoice.selectedHandIndex ?? null,
+          choices: state.pendingChoice.type === "mysticCapture"
+            ? mysticCaptureChoices().map(({ card, handIndex }) => ({ handIndex, name: card.name, tags: tagLabels(card) }))
+            : [],
         }
       : null,
     effectQueueCount: state.effectQueue.length,
@@ -8160,6 +8445,11 @@ const testing = {
   activateStructInPhase,
   resolveMarketChoice,
   resolveChooseGainResource,
+  resolveLifeCounterPayment,
+  toggleDestroyChoice,
+  resolveDestroyChoice,
+  toggleKaijuAwakenChoice,
+  resolveKaijuAwakenChoice,
   toggleMysticCaptureChoice,
   resolveMysticCaptureChoice,
   selectHandCard: selectHandCardForTest,
