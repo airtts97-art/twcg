@@ -1790,7 +1790,7 @@ const cardCatalog = {
     town: {
       id: "town",
       type: "struct",
-      name: "町",
+      name: "村",
       cost: { funds: 1 },
       text: "Structure Phase: 人的資源 +1",
       abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "people", amount: 1 }],
