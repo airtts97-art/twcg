@@ -4414,6 +4414,13 @@ function processEffectQueue(game) {
       continue;
     }
     if (item.ability.target) {
+      if (!hasValidAbilityTarget(game, item)) {
+        const message = `${item.card.name}: 対象がいないため効果は発動しませんでした。`;
+        game.message = message;
+        log(game, message);
+        completeAbilitySource(game, item);
+        continue;
+      }
       game.pendingTarget = item;
       game.selected = { kind: "target", target: item.ability.target };
       game.message = `${item.card.name}: 対象を選択してください。`;
@@ -4423,6 +4430,16 @@ function processEffectQueue(game) {
     if (result === "pending") return;
     completeAbilitySource(game, item);
   }
+}
+
+function hasValidAbilityTarget(game, item) {
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const target = game.board[row][col];
+      if (isValidAbilityTarget(item, target)) return true;
+    }
+  }
+  return false;
 }
 
 function resolvePendingTarget(row, col) {
