@@ -6341,44 +6341,44 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
   const avW = cellW - padX * 2;
   const avH = cellH - padY * 2 - statsH;
 
-  // 全カード共通: 同一ポートレートサイズ (63:88)
+  // レスト・非レスト共通の同一カードサイズ (63:88)
   const cardH = Math.min(avH, avW / CARD_ASPECT);
   const cardW = cardH * CARD_ASPECT;
-  const offX = cx + padX + (avW - cardW) / 2;
-  const offY = cy + padY + (avH - cardH) / 2;
 
+  const centerX = cx + padX + avW / 2;
+  const centerY = cy + padY + avH / 2;
   const isEnemy = unit.owner !== viewerPlayerId();
 
-  drawCard(offX, offY, cardW, cardH, unit, { selected: isSelected, artOnly: true });
-
-  // レスト: 青みがかった半透明オーバーレイ + 右上に "REST" バッジ
   if (unit.rested) {
+    // レスト: 同一サイズのカードを 90° 回転して表示
     ctx.save();
-    ctx.globalAlpha = 0.28;
-    ctx.fillStyle = "#2060ff";
-    ctx.fillRect(offX, offY, cardW, cardH);
-    ctx.globalAlpha = 1;
+    ctx.translate(centerX, centerY);
+    ctx.rotate(Math.PI / 2);
+    drawCard(-cardW / 2, -cardH / 2, cardW, cardH, unit, {
+      selected: isSelected, noHover: true, artOnly: true,
+    });
     ctx.restore();
-    // REST バッジ
-    const badgeW = 28, badgeH = 12;
-    const bx = offX + cardW - badgeW - 2, by = offY + 2;
-    ctx.fillStyle = "rgba(10,30,100,0.85)";
-    ctx.fillRect(bx, by, badgeW, badgeH);
-    ctx.fillStyle = "#80b0ff";
-    ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("REST", bx + badgeW / 2, by + 9);
-    ctx.textAlign = "left";
-  }
-
-  // 敵ユニット: 赤色オーバーレイ
-  if (isEnemy) {
-    ctx.save();
-    ctx.globalAlpha = 0.22;
-    ctx.fillStyle = "#ff2020";
-    ctx.fillRect(offX, offY, cardW, cardH);
-    ctx.globalAlpha = 1;
-    ctx.restore();
+    if (isEnemy) {
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = "#ff2020";
+      // 回転後の視覚領域: centerX ± cardH/2, centerY ± cardW/2
+      ctx.fillRect(centerX - cardH / 2, centerY - cardW / 2, cardH, cardW);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+  } else {
+    const offX = centerX - cardW / 2;
+    const offY = centerY - cardH / 2;
+    drawCard(offX, offY, cardW, cardH, unit, { selected: isSelected, artOnly: true });
+    if (isEnemy) {
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = "#ff2020";
+      ctx.fillRect(offX, offY, cardW, cardH);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
   }
 
   addCardHover(cx, cy, cellW, cellH, unit);
