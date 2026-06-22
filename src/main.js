@@ -5,7 +5,7 @@ const ctx = canvas.getContext("2d");
 const W = canvas.width;
 const H = canvas.height;
 const ROWS = 4;
-const COLS = 11;
+const COLS = 13;
 const CARD_ASPECT = 63 / 88; // portrait width:height ratio (standard TCG card)
 const RESOURCE_KEYS = ["funds", "people", "nature", "ore", "fuel", "electric", "magic"];
 const CARD_TYPE_LABELS = {
@@ -6298,7 +6298,6 @@ function drawCardDetailOverlay() {
     `種類: ${CARD_TYPE_LABELS[card.type] || card.type}`,
     `陣営: ${card.faction || "なし"}`,
     `タグ: ${tagLabels(card).join(" / ") || "なし"}`,
-    `コスト: ${formatCost(card.cost)} / アクト: ${formatCost(card.actCost)}`,
   ];
   if (card.type === "unit") lines.push(`ATK/HP: ${card.atk}/${card.hp}`);
   const keywordText = keywordLabels(card).join(" / ");
@@ -6309,6 +6308,16 @@ function drawCardDetailOverlay() {
     ctx.fillText(line, x + 210, nextY, w - 226);
     nextY += 20;
   }
+  // コスト: アイコン表示
+  ctx.fillStyle = "rgba(160,190,240,0.85)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("コスト:", x + 210, nextY);
+  let cixEnd = drawCostIcons(card.cost || {}, x + 260, nextY - 14, { size: 16, showNone: true });
+  if (card.actCost && Object.values(card.actCost).some((v) => v > 0)) {
+    ctx.fillText("アクト:", cixEnd + 6, nextY);
+    drawCostIcons(card.actCost, cixEnd + 54, nextY - 14, { size: 16 });
+  }
+  nextY += 20;
   const effectText = abilityText(card);
   if (effectText) {
     ctx.fillStyle = "rgba(140,170,220,0.6)";
@@ -6584,6 +6593,31 @@ function drawDeckGYInBoardCell(cx, cy, cW, cH, playerId) {
   addHit(gyX + 1, cy + 2, half - 3, cH - 4, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
 }
 
+// 召喚行 DUMP + OUT (Exile) 分割セル
+function drawDumpOutInBoardCell(cx, cy, cW, cH, playerId) {
+  const player = state.players[playerId];
+  const half = Math.floor(cW / 2);
+
+  // DUMP panel
+  roundRect(cx + 2, cy + 2, half - 3, cH - 4, 4, "rgba(14,36,14,0.88)", "rgba(40,130,60,0.5)", 1);
+  ctx.fillStyle = "#70b880"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("DUMP", cx + half / 2, cy + 16);
+  ctx.fillStyle = "#c0e8d0"; ctx.font = `700 ${Math.round(cH * 0.22)}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText((player.dump || []).length, cx + half / 2, cy + cH / 2 + 8);
+  addHit(cx + 2, cy + 2, half - 3, cH - 4, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
+
+  // OUT (Exile) panel
+  const outX = cx + half;
+  roundRect(outX + 1, cy + 2, half - 3, cH - 4, 4, "rgba(50,30,10,0.88)", "rgba(180,120,30,0.5)", 1);
+  ctx.fillStyle = "#d0a040"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("OUT", outX + half / 2, cy + 16);
+  ctx.fillStyle = "#e8d080"; ctx.font = `700 ${Math.round(cH * 0.22)}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText((player.exileZone || []).length, outX + half / 2, cy + cH / 2 + 8);
+  ctx.textAlign = "left";
+  addHit(outX + 1, cy + 2, half - 3, cH - 4, () => { zoneViewerState = { playerId, zone: "exile", scroll: 0 }; });
+}
+
 // 召喚行 Command側セル: Wild/Grand カウント
 function drawCmdZoneInBoardCell(cx, cy, cW, cH, playerId) {
   const player = state.players[playerId];
@@ -6658,19 +6692,19 @@ function drawBoard() {
       const cx = x + col * cW;
       const cy = y + visualRow * cH;
 
-      // ゾーン判定 (COLS=11)
-      // p1行: [0-1 Resource][2-4 Tact][5-9 Standard][10 Grand]
-      // p2行: [0 Grand][1-5 Standard][6-8 Tact][9-10 Resource]
+      // ゾーン判定 (COLS=13)
+      // p1行: [0-1 Resource][2-4 Tact][5-11 Standard(7)][12 Grand]
+      // p2行: [0 Grand][1-7 Standard(7)][8-10 Tact][11-12 Resource]
       const isP1Summon = row === PLAYERS.p1.summonRow;
       const isP2Summon = row === PLAYERS.p2.summonRow;
       const isSummon   = isP1Summon || isP2Summon;
 
-      const resStartCol   = isP1Row ? 0 : 9;
+      const resStartCol   = isP1Row ? 0 : 11;
       const isResCell     = !isSummon && (col === resStartCol || col === resStartCol + 1);
-      const isTactZone    = !isSummon && ((isP1Row && col >= 2 && col <= 4) || (!isP1Row && col >= 6 && col <= 8));
-      const isGrandZone   = !isSummon && ((isP1Row && col === 10) || (!isP1Row && col === 0));
-      const isTactSummon  = isSummon && ((isP1Summon && col >= 2 && col <= 4) || (isP2Summon && col >= 6 && col <= 8));
-      const isGrandSummon = isSummon && ((isP1Summon && col === 10) || (isP2Summon && col === 0));
+      const isTactZone    = !isSummon && ((isP1Row && col >= 2 && col <= 4) || (!isP1Row && col >= 8 && col <= 10));
+      const isGrandZone   = !isSummon && ((isP1Row && col === 12) || (!isP1Row && col === 0));
+      const isTactSummon  = isSummon && ((isP1Summon && col >= 2 && col <= 5) || (isP2Summon && col >= 7 && col <= 10));
+      const isGrandSummon = isSummon && ((isP1Summon && col === 12) || (isP2Summon && col === 0));
 
       // リソース表示セル (2列スパン、ユニット配置不可)
       if (isResCell) {
@@ -6680,21 +6714,24 @@ function drawBoard() {
         continue;
       }
 
-      // 召喚行: [0-1 CmdZone][2-4 TactSF][5 Core][6-9 UnitSF][10 GrandZone]  (p1)
-      //        [0 GrandZone][1-4 UnitSF][5 Core][6-8 TactSF][9-10 CmdZone]   (p2)
+      // 召喚行: [0-1 CmdZone][2-5 SF(4)][6 Core][7-10 SF(4)][11 DumpOut][12 Grand]  (p1)
+      //        [0 Grand][1 DumpOut][2-5 SF(4)][6 Core][7-10 SF(4)][11-12 CmdZone]   (p2)
       if (isSummon) {
         const sId = isP1Summon ? "p1" : "p2";
-        const cmdStartCol = isP1Summon ? 0 : 9;
+        const cmdStartCol = isP1Summon ? 0 : 11;
+        const dumpOutCol  = isP1Summon ? 11 : 1;
         if (col === cmdStartCol) {
           drawCmdZoneInBoardCell(cx, cy, cW * 2, cH, sId); continue;
         }
         if (col === cmdStartCol + 1) continue;
-        if (col === 5) {
+        if (col === 6) {
           drawCoreInBoardCell(cx, cy, cW, cH, sId); continue;
         }
-        // col 2-4 (p1) / 6-8 (p2): Tact Summon Field
-        // col 6-9 (p1) / 1-4 (p2): Unit Summon Field
-        // col 10 (p1) / 0 (p2): Grand Zone → 通常描画で下のスタイル適用
+        if (col === dumpOutCol) {
+          drawDumpOutInBoardCell(cx, cy, cW, cH, sId); continue;
+        }
+        // col 2-5 / 7-10: Summon Field → falls through to regular cell rendering
+        // col 12 (p1) / 0 (p2): Grand Zone → falls through
       }
 
       // 通常セル背景色 (p1=緑, p2=赤, Grand=金)
@@ -6755,13 +6792,13 @@ function drawBoard() {
       ctx.strokeStyle = isP1Row ? "rgba(50,190,110,0.40)" : "rgba(220,70,60,0.40)";
       const lx = x + lBound * cW;
       ctx.beginPath(); ctx.moveTo(lx, cy0); ctx.lineTo(lx, cy0 + cH); ctx.stroke();
-      // Tact|Standard 境界 (p1: col5, p2: col6)
-      const mBound = isP1Row ? 5 : 6;
+      // Tact|Standard 境界 (p1: col5, p2: col8)
+      const mBound = isP1Row ? 5 : 8;
       ctx.strokeStyle = isP1Row ? "rgba(40,160,90,0.25)" : "rgba(200,60,50,0.25)";
       const mx = x + mBound * cW;
       ctx.beginPath(); ctx.moveTo(mx, cy0); ctx.lineTo(mx, cy0 + cH); ctx.stroke();
-      // Standard|Grand 境界 (p1: col10, p2: col9) ← 金
-      const rBound = isP1Row ? 10 : 9;
+      // Standard|Grand 境界 (p1: col12, p2: col11) ← 金
+      const rBound = isP1Row ? 12 : 11;
       ctx.strokeStyle = "rgba(200,160,45,0.45)";
       const rx = x + rBound * cW;
       ctx.beginPath(); ctx.moveTo(rx, cy0); ctx.lineTo(rx, cy0 + cH); ctx.stroke();
@@ -8128,14 +8165,16 @@ function drawFieldCardDetailOverlay() {
     nextY += 24;
   }
 
-  const costLine = [`コスト ${formatCost(card.cost)}`];
-  if (card.actCost) costLine.push(`アクト ${formatCost(card.actCost)}`);
   ctx.fillStyle = "rgba(160,190,240,0.6)";
   ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
   ctx.fillText("コスト", x + 212, nextY);
-  ctx.fillStyle = "#90b8e0";
-  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(costLine.join(" / "), x + 260, nextY, w - 276);
+  let costIconX = drawCostIcons(card.cost || {}, x + 260, nextY - 14, { size: 16, showNone: true });
+  if (card.actCost && Object.values(card.actCost).some((v) => v > 0)) {
+    ctx.fillStyle = "rgba(160,190,240,0.6)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("アクト", costIconX + 6, nextY);
+    drawCostIcons(card.actCost, costIconX + 52, nextY - 14, { size: 16 });
+  }
   nextY += 24;
 
   const keywords = keywordLabels(card).join(" / ");
@@ -8560,9 +8599,12 @@ function drawCardTooltip(card, mx, my) {
   }
   const tags = tagLabels(card);
   if (tags.length) lines.push({ text: `[${tags.join("] [")}]`, font: "600 11px 'Yu Gothic UI', sans-serif", color: "#80c0a0" });
-  const costStr = formatCost(card.cost);
-  if (costStr !== "無料" || card.type !== "struct") {
-    lines.push({ text: `コスト: ${costStr}`, font: "600 11px 'Yu Gothic UI', sans-serif", color: "rgba(160,180,220,0.8)" });
+  const hasCost = Object.values(card.cost || {}).some((v) => v > 0);
+  if (hasCost || card.type !== "struct") {
+    lines.push({ type: "cost", cost: card.cost || {}, label: "コスト" });
+  }
+  if (card.actCost && Object.values(card.actCost).some((v) => v > 0)) {
+    lines.push({ type: "cost", cost: card.actCost, label: "アクト" });
   }
   const kwLabels = keywordLabels(card);
   if (kwLabels.length) lines.push({ text: kwLabels.join(" / "), font: "600 11px 'Yu Gothic UI', sans-serif", color: "#70b0e0" });
@@ -8573,6 +8615,7 @@ function drawCardTooltip(card, mx, my) {
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
   let th = PAD;
   for (const l of lines) {
+    if (l.type === "cost") { th += LINE; continue; }
     ctx.font = l.font;
     if (l.wrap) {
       const words = l.text;
@@ -8608,6 +8651,14 @@ function drawCardTooltip(card, mx, my) {
   // draw lines
   let cy = ty + PAD + 4;
   for (const l of lines) {
+    if (l.type === "cost") {
+      ctx.fillStyle = "rgba(160,180,220,0.8)";
+      ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+      ctx.fillText(`${l.label}:`, tx + PAD, cy + 13, 46);
+      drawCostIcons(l.cost, tx + PAD + 48, cy - 1, { size: 14, showNone: true });
+      cy += LINE;
+      continue;
+    }
     ctx.font = l.font;
     ctx.fillStyle = l.color;
     if (l.wrap) {
