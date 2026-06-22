@@ -1,10 +1,10 @@
 {
   "id": "grove",
-  "name": "資源林",
+  "name": "小規模農場",
   "type": "ストラクト",
   "rarity": "通常",
   "world": "ニュートラル",
-  "tags": [],
+  "tags": ["産業"],
   "roles": [],
   "costs": {
     "play": {

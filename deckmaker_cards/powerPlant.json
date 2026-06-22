@@ -1,10 +1,10 @@
 {
   "id": "powerPlant",
-  "name": "発電所",
+  "name": "風力発電所",
   "type": "ストラクト",
   "rarity": "通常",
   "world": "ニュートラル",
-  "tags": [],
+  "tags": ["産業"],
   "roles": [],
   "costs": {
     "play": {

@@ -1,10 +1,10 @@
 {
   "id": "mine",
-  "name": "鉱山",
+  "name": "小規模鉱山",
   "type": "ストラクト",
   "rarity": "通常",
   "world": "ニュートラル",
-  "tags": [],
+  "tags": ["産業"],
   "roles": [],
   "costs": {
     "play": {

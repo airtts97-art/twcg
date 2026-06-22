@@ -1798,7 +1798,8 @@ const cardCatalog = {
     grove: {
       id: "grove",
       type: "struct",
-      name: "資源林",
+      name: "小規模農場",
+      tags: ["産業"],
       cost: { funds: 1 },
       text: "Structure Phase: 自然資源 +1",
       abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "nature", amount: 1 }],
@@ -1806,7 +1807,8 @@ const cardCatalog = {
     mine: {
       id: "mine",
       type: "struct",
-      name: "鉱山",
+      name: "小規模鉱山",
+      tags: ["産業"],
       cost: { funds: 1, people: 1 },
       text: "Structure Phase: 鉱石 +1",
       abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "ore", amount: 1 }],
@@ -1815,6 +1817,7 @@ const cardCatalog = {
       id: "refinery",
       type: "struct",
       name: "精製所",
+      tags: ["産業"],
       cost: { funds: 2, ore: 1 },
       text: "Structure Phase: 燃料 +2",
       abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "fuel", amount: 2 }],
@@ -1822,7 +1825,8 @@ const cardCatalog = {
     powerPlant: {
       id: "powerPlant",
       type: "struct",
-      name: "発電所",
+      name: "風力発電所",
+      tags: ["産業"],
       cost: { funds: 3, ore: 1 },
       text: "Structure Phase: 電気 +2",
       abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "electric", amount: 2 }],
