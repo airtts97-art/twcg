@@ -8377,7 +8377,18 @@ function drawZoneViewerOverlay() {
     const cy = startY + row * (CARD_H + GAP_Y);
     const absIdx = startIdx + i;
     const isSelSD = zone === "structDeck" && state.selected?.kind === "structDeck" && state.selected.index === absIdx;
-    drawCard(cx, cy, CARD_W, CARD_H, card, { small: true, selected: isSelSD });
+    const isViewerSD = zone === "structDeck" && playerId === viewerPlayerId();
+    const sdAffordable = isViewerSD && cardIsAffordable(player, card);
+    drawCard(cx, cy, CARD_W, CARD_H, card, { small: true, selected: isSelSD, affordable: sdAffordable });
+    if (isViewerSD && sdAffordable && !isSelSD) {
+      ctx.save();
+      ctx.shadowColor = "#ffd84a"; ctx.shadowBlur = 14;
+      roundRect(cx, cy, CARD_W, CARD_H, 6, null, "rgba(255,220,50,0.9)", 2.5);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    } else if (isViewerSD && !sdAffordable && !isSelSD) {
+      ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(cx, cy, CARD_W, CARD_H);
+    }
     addHit(cx, cy, CARD_W, CARD_H, () => {
       if (zone === "structDeck" && playerId === viewerPlayerId()) {
         if (!requireActivePlayerControl()) return;
