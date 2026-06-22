@@ -7017,21 +7017,52 @@ function drawHand() {
 }
 
 function drawTopHand() {
-  const opponent = state.players[opponentOf(viewerPlayerId())];
+  const oppId = opponentOf(viewerPlayerId());
+  const opponent = state.players[oppId];
   const { x, y, w, h } = layout.topHand;
-  const grd = ctx.createLinearGradient(x, y, x, y + h);
-  grd.addColorStop(0, "rgba(10,18,42,0.97)");
-  grd.addColorStop(1, "rgba(16,26,58,0.94)");
-  roundRect(x, y, w, h, 6, grd, "rgba(180,40,40,0.45)", 1);
+
+  // 背景
+  roundRect(x, y, w, h, 6, "rgba(34,6,6,0.88)", "rgba(180,40,40,0.45)", 1);
+
+  // 手札エリア (左 ~480px)
+  const handAreaW = 480;
   ctx.fillStyle = "rgba(220,140,140,0.55)";
   ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`HAND  ${opponent.hand.length}枚`, x + 12, y + 22);
-  const cardW = 28; const cardH = h - 8;
-  for (let i = 0; i < opponent.hand.length; i += 1) {
-    const cx2 = x + 90 + i * (cardW + 2);
-    if (cx2 + cardW > x + w - 4) break;
-    drawCardBack(cx2, y + 4, cardW, cardH);
+  ctx.fillText(`HAND  ${opponent.hand.length}枚`, x + 12, y + 16);
+  const cardW = 28, cardH = h - 10;
+  for (let i = 0; i < opponent.hand.length; i++) {
+    const cx2 = x + 80 + i * (cardW + 2);
+    if (cx2 + cardW > x + handAreaW - 4) break;
+    drawCardBack(cx2, y + 5, cardW, cardH);
   }
+
+  // 区切り線
+  ctx.save();
+  ctx.strokeStyle = "rgba(200,60,60,0.3)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x + handAreaW, y + 6); ctx.lineTo(x + handAreaW, y + h - 6); ctx.stroke();
+  ctx.restore();
+
+  // リソースエリア (右側)
+  const resX = x + handAreaW + 6;
+  const resW = w - handAreaW - 10;
+  const pillW = Math.floor((resW - (RESOURCE_KEYS.length - 1) * 3) / RESOURCE_KEYS.length);
+  const pillH = h - 10;
+  RESOURCE_KEYS.forEach((key, i) => {
+    const px = resX + i * (pillW + 3);
+    const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(60,20,20,0.6)", border: "rgba(160,60,60,0.5)", text: "#c09090", glow: "#804040" };
+    const amt = opponent.resources[key] || 0;
+    roundRect(px, y + 5, pillW, pillH, 3, colors.bg, colors.border, 0.8);
+    ctx.save(); ctx.shadowColor = colors.glow || "#804040"; ctx.shadowBlur = 2;
+    ctx.fillStyle = colors.text;
+    ctx.font = "600 8px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(RESOURCE_LABELS[key], px + pillW / 2, y + 16);
+    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(String(amt), px + pillW / 2, y + h - 8);
+    ctx.shadowBlur = 0; ctx.restore();
+  });
+  ctx.textAlign = "left";
 }
 
 function drawLPDisplay(playerId, x, y, w, h) {
