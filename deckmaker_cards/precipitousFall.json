@@ -1,0 +1,45 @@
+{
+  "id": "precipitousFall",
+  "name": "『墜落』",
+  "type": "タクト",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["厄災"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 5
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "自分・相手の除外されているユニットから一つ選び、自分の第一行に出す。",
+  "flavorText": "望むかどうかに関わらず、世界への墜落は突然起こりうる。",
+  "imageUrl": ""
+}

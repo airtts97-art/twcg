@@ -1,0 +1,45 @@
+{
+  "id": "turbulentRepatriation",
+  "name": "思想魔法 『濁流送還』",
+  "type": "タクト",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["送還主義", "魔法", "厄災"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 9
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "場のすべての世界が「ユニフォール」、「ニュートラル」でもないユニットを除外する。",
+  "flavorText": "ああ、もう還るしかないのだな。",
+  "imageUrl": ""
+}

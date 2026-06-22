@@ -691,6 +691,43 @@ const abilityEffects = {
     game.players[target.owner].exileZone.push(stripRuntime(target));
     log(game, `「${target.name}」を除外`);
   },
+  exileAllNonNeutralNonUnifall({ game }) {
+    const exiled = [];
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const unit = game.board[row][col];
+        if (!unit) continue;
+        const faction = unit.faction || "";
+        if (faction === "ニュートラル" || faction === "ユニフォール") continue;
+        game.board[row][col] = null;
+        game.players[unit.owner].exileZone.push(stripRuntime(unit));
+        exiled.push(unit.name);
+      }
+    }
+    if (exiled.length > 0) log(game, `除外：${exiled.join("、")}`);
+    cleanupAllDestroyed();
+  },
+  reviveFromExile({ game, playerId, card }) {
+    const eligible = [];
+    for (const [pid, player] of Object.entries(game.players)) {
+      for (const c of (player.exileZone || [])) {
+        if (c.type === "unit") eligible.push({ ...c, _exileOwner: pid });
+      }
+    }
+    if (eligible.length === 0) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 除外ゾーンにユニットがいない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "reviveFromExile",
+      playerId,
+      eligible,
+      cardName: card.name,
+    };
+    game.selected = { kind: "choice", choice: "reviveFromExile" };
+    game.message = "除外ゾーンから場に出すユニットを選んでください。";
+    return "pending";
+  },
   grantKeywordsToAllMagicMachines({ game, ability }) {
     for (const pid of ["p1", "p2"]) {
       for (const unit of unitsOwnedBy(pid)) {
@@ -1868,6 +1905,34 @@ cardCatalog.main.disruptionEngineer = {
   text: "いかに強力な魔法であってもその概念を適切に乱せばその脅威は別の場所にそれる。\nこのユニットに隣接する味方ユニットは[効果保護①]を得る。",
   keywords: [],
   abilities: [{ trigger: "onSummon", effect: "grantEffectProtectToAdjacent", value: 1 }],
+};
+
+cardCatalog.main.turbulentRepatriation = {
+  id: "turbulentRepatriation",
+  type: "tact",
+  name: "思想魔法 『濁流送還』",
+  faction: "ユニフォール",
+  tags: ["送還主義", "魔法", "厄災"],
+  cost: { magic: 9 },
+  actCost: {},
+  text: "場のすべての世界が「ユニフォール」、「ニュートラル」でもないユニットを除外する。",
+  flavor: "ああ、もう還るしかないのだな。",
+  keywords: [],
+  abilities: [{ trigger: "onPlay", effect: "exileAllNonNeutralNonUnifall" }],
+};
+
+cardCatalog.main.precipitousFall = {
+  id: "precipitousFall",
+  type: "tact",
+  name: "『墜落』",
+  faction: "ユニフォール",
+  tags: ["厄災"],
+  cost: { magic: 5 },
+  actCost: {},
+  text: "自分・相手の除外されているユニットから一つ選び、自分の第一行に出す。",
+  flavor: "望むかどうかに関わらず、世界への墜落は突然起こりうる。",
+  keywords: [],
+  abilities: [{ trigger: "onPlay", effect: "reviveFromExile" }],
 };
 
 let nextInstanceId = 1;
@@ -4721,6 +4786,61 @@ function resolveReviveFromDumpSkip() {
   log(state, `${state.players[pending.playerId].name}: 蘇生スキップ`);
   completeAbilitySource(state, qi);
   processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function resolveReviveFromExile(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "reviveFromExile") return false;
+  const card = pending.eligible[index];
+  if (!card) return false;
+  const exileOwner = card._exileOwner;
+  if (exileOwner) {
+    const ownerExile = state.players[exileOwner]?.exileZone || [];
+    const idx = ownerExile.findIndex((c) => c.instanceId === card.instanceId);
+    if (idx >= 0) ownerExile.splice(idx, 1);
+  }
+  const playerInfo = PLAYERS[pending.playerId];
+  const player = state.players[pending.playerId];
+  let placed = false;
+  for (let col = 0; col < COLS; col++) {
+    if (!state.board[playerInfo.summonRow][col]) {
+      const unit = {
+        ...cloneCard(card),
+        instanceId: nextInstanceId++,
+        owner: pending.playerId,
+        row: playerInfo.summonRow,
+        col,
+        rested: false,
+        attacksThisTurn: 0,
+        mobileMoveUsed: false,
+        counters: 0,
+      };
+      delete unit._exileOwner;
+      state.board[playerInfo.summonRow][col] = unit;
+      placed = true;
+      log(state, `${player.name}: 「${card.name}」を除外ゾーンから場に出す`);
+      triggerAbilities(state, pending.playerId, unit, "onSummon", { zone: "exile" });
+      break;
+    }
+  }
+  if (!placed) {
+    log(state, `${player.name}: 場が満員のため「${card.name}」を場に出せない`);
+    player.exileZone.push(card);
+  }
+  state.pendingChoice = null;
+  state.selected = null;
+  syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function resolveReviveFromExileSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "reviveFromExile") return false;
+  state.pendingChoice = null;
+  state.selected = null;
+  log(state, `${state.players[pending.playerId].name}: 除外ゾーンからの呼び出しをスキップ`);
   syncOnlineAction("resolveChoice", pending.playerId);
   return true;
 }
@@ -7708,6 +7828,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "revealPick") drawRevealPickPanel(pending);
   else if (pending.type === "payOrDamage") drawPayOrDamagePanel(pending);
   else if (pending.type === "reviveFromDump") drawReviveFromDumpPanel(pending);
+  else if (pending.type === "reviveFromExile") drawReviveFromExilePanel(pending);
   else if (pending.type === "chooseActivationResource") drawChooseActivationResourcePanel(pending);
   else if (pending.type === "chooseGainResource") drawChooseGainResourcePanel(pending);
   else if (pending.type === "lifeCounterPayment") drawLifeCounterPaymentPanel(pending);
@@ -7880,6 +8001,34 @@ function drawReviveFromDumpPanel(pending) {
   });
   if (isController) {
     drawButton(x + w - 120, y + h - 44, 100, 30, "スキップ", () => { resolveReviveFromDumpSkip(); render(); });
+  }
+}
+
+function drawReviveFromExilePanel(pending) {
+  const eligible = pending.eligible || [];
+  const cardW = 108, cardH = 150, gap = 16;
+  const cols = Math.min(eligible.length, 5);
+  const w = Math.max(480, cols * (cardW + gap) + gap + 60);
+  const h = 300;
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+  drawChoicePanelBase(x, y, w, h, "rgba(100,20,60,0.85)", "#ff4080");
+  ctx.fillStyle = "#ffc0d8";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("除外ゾーンから召喚", x + 24, y + 32);
+  ctx.fillStyle = "rgba(255,200,220,0.9)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("場に出すユニットを選んでください。（自分の第一行に出る）", x + 24, y + 54);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const startX = x + 30;
+  const cardsY = y + 70;
+  eligible.forEach((card, i) => {
+    const cx = startX + i * (cardW + gap);
+    drawCard(cx, cardsY, cardW, cardH, card, { selected: false });
+    if (isController) addHit(cx, cardsY, cardW, cardH, () => { resolveReviveFromExile(i); render(); });
+  });
+  if (isController) {
+    drawButton(x + w - 120, y + h - 44, 100, 30, "スキップ", () => { resolveReviveFromExileSkip(); render(); });
   }
 }
 
