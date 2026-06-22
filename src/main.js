@@ -6657,7 +6657,14 @@ function drawResourceInBoardCell(cx, cy, cW2, cH, playerId) {
     const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(30,40,70,0.6)", border: "rgba(80,100,180,0.5)", text: "#a0b0d0", glow: "#6080c0" };
     const amt = player.resources?.[key] || 0;
     roundRect(px, py, pillW, pillH, 2, colors.bg, colors.border, 0.8);
-    drawResourceAmount(key, amt, px + Math.max(1, Math.floor((pillW - Math.min(20, pillH - 3)) / 2)), py + 2, Math.min(20, pillH - 3));
+    const iconSize = Math.min(pillH - 2, 22);
+    drawResourceIcon(key, px + 3, py + Math.max(0, (pillH - iconSize) / 2), iconSize, {});
+    const numSize = Math.max(11, Math.floor(pillH * 0.60));
+    ctx.fillStyle = "#f4f7ff";
+    ctx.font = `800 ${numSize}px 'Yu Gothic UI', sans-serif`;
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText(String(amt), px + pillW - 4, py + pillH / 2);
+    ctx.textBaseline = "alphabetic";
   });
   ctx.textAlign = "left";
 }
@@ -6720,13 +6727,8 @@ function drawBoard() {
       //        [0 Grand][1 Out][2 Dump][3-5 SF(3)][6 Core][7-9 SF(3)][10-12 CmdZone(3)]   (p2)
       if (isSummon) {
         const sId = isP1Summon ? "p1" : "p2";
-        const cmdStartCol = isP1Summon ? 0 : 10;
         const dumpCol = isP1Summon ? 10 : 2;
         const outCol  = isP1Summon ? 11 : 1;
-        if (col === cmdStartCol) {
-          drawCmdZoneInBoardCell(cx, cy, cW * 3, cH, sId); continue;
-        }
-        if (col === cmdStartCol + 1 || col === cmdStartCol + 2) continue;
         if (col === 6) {
           drawCoreInBoardCell(cx, cy, cW, cH, sId); continue;
         }
@@ -6924,10 +6926,9 @@ function drawStructZoneRow(playerId, box, mirrored) {
   roundRect(sdX + 2, y + 2, cW - 4, h - 4, 4, "rgba(20,40,80,0.85)", "rgba(60,100,200,0.5)", 1);
   ctx.fillStyle = "#90acd8"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("STRUCT", sdX + cW / 2, y + 13);
-  ctx.fillText("DECK", sdX + cW / 2, y + 22);
-  ctx.fillStyle = "#c0d8ff"; ctx.font = "700 16px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(sdCount, sdX + cW / 2, y + h - 6);
+  ctx.fillText("STRUCT DECK", sdX + cW / 2, y + 13);
+  ctx.fillStyle = "#c0d8ff"; ctx.font = `700 ${Math.round(h * 0.42)}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText(sdCount, sdX + cW / 2, y + h - 4);
   ctx.textAlign = "left";
   // struct deckをクリックして選択
   if (isViewer) {
@@ -6976,10 +6977,9 @@ function drawStructZoneRow(playerId, box, mirrored) {
   roundRect(mdX + 2, y + 2, cW - 4, h - 4, 4, "rgba(14,30,60,0.85)", "rgba(40,80,180,0.4)", 1);
   ctx.fillStyle = "#7090c0"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("MAIN", mdX + cW / 2, y + 13);
-  ctx.fillText("DECK", mdX + cW / 2, y + 22);
-  ctx.fillStyle = "#b0c8f0"; ctx.font = "700 16px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(player.mainDeck.length, mdX + cW / 2, y + h - 6);
+  ctx.fillText("MAIN DECK", mdX + cW / 2, y + 13);
+  ctx.fillStyle = "#b0c8f0"; ctx.font = `700 ${Math.round(h * 0.42)}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText(player.mainDeck.length, mdX + cW / 2, y + h - 4);
   ctx.textAlign = "left";
 }
 
