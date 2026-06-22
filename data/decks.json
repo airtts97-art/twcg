@@ -1,7 +1,7 @@
 {
   "emailplayer@example.com": [
     {
-      "id": "deck-mqn2sm2x",
+      "id": "deck-mqoic7qz",
       "name": "対戦用テストデッキ",
       "deck": {
         "core": "frontierCore",
@@ -26,11 +26,11 @@
           "magicWell"
         ]
       },
-      "updatedAt": "2026-06-21T00:56:07.113Z"
+      "updatedAt": "2026-06-22T00:59:02.075Z"
     },
     {
-      "id": "deck-mqn2sm2v",
-      "name": "テストデッキ-1782003367111",
+      "id": "deck-mqoic7qx",
+      "name": "テストデッキ-1782089942072",
       "deck": {
         "core": "frontierCore",
         "main": [
@@ -56,10 +56,10 @@
           "magicWell"
         ]
       },
-      "updatedAt": "2026-06-21T00:56:07.111Z"
+      "updatedAt": "2026-06-22T00:59:02.073Z"
     },
     {
-      "id": "deckmaker-mqn2slni-1",
+      "id": "deckmaker-mqoic7f3-1",
       "name": "Deckmaker All Data Sample",
       "deck": {
         "core": "frontierCore",
@@ -87,10 +87,10 @@
           "magicWell"
         ]
       },
-      "updatedAt": "2026-06-21T00:56:06.558Z"
+      "updatedAt": "2026-06-22T00:59:01.647Z"
     },
     {
-      "id": "deckmaker-mqn2sln7",
+      "id": "deckmaker-mqoic7f0",
       "name": "Deckmaker Sample",
       "deck": {
         "core": "frontierCore",
@@ -104,7 +104,7 @@
           "grove"
         ]
       },
-      "updatedAt": "2026-06-21T00:56:06.547Z"
+      "updatedAt": "2026-06-22T00:59:01.644Z"
     }
   ],
   "guestguestplayer": [
@@ -138,6 +138,86 @@
     }
   ],
   "google107943001969772816811": [
+    {
+      "id": "deck-mqnn3agi",
+      "name": "48枚デッキ",
+      "deck": {
+        "core": "frontierCore",
+        "main": [
+          "lightInfantry",
+          "smallFieldGunFuel",
+          "commonArmoredCar",
+          "lifeFairy",
+          "knowledgeFairy",
+          "fieldOrder",
+          "hiddenSupply",
+          "grandMandate",
+          "mysticCapture",
+          "mysticCapture",
+          "mysticCapture",
+          "mysticCapture",
+          "fieldOrder",
+          "fieldOrder",
+          "fieldOrder",
+          "knowledgeFairy",
+          "knowledgeFairy",
+          "knowledgeFairy",
+          "lifeFairy",
+          "lifeFairy",
+          "lifeFairy",
+          "commonArmoredCar",
+          "commonArmoredCar",
+          "commonArmoredCar",
+          "smallFieldGunFuel",
+          "smallFieldGunFuel",
+          "smallFieldGunFuel",
+          "lightInfantry",
+          "lightInfantry",
+          "lightInfantry",
+          "hiddenSupply",
+          "grandMandate",
+          "card_1753662603276",
+          "card_1753662603276",
+          "card_1753662603276",
+          "card_1753662603276",
+          "grandMandate",
+          "grandMandate",
+          "hiddenSupply",
+          "hiddenSupply",
+          "peoplesReconForce",
+          "peoplesReconForce",
+          "peoplesReconForce",
+          "peoplesReconForce",
+          "card_1753680748888",
+          "card_1753680748888",
+          "card_1753680748888",
+          "card_1753680748888"
+        ],
+        "struct": [
+          "town",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell",
+          "town",
+          "town",
+          "town",
+          "grove",
+          "mine",
+          "refinery",
+          "powerPlant",
+          "magicWell",
+          "powerPlant",
+          "card_1753683148866",
+          "card_1753683148866",
+          "card_1753683148866",
+          "mine",
+          "mine"
+        ]
+      },
+      "updatedAt": "2026-06-21T10:24:17.586Z"
+    },
     {
       "id": "deck-mqmb4i3w",
       "name": "44枚デッキ",
@@ -391,6 +471,80 @@
         ]
       },
       "updatedAt": "2026-06-20T16:18:53.088Z"
+    }
+  ],
+  "google108838653366835930197": [
+    {
+      "id": "deckmaker-mqni7dr1",
+      "name": "人自アンデッドアグロ",
+      "deck": {
+        "core": "card_1753611174564",
+        "main": [
+          "card_1753611194289",
+          "card_1753611194289",
+          "card_1753611194289",
+          "card_1753611194289",
+          "card_1753661715953",
+          "card_1753661715953",
+          "card_1753661715953",
+          "card_1753661715953",
+          "card_1753658925940",
+          "card_1753658925940",
+          "card_1753658925940",
+          "card_1753658925940",
+          "card_1753662124367",
+          "card_1753662124367",
+          "card_1753659109009",
+          "card_1753659109009",
+          "card_1753661204745",
+          "card_1753680748888",
+          "card_1753680748888",
+          "card_1753680748888",
+          "card_1753680748888",
+          "card_1753664991902",
+          "card_1753664991902",
+          "card_1753664991902",
+          "card_1753664991902",
+          "card_1753659109009",
+          "card_1753626823696",
+          "card_1753659109009",
+          "card_1753716897980",
+          "card_1753775442028",
+          "card_1753775442028",
+          "card_1753775442028",
+          "card_1753775442028",
+          "card_1753606733144",
+          "card_1753606733144",
+          "card_1753606733144",
+          "card_1753606733144",
+          "card_1753660887452",
+          "card_1753660887452",
+          "card_1753661204745"
+        ],
+        "struct": [
+          "card_1753681080997",
+          "card_1753681080997",
+          "card_1753681080997",
+          "card_1753681080997",
+          "card_1753661462969",
+          "card_1753661462969",
+          "card_1753682865389",
+          "card_1753682865389",
+          "card_1753682865389",
+          "card_1753683148866",
+          "card_1753683148866",
+          "card_1753682701261",
+          "card_1753682701261",
+          "card_1753682701261",
+          "card_1753682701261",
+          "card_1753683067735",
+          "card_1753664241159",
+          "card_1753683067735",
+          "card_1753683637865",
+          "card_1753683637865"
+        ]
+      },
+      "updatedAt": "2026-06-21T08:07:33.698Z"
     }
   ]
 }

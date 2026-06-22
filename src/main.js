@@ -5,7 +5,7 @@ const ctx = canvas.getContext("2d");
 const W = canvas.width;
 const H = canvas.height;
 const ROWS = 4;
-const COLS = 5;
+const COLS = 7;
 const CARD_ASPECT = 63 / 88; // portrait width:height ratio (standard TCG card)
 const RESOURCE_KEYS = ["funds", "people", "nature", "ore", "fuel", "electric", "magic"];
 const CARD_TYPE_LABELS = {
@@ -199,17 +199,34 @@ const DECKMAKER_TYPE_LABELS = {
 // 全画面レイアウト: 1440×900 を隙間なく使用
 // ヘッダー: y=0〜60, 左右パネル: w=200, センター: w=1040
 // board cell: 208×140
+// フルスクリーンレイアウト: 7列構造
+// y=60  ヘッダー下
+// y=60  相手ストラクトゾーン (50px)
+// y=110 相手コマンドロー   (60px)
+// y=170 バトルボード       (472px = 4行×118px)
+// y=642 自コマンドロー     (60px)
+// y=702 自ストラクトゾーン  (50px)
+// y=752 手札               (108px)
+// y=860 リソースバー        (40px)
+// y=900
 const layout = {
-  board:        { x: 200, y: 138, w: 1040, h: 560 },  // cell:208×140
-  hand:         { x: 200, y: 750, w: 1040, h: 108 },
-  topHand:      { x: 200, y: 60,  w: 1040, h: 28  },
-  left:         { x: 0,   y: 60,  w: 200,  h: 840 },
-  right:        { x: 1240,y: 60,  w: 200,  h: 840 },
-  oppStruct:    { x: 200, y: 88,  w: 1040, h: 50  },
-  playerStruct: { x: 200, y: 698, w: 1040, h: 52  },
-  resourceBar:  { x: 200, y: 858, w: 1040, h: 42  },
+  board:        { x: 0, y: 170, w: 1440, h: 472 },
+  hand:         { x: 0, y: 752, w: 1440, h: 108 },
+  topHand:      { x: 0, y: 60,  w: 1440, h: 20  },
+  left:         { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
+  right:        { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
+  oppStruct:    { x: 0, y: 60,  w: 1440, h: 50  },
+  oppCmd:       { x: 0, y: 110, w: 1440, h: 60  },
+  playerCmd:    { x: 0, y: 642, w: 1440, h: 60  },
+  playerStruct: { x: 0, y: 702, w: 1440, h: 50  },
+  resourceBar:  { x: 0, y: 860, w: 1440, h: 40  },
 };
 layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
+// ゾーン列定義 (左0〜右6)
+// Col 0-1: Wild Zone / Command Zone, Col 2-4: Standard, Col 5-6: Grand Zone / Dump
+const ZONE_WILD_COLS  = [0, 1];  // Wild Zone
+const ZONE_STD_COLS   = [2, 3, 4]; // Standard / Core
+const ZONE_GRAND_COLS = [5, 6];  // Grand Zone
 
 // --- Animation system ---
 const animations = [];
@@ -2514,6 +2531,12 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1753664097092") {
     abilities.push({ trigger: "onSummon", effect: "grantMobileIfAnyTag", tag: "\u5c4d\u4eba" });
+  }
+
+  // \u7b2c\u4e8c\u5893\u6a19: \u6bce\u30bf\u30fc\u30f3\u6700\u521d\u306e\u30c9\u30ed\u30fc\u6642\u306b\u30b3\u30b9\u30c81\u4ee5\u4e0b\u306e\u30e6\u30cb\u30c3\u30c8\u3092\u8607\u751f\u3057\u5c4d\u4eba\u30bf\u30b0\u4ed8\u4e0e
+  if (card.id === "card_1753681080997") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onFirstDraw", effect: "reviveUnitFromDump", maxCost: 1, grantTag: "\u5c4d\u4eba" });
   }
 
   if (card.id === "card_1753775442028") {
@@ -5667,13 +5690,14 @@ function render() {
   drawHeader();
   const viewer = viewerPlayerId();
   const opp = opponentOf(viewer);
-  drawTopHand();
-  drawStructBar(opp, layout.oppStruct.x, layout.oppStruct.y, layout.oppStruct.w, layout.oppStruct.h);
+  // 相手エリア (上から: struct zone → command row → board)
+  drawStructZoneRow(opp,    layout.oppStruct, true);
+  drawCommandRow(opp,       layout.oppCmd,    true);
   drawBoard();
   drawBoardActionButtons();
-  drawStructBar(viewer, layout.playerStruct.x, layout.playerStruct.y, layout.playerStruct.w, layout.playerStruct.h);
-  drawSidePanel(viewer, layout.left);
-  drawSidePanel(opp, layout.right);
+  // 自分エリア (boardから: command row → struct zone → hand)
+  drawCommandRow(viewer,    layout.playerCmd,    false);
+  drawStructZoneRow(viewer, layout.playerStruct, false);
   drawHand();
   drawResourceBar();
   drawActionPanel();
@@ -6395,79 +6419,273 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
 
 function drawBoard() {
   const { x, y, w, h } = layout.board;
-  // Board surround
-  ctx.save();
-  ctx.shadowColor = "rgba(20, 60, 180, 0.5)";
-  ctx.shadowBlur = 24;
-  roundRect(x - 10, y - 10, w + 20, h + 20, 10, "rgba(6,10,22,0.95)", "rgba(30,60,160,0.6)", 1.5);
-  ctx.shadowBlur = 0;
-  ctx.restore();
+  const cW = layout.cell.w;
+  const cH = layout.cell.h;
+  const viewer = viewerPlayerId();
 
-  // Center divider with phase label
+  // Center divider (間の境界線)
   const midY = y + h / 2;
-  const divGrd = ctx.createLinearGradient(x, 0, x + w, 0);
-  divGrd.addColorStop(0, "transparent");
-  divGrd.addColorStop(0.15, "rgba(180,180,255,0.30)");
-  divGrd.addColorStop(0.85, "rgba(180,180,255,0.30)");
-  divGrd.addColorStop(1, "transparent");
-  ctx.fillStyle = divGrd;
-  ctx.fillRect(x, midY - 1, w, 2);
-  // Phase badge at center
+  ctx.strokeStyle = "rgba(180,180,255,0.22)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, midY); ctx.lineTo(x + w, midY); ctx.stroke();
+  // Phase badge
   const phBadge = state.phase === "structure" ? "STRUCT" : state.phase === "main" ? "MAIN" : "END";
-  const badgeW = 80;
-  roundRect(x + w / 2 - badgeW / 2, midY - 11, badgeW, 22, 5, "rgba(6,10,28,0.92)", "rgba(60,80,180,0.5)", 1);
+  const badgeW = 72;
+  roundRect(x + w / 2 - badgeW / 2, midY - 10, badgeW, 20, 5, "rgba(6,10,28,0.92)", "rgba(60,80,180,0.5)", 1);
   ctx.fillStyle = "rgba(140,160,220,0.8)";
-  ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+  ctx.font = "700 9px 'Yu Gothic UI', sans-serif";
   ctx.textAlign = "center";
   ctx.fillText(phBadge, x + w / 2, midY + 3);
   ctx.textAlign = "left";
 
   for (let visualRow = 0; visualRow < ROWS; visualRow += 1) {
     const row = visualRowToBoardRow(visualRow);
+    // p1 占有は board rows 2-3 (p1.summonRow=3, p2.summonRow=0)
+    const isP1Row = row >= ROWS / 2;
+    const isViewerRow = isP1Row ? viewer === "p1" : viewer === "p2";
+
     for (let col = 0; col < COLS; col += 1) {
-      const cx = x + col * layout.cell.w;
-      const cy = y + visualRow * layout.cell.h;
+      const cx = x + col * cW;
+      const cy = y + visualRow * cH;
+
+      // ゾーン判定
+      const isWild  = (isP1Row && col <= 1) || (!isP1Row && col >= 5);
+      const isGrand = (isP1Row && col >= 5) || (!isP1Row && col <= 1);
       const isP1Summon = row === PLAYERS.p1.summonRow;
       const isP2Summon = row === PLAYERS.p2.summonRow;
-      const isSummon = isP1Summon || isP2Summon;
 
-      // Cell base
-      const cellFill = isSummon
-        ? isP1Summon ? "rgba(14,40,100,0.55)" : "rgba(100,20,20,0.45)"
-        : "rgba(8,14,30,0.7)";
+      // セル背景色
+      let cellFill;
+      if (isWild)       cellFill = isP1Row ? "rgba(60,20,90,0.45)"  : "rgba(90,20,60,0.45)";
+      else if (isGrand) cellFill = isP1Row ? "rgba(10,50,90,0.45)"  : "rgba(10,50,90,0.45)";
+      else if (isP1Summon) cellFill = "rgba(14,40,100,0.55)";
+      else if (isP2Summon) cellFill = "rgba(100,20,20,0.45)";
+      else              cellFill = "rgba(8,14,30,0.70)";
       ctx.fillStyle = cellFill;
-      ctx.fillRect(cx + 1, cy + 1, layout.cell.w - 2, layout.cell.h - 2);
+      ctx.fillRect(cx + 1, cy + 1, cW - 2, cH - 2);
 
-      // Cell border
+      // セルボーダー
       ctx.save();
-      if (isSummon) {
-        ctx.shadowColor = isP1Summon ? "#3080ff" : "#ff4030";
-        ctx.shadowBlur = 8;
-      }
-      ctx.strokeStyle = isP1Summon ? "rgba(50,120,255,0.7)"
-        : isP2Summon ? "rgba(255,60,40,0.6)"
-        : "rgba(30,55,130,0.4)";
-      ctx.lineWidth = isSummon ? 1.5 : 1;
-      ctx.strokeRect(cx + 4, cy + 4, layout.cell.w - 8, layout.cell.h - 8);
-      ctx.shadowBlur = 0;
+      ctx.strokeStyle = isWild  ? "rgba(160,80,200,0.4)"
+        : isGrand ? "rgba(40,130,200,0.4)"
+        : isP1Summon ? "rgba(50,120,255,0.6)"
+        : isP2Summon ? "rgba(255,60,40,0.5)"
+        : "rgba(30,55,130,0.3)";
+      ctx.lineWidth = (isP1Summon || isP2Summon) ? 1.5 : 1;
+      ctx.strokeRect(cx + 2, cy + 2, cW - 4, cH - 4);
       ctx.restore();
 
-      // Zone label (only for empty cells)
+      // ゾーンラベル (空きセルのみ)
       const unit = state.board[row][col];
       if (!unit) {
-        ctx.fillStyle = isSummon
-          ? isP1Summon ? "rgba(80,140,255,0.35)" : "rgba(255,90,70,0.28)"
-          : "rgba(80,100,180,0.18)";
-        ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(isSummon ? "SUMMON" : "UNIT", cx + layout.cell.w / 2, cy + layout.cell.h / 2 + 4);
-        ctx.textAlign = "left";
+        const label = isWild ? "Wild Zone" : isGrand ? "Grand Zone"
+          : isP1Summon ? "Summon Field" : isP2Summon ? "Summon Field" : "";
+        if (label) {
+          ctx.fillStyle = isWild ? "rgba(180,100,220,0.28)" : isGrand ? "rgba(80,160,220,0.28)" : "rgba(80,130,255,0.22)";
+          ctx.font = "500 10px 'Yu Gothic UI', sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(label, cx + cW / 2, cy + cH / 2 + 4);
+          ctx.textAlign = "left";
+        }
       }
 
-      addHit(cx, cy, layout.cell.w, layout.cell.h, () => handleCellClick(row, col));
-      if (unit) drawBoardCard(cx, cy, layout.cell.w, layout.cell.h, unit);
+      addHit(cx, cy, cW, cH, () => handleCellClick(row, col));
+      if (unit) drawBoardCard(cx, cy, cW, cH, unit);
     }
+
+    // Wild Zone と Standard の境界斜線
+    // player rows: col1→col2 boundary; opp rows: col4→col5 boundary
+    const diagColLeft  = isP1Row ? 2 : 5;  // standard/grand境界
+    const diagColRight = isP1Row ? 5 : 2;  // wild/standard境界
+    ctx.save();
+    ctx.strokeStyle = isP1Row ? "rgba(160,80,220,0.5)" : "rgba(80,160,220,0.5)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    // 左境界 (Wild|Standard または Grand|Standard)
+    const lx = x + (isP1Row ? 2 : 5) * cW;
+    ctx.beginPath(); ctx.moveTo(lx, cy); ctx.lineTo(lx, cy + cH); ctx.stroke();
+    // 右境界 (Standard|Grand または Standard|Wild)
+    const rx = x + (isP1Row ? 5 : 2) * cW;
+    ctx.beginPath(); ctx.moveTo(rx, cy); ctx.lineTo(rx, cy + cH); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
   }
+}
+
+// コマンドローを描画 (Core Card, Summon Field, Deck/Dump)
+function drawCommandRow(playerId, box, mirrored) {
+  const player = state.players[playerId];
+  const isP1 = playerId === "p1";
+  const cW = layout.cell.w;
+  const { x, y, w, h } = box;
+
+  // 背景
+  const bg = isP1 ? "rgba(6,12,34,0.92)" : "rgba(34,6,6,0.88)";
+  const border = isP1 ? "rgba(40,90,220,0.5)" : "rgba(220,40,40,0.5)";
+  ctx.fillStyle = bg;
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = border; ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, h);
+
+  // 列位置: mirrored=true のとき左右反転 (相手)
+  const deckCol  = mirrored ? 0 : 6;
+  const cmdCol   = mirrored ? 6 : 0;
+  const coreCol  = 3;
+  const sfL1 = mirrored ? 4 : 1;
+  const sfL2 = mirrored ? 5 : 2;
+  const sfR1 = mirrored ? 1 : 4;
+  const sfR2 = mirrored ? 2 : 5;
+
+  // Core Card セル (col 3)
+  const coreX = x + coreCol * cW;
+  const hp = player.core.hp;
+  const maxHp = player.core.maxHp || 20;
+  const ratio = Math.max(0, hp / maxHp);
+  const hpColor = ratio > 0.5 ? (isP1 ? "#4090ff" : "#ff5040") : ratio > 0.25 ? "#e0a020" : "#ff2020";
+  ctx.save();
+  ctx.shadowColor = hpColor; ctx.shadowBlur = 12;
+  roundRect(coreX + 2, y + 2, cW - 4, h - 4, 6, isP1 ? "rgba(10,25,70,0.95)" : "rgba(70,12,12,0.95)", hpColor, 1.5);
+  ctx.shadowBlur = 0; ctx.restore();
+  ctx.fillStyle = "rgba(200,215,255,0.55)";
+  ctx.font = "600 9px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("CORE CARD", coreX + cW / 2, y + 13);
+  ctx.fillStyle = hpColor;
+  ctx.font = `800 26px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText(`${hp}`, coreX + cW / 2, y + h - 10);
+  ctx.fillStyle = "rgba(160,180,230,0.5)";
+  ctx.font = "500 8px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(player.name, coreX + cW / 2, y + 24);
+  ctx.textAlign = "left";
+  // HP bar
+  const barY = y + h - 5; const barW = cW - 16;
+  ctx.fillStyle = "rgba(20,20,40,0.7)"; ctx.fillRect(coreX + 8, barY, barW, 4);
+  ctx.fillStyle = hpColor; ctx.fillRect(coreX + 8, barY, barW * ratio, 4);
+
+  // Command Zone セル (col 0 or 6)
+  const cmdX = x + cmdCol * cW;
+  const wildCount = (player.wildZone || []).length;
+  const grandCard = (player.grandZone || [])[0];
+  roundRect(cmdX + 2, y + 2, cW - 4, h - 4, 4, "rgba(60,20,90,0.6)", "rgba(160,80,200,0.4)", 1);
+  ctx.fillStyle = "rgba(180,100,220,0.55)";
+  ctx.font = "600 8px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("COMMAND", cmdX + cW / 2, y + 13);
+  ctx.fillStyle = "rgba(220,160,255,0.65)";
+  ctx.font = "500 9px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`Wild ${wildCount}`, cmdX + cW / 2, y + 28);
+  ctx.fillStyle = "rgba(180,210,255,0.5)";
+  ctx.fillText(grandCard ? grandCard.name.slice(0, 8) : `Grand ${(player.grandZone || []).length}`, cmdX + cW / 2, y + 42);
+  ctx.textAlign = "left";
+
+  // Deck / Dump セル (col 6 or 0)
+  const dkX = x + deckCol * cW;
+  roundRect(dkX + 2, y + 2, (cW - 4) / 2 - 1, h - 4, 4, "rgba(10,20,54,0.85)", "rgba(50,90,200,0.5)", 1);
+  ctx.fillStyle = "#7098c8"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("DECK", dkX + (cW / 4), y + 13);
+  ctx.fillStyle = "#c0d8ff"; ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(player.mainDeck.length, dkX + (cW / 4), y + h - 8);
+  const gyX = dkX + cW / 2;
+  roundRect(gyX + 1, y + 2, (cW - 4) / 2 - 1, h - 4, 4, "rgba(14,36,14,0.85)", "rgba(40,130,60,0.5)", 1);
+  ctx.fillStyle = "#70b880"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("GY", gyX + cW / 4, y + 13);
+  ctx.fillStyle = "#c0e8d0"; ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(player.dump.length, gyX + cW / 4, y + h - 8);
+  ctx.textAlign = "left";
+  addHit(gyX + 1, y + 2, (cW - 4) / 2, h - 4, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
+
+  // Summon Field ラベル (cols 1-2 and 4-5)
+  for (const sc of [sfL1, sfL2, sfR1, sfR2]) {
+    const sx = x + sc * cW;
+    ctx.strokeStyle = "rgba(80,130,200,0.2)"; ctx.lineWidth = 1;
+    ctx.strokeRect(sx + 2, y + 2, cW - 4, h - 4);
+    ctx.fillStyle = "rgba(80,130,200,0.18)";
+    ctx.font = "500 9px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Summon Field", sx + cW / 2, y + h / 2 + 3);
+    ctx.textAlign = "left";
+  }
+}
+
+// ストラクトゾーン行を描画 (Structure Deck / Field Structs / GY)
+function drawStructZoneRow(playerId, box, mirrored) {
+  const player = state.players[playerId];
+  const isP1 = playerId === "p1";
+  const cW = layout.cell.w;
+  const { x, y, w, h } = box;
+  const isViewer = playerId === viewerPlayerId();
+
+  const bg = isP1 ? "rgba(6,12,34,0.90)" : "rgba(34,6,6,0.85)";
+  ctx.fillStyle = bg;
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = isP1 ? "rgba(40,80,180,0.4)" : "rgba(180,40,40,0.35)"; ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, h);
+
+  // Structure Deck インジケーター
+  const sdCol = mirrored ? 6 : 0;
+  const sdX = x + sdCol * cW;
+  const sdCount = player.structDeck.length;
+  roundRect(sdX + 2, y + 2, cW - 4, h - 4, 4, "rgba(20,40,80,0.85)", "rgba(60,100,200,0.5)", 1);
+  ctx.fillStyle = "#90acd8"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("STRUCT", sdX + cW / 2, y + 13);
+  ctx.fillText("DECK", sdX + cW / 2, y + 22);
+  ctx.fillStyle = "#c0d8ff"; ctx.font = "700 16px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(sdCount, sdX + cW / 2, y + h - 6);
+  ctx.textAlign = "left";
+  // struct deckをクリックして選択
+  if (isViewer) {
+    addHit(sdX + 2, y + 2, cW - 4, h - 4, () => {
+      if (!requireActivePlayerControl()) return;
+      if (player.structDeck.length === 0) return;
+      // struct deck viewer を開く
+      zoneViewerState = { playerId, zone: "structDeck", scroll: 0 };
+    });
+  }
+
+  // フィールドストラクト表示 (cols 1-5)
+  const structAreaStartCol = mirrored ? 1 : 1;
+  const structAreaEndCol   = mirrored ? 5 : 5;
+  const structStartX = x + structAreaStartCol * cW;
+  const structEndX   = x + (structAreaEndCol + 1) * cW;
+  const cardH = h - 6;
+  const cardW = Math.round(cardH * CARD_ASPECT);
+  const gap = 4;
+  const stride = cardW + gap;
+
+  player.structs.forEach((card, i) => {
+    const cx2 = structStartX + i * stride;
+    if (cx2 + cardW > structEndX) return;
+    const selected = state.selected?.kind === "fieldStruct" && state.selected.playerId === playerId && state.selected.index === i;
+    drawCard(cx2, y + 3, cardW, cardH, card, { selected, small: true, artOnly: true });
+    addHit(cx2, y + 3, cardW, cardH, () => {
+      const detailOpen = consumeFieldDoubleClick(`fieldStruct:${playerId}:${i}`);
+      state.selected = { kind: "fieldStruct", playerId, index: i, detailOpen };
+      state.message = detailOpen ? `${card.name}: detail` : `${card.name} を選択`;
+    });
+  });
+
+  // Struct zone label (empty area)
+  if (player.structs.length === 0) {
+    ctx.fillStyle = "rgba(100,130,200,0.18)";
+    ctx.font = "500 9px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Structure Zone", structStartX + (structEndX - structStartX) / 2, y + h / 2 + 3);
+    ctx.textAlign = "left";
+  }
+
+  // Main Deck インジケーター
+  const mdCol = mirrored ? 0 : 6;
+  const mdX = x + mdCol * cW;
+  roundRect(mdX + 2, y + 2, cW - 4, h - 4, 4, "rgba(14,30,60,0.85)", "rgba(40,80,180,0.4)", 1);
+  ctx.fillStyle = "#7090c0"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("MAIN", mdX + cW / 2, y + 13);
+  ctx.fillText("DECK", mdX + cW / 2, y + 22);
+  ctx.fillStyle = "#b0c8f0"; ctx.font = "700 16px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(player.mainDeck.length, mdX + cW / 2, y + h - 6);
+  ctx.textAlign = "left";
 }
 
 function drawCore(playerId, x, y, w, h) {
@@ -7759,9 +7977,9 @@ function drawZoneViewerOverlay() {
   if (!zoneViewerState) return;
   const { playerId, zone, scroll } = zoneViewerState;
   const player = state.players[playerId];
-  const cards = zone === "dump" ? player.dump : player.exileZone;
-  const zoneLabel = zone === "dump" ? "墓地" : "除外";
-  const zoneColor = zone === "dump" ? "#4a6347" : "#5a3d6a";
+  const cards = zone === "dump" ? player.dump : zone === "structDeck" ? player.structDeck : player.exileZone;
+  const zoneLabel = zone === "dump" ? "墓地" : zone === "structDeck" ? "ストラクトデッキ" : "除外";
+  const zoneColor = zone === "dump" ? "#4a6347" : zone === "structDeck" ? "#405080" : "#5a3d6a";
 
   ctx.fillStyle = "rgba(0, 0, 10, 0.82)";
   ctx.fillRect(0, 0, W, H);
@@ -7806,8 +8024,18 @@ function drawZoneViewerOverlay() {
     const row = Math.floor(i / COLS_V);
     const cx = ox + 24 + col * (CARD_W + GAP_X);
     const cy = startY + row * (CARD_H + GAP_Y);
-    drawCard(cx, cy, CARD_W, CARD_H, card, { small: true });
-    addHit(cx, cy, CARD_W, CARD_H, () => {});
+    const absIdx = startIdx + i;
+    const isSelSD = zone === "structDeck" && state.selected?.kind === "structDeck" && state.selected.index === absIdx;
+    drawCard(cx, cy, CARD_W, CARD_H, card, { small: true, selected: isSelSD });
+    addHit(cx, cy, CARD_W, CARD_H, () => {
+      if (zone === "structDeck" && playerId === viewerPlayerId()) {
+        if (!requireActivePlayerControl()) return;
+        zoneViewerState = null;
+        state.selected = { kind: "structDeck", playerId, index: absIdx, confirmed: false };
+        state.message = `${card.name}: カード確認後に設置できます。`;
+        render();
+      }
+    });
     addCardHover(cx, cy, CARD_W, CARD_H, card);
   });
 
@@ -7819,13 +8047,13 @@ function drawZoneViewerOverlay() {
 }
 
 function drawLog() {
-  const x = layout.left.x;
-  const y = layout.left.y;
-  const w = layout.left.w;
-  roundRect(x, y, w, 58, 6, "rgba(4,8,20,0.80)", "rgba(30,60,140,0.30)", 1);
+  // ボード右下のフローティングログパネル
+  const lw = 380, lh = 54;
+  const lx = W - lw - 8, ly = layout.board.y + layout.board.h - lh - 2;
+  roundRect(lx, ly, lw, lh, 6, "rgba(4,8,20,0.80)", "rgba(30,60,140,0.30)", 1);
   ctx.fillStyle = "rgba(130,160,215,0.8)";
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-  state.log.slice(0, 3).forEach((line, i) => ctx.fillText(line, x + 8, y + 16 + i * 16, w - 12));
+  state.log.slice(0, 3).forEach((line, i) => ctx.fillText(line, lx + 8, ly + 16 + i * 16, lw - 12));
 }
 
 function drawCard(x, y, w, h, card, options = {}) {
