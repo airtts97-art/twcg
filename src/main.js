@@ -7141,10 +7141,16 @@ function drawSidePanel(playerId, box) {
       const by = deckCardsY + row * (cH + 3);
       if (by + cH > panelBottom) return;
       const selected = state.selected?.kind === "structDeck" && state.selected.playerId === playerId && state.selected.index === absI;
-      const canAfford = canPay(player, card.cost);
+      const canAfford = cardIsAffordable(player, card);
       drawCard(bx, by, cW, cH, card, { selected, small: true, artOnly: true, affordable: canAfford });
       if (!canAfford) {
-        ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(bx, by, cW, cH);
+        ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(bx, by, cW, cH);
+      } else if (!selected) {
+        ctx.save();
+        ctx.shadowColor = "#ffd84a"; ctx.shadowBlur = 10;
+        roundRect(bx, by, cW, cH, 5, null, "rgba(255,220,50,0.85)", 2);
+        ctx.shadowBlur = 0;
+        ctx.restore();
       }
       addHit(bx, by, cW, cH, () => {
         if (!requireActivePlayerControl()) return;
