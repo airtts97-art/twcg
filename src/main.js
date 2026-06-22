@@ -6676,7 +6676,7 @@ function drawResourceInBoardCell(cx, cy, cW2, cH, playerId) {
     ctx.fillStyle = "#f4f7ff";
     ctx.font = `800 ${numSize}px 'Yu Gothic UI', sans-serif`;
     ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    ctx.fillText(`×${amt}`, px + pillW - 4, py + pillH / 2);
+    ctx.fillText(String(amt), px + pillW - 4, py + pillH / 2);
     ctx.textBaseline = "alphabetic";
   });
   ctx.textAlign = "left";
