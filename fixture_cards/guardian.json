@@ -1,0 +1,20 @@
+{
+  "id": "guardian",
+  "name": "戦列守備兵",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 2, "human": 2 },
+    "act": { "gold": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 2,
+  "defense": 6,
+  "description": "両隣の味方を通常攻撃から守る。\nキーワード: 守護 / 警戒",
+  "flavorText": "",
+  "imageUrl": ""
+}

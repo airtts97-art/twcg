@@ -1,0 +1,20 @@
+{
+  "id": "militia",
+  "name": "民兵分隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1, "human": 1 },
+    "act": { "gold": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 2,
+  "defense": 4,
+  "description": "基礎歩兵。低コストで前線を作る。",
+  "flavorText": "",
+  "imageUrl": ""
+}

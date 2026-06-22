@@ -1,0 +1,20 @@
+{
+  "id": "legendaryAce",
+  "name": "伝説のエース",
+  "type": "ユニット",
+  "rarity": "伝説",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 3, "human": 1, "fuel": 1 },
+    "act": { "fuel": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 5,
+  "defense": 5,
+  "description": "デッキに1枚しか入れられない伝説ユニット。\nキーワード: 伝説 / 飛行4",
+  "flavorText": "",
+  "imageUrl": ""
+}

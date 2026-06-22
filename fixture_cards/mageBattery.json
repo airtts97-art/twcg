@@ -1,0 +1,20 @@
+{
+  "id": "mageBattery",
+  "name": "魔導砲兵",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": ["神秘", "砲兵", "魔法"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 2, "human": 1, "magic": 1 },
+    "act": { "magic": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 5,
+  "defense": 3,
+  "description": "高火力だが魔法資源を要求する。\nキーワード: 弧撃2 / 範囲1\n処理: 出撃時: 敵コアに1ダメージ",
+  "flavorText": "",
+  "imageUrl": ""
+}

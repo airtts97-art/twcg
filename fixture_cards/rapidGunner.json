@@ -1,0 +1,20 @@
+{
+  "id": "rapidGunner",
+  "name": "連撃射手",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 2, "human": 1 },
+    "act": { "gold": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 1,
+  "defense": 3,
+  "description": "2回攻撃してからレストする。\nキーワード: 連撃2",
+  "flavorText": "",
+  "imageUrl": ""
+}

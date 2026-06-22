@@ -1,0 +1,20 @@
+{
+  "id": "soulMage",
+  "name": "魂術師",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": ["神秘", "魔法"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1, "magic": 2 },
+    "act": { "magic": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 3,
+  "defense": 3,
+  "description": "不足した魔法資源を墓地除外で支払える。\nキーワード: 魂払い",
+  "flavorText": "",
+  "imageUrl": ""
+}

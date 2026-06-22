@@ -1,0 +1,20 @@
+{
+  "id": "chargedLancer",
+  "name": "帯電槍兵",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 2, "human": 1, "electric": 1 },
+    "act": { "gold": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 3,
+  "defense": 4,
+  "description": "帯電攻撃で装甲を無視する。\nキーワード: 帯電",
+  "flavorText": "",
+  "imageUrl": ""
+}

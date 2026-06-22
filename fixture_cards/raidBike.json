@@ -1,0 +1,20 @@
+{
+  "id": "raidBike",
+  "name": "奇襲バイク",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1, "human": 1, "fuel": 1 },
+    "act": { "fuel": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 2,
+  "defense": 2,
+  "description": "敵支配下でなければ第2行に出撃できる。\nキーワード: 強襲 / 機動",
+  "flavorText": "",
+  "imageUrl": ""
+}

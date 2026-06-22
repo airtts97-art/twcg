@@ -1,0 +1,20 @@
+{
+  "id": "bunker",
+  "name": "掩体壕",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 2, "mineral": 1 },
+    "act": { "gold": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 2,
+  "defense": 7,
+  "description": "移動できない防衛ユニット。\nキーワード: 移動不可 / 装甲2",
+  "flavorText": "",
+  "imageUrl": ""
+}

@@ -1,0 +1,20 @@
+{
+  "id": "bombDrone",
+  "name": "自爆ドローン",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1, "electric": 1 },
+    "act": { "electric": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 1,
+  "defense": 1,
+  "description": "破壊時、隣接ユニットにダメージ。\nキーワード: 自爆2 / 攻撃不可",
+  "flavorText": "",
+  "imageUrl": ""
+}

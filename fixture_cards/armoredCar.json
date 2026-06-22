@@ -1,0 +1,20 @@
+{
+  "id": "armoredCar",
+  "name": "装甲車",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 2, "human": 1, "fuel": 1 },
+    "act": { "fuel": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 4,
+  "defense": 5,
+  "description": "燃料で行動する軽装甲ユニット。\nキーワード: 装甲1 / 機動",
+  "flavorText": "",
+  "imageUrl": ""
+}

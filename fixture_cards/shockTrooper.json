@@ -1,0 +1,20 @@
+{
+  "id": "shockTrooper",
+  "name": "衝撃歩兵",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 2, "human": 1, "electric": 1 },
+    "act": { "gold": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 3,
+  "defense": 4,
+  "description": "衝撃で与ダメージ時に対象をレストする。\nキーワード: 衝撃 / 貫通1",
+  "flavorText": "",
+  "imageUrl": ""
+}

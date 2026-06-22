@@ -1,0 +1,20 @@
+{
+  "id": "reconPlane",
+  "name": "偵察機",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 2, "fuel": 1 },
+    "act": { "fuel": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "attack": 2,
+  "defense": 3,
+  "description": "航空を持つ偵察攻撃ユニット。\nキーワード: 飛行3",
+  "flavorText": "",
+  "imageUrl": ""
+}
