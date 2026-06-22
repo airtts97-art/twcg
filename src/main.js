@@ -1316,10 +1316,12 @@ function findFirstEmptyColInRow(game, row) {
 }
 
 function unitFieldColsForRow(row) {
-  if (row === PLAYERS.p2.summonRow) return [1, 2, 3, 4];
-  if (row === PLAYERS.p1.summonRow) return [6, 7, 8, 9];
-  if (row < ROWS / 2) return [1, 2, 3, 4, 5];
-  return [5, 6, 7, 8, 9];
+  // 召喚行: col0-2=資源/Grand等, col3-5=SF左, col6=Core, col7-9=SF右, col10-12=Dump/Out/Grand等
+  if (row === PLAYERS.p1.summonRow) return [3, 4, 5, 7, 8, 9];
+  if (row === PLAYERS.p2.summonRow) return [3, 4, 5, 7, 8, 9];
+  // 戦闘行: col0-2=資源パネル(p1)またはTact(p2), col3-9=Standard, col10-12=Tact(p1)または資源パネル(p2)
+  if (row < ROWS / 2) return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  return [3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 }
 
 function isUnitFieldCell(row, col) {
