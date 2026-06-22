@@ -6703,9 +6703,9 @@ function drawBoard() {
 
       const resStartCol   = isP1Row ? 0 : 10;
       const isResCell     = !isSummon && (col >= resStartCol && col <= resStartCol + 2);
-      const isTactZone    = !isSummon && ((isP1Row && col >= 3 && col <= 5) || (!isP1Row && col >= 7 && col <= 9));
+      const isTactZone    = !isSummon && ((isP1Row && col >= 10 && col <= 12) || (!isP1Row && col >= 0 && col <= 2));
       const isGrandZone   = false;
-      const isTactSummon  = isSummon && ((isP1Summon && col >= 3 && col <= 5) || (isP2Summon && col >= 7 && col <= 9));
+      const isTactSummon  = isSummon && ((isP1Summon && col >= 10 && col <= 12) || (isP2Summon && col >= 0 && col <= 2));
       const isGrandSummon = isSummon && ((isP1Summon && col === 12) || (isP2Summon && col === 0));
 
       // リソース表示セル (2列スパン、ユニット配置不可)
@@ -6793,15 +6793,13 @@ function drawBoard() {
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
       const cy0 = y + visualRow * cH;
-      // Resource|Tact 境界 (p1: col3, p2: Std|Tact col7)
-      const lBound = isP1Row ? 3 : 7;
+      // Resource|Standard 境界 (col3, 両プレイヤー共通)
       ctx.strokeStyle = isP1Row ? "rgba(50,190,110,0.40)" : "rgba(220,70,60,0.40)";
-      const lx = x + lBound * cW;
+      const lx = x + 3 * cW;
       ctx.beginPath(); ctx.moveTo(lx, cy0); ctx.lineTo(lx, cy0 + cH); ctx.stroke();
-      // Tact|Standard 境界 (p1: col6, p2: Tact|Resource col10)
-      const mBound = isP1Row ? 6 : 10;
-      ctx.strokeStyle = isP1Row ? "rgba(40,160,90,0.25)" : "rgba(200,60,50,0.25)";
-      const mx = x + mBound * cW;
+      // Standard|Tact 境界 (col10, 両プレイヤー共通)
+      ctx.strokeStyle = isP1Row ? "rgba(50,190,110,0.40)" : "rgba(220,70,60,0.40)";
+      const mx = x + 10 * cW;
       ctx.beginPath(); ctx.moveTo(mx, cy0); ctx.lineTo(mx, cy0 + cH); ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
