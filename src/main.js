@@ -1048,40 +1048,39 @@ const abilityEffects = {
     const def = TOKEN_DEFS[ability.tokenId];
     if (!def) return;
     const player = game.players[playerId];
-    for (let col = 0; col < COLS; col++) {
-      if (!game.board[player.summonRow][col]) {
-        const unit = {
-          id: ability.tokenId,
-          type: "unit",
-          name: def.name,
-          faction: "ニュートラル",
-          tags: [],
-          cost: {},
-          actCost: {},
-          text: def.text,
-          keywords: def.keywords.map((k) => ({ ...k })),
-          abilities: [],
-          atk: def.atk,
-          hp: def.hp,
-          instanceId: nextInstanceId++,
-          owner: playerId,
-          row: player.summonRow,
-          col,
-          maxHp: def.hp,
-          currentHp: def.hp,
-          rested: true,
-          attacksThisTurn: 0,
-          mobileMoveUsed: false,
-          counters: 0,
-          fromDump: false,
-          isToken: true,
-        };
-        game.board[player.summonRow][col] = unit;
-        log(game, `${player.name}: 「${def.name}」を生成`);
-        return;
-      }
+    const col = findFirstEmptyColInRow(game, player.summonRow);
+    if (col < 0) {
+      log(game, `${player.name}: 場が満員のため「${def.name}」を出せない`);
+      return;
     }
-    log(game, `${player.name}: 場が満員のため「${def.name}」を出せない`);
+    const unit = {
+      id: ability.tokenId,
+      type: "unit",
+      name: def.name,
+      faction: "ニュートラル",
+      tags: [],
+      cost: {},
+      actCost: {},
+      text: def.text,
+      keywords: def.keywords.map((k) => ({ ...k })),
+      abilities: [],
+      atk: def.atk,
+      hp: def.hp,
+      instanceId: nextInstanceId++,
+      owner: playerId,
+      row: player.summonRow,
+      col,
+      maxHp: def.hp,
+      currentHp: def.hp,
+      rested: true,
+      attacksThisTurn: 0,
+      mobileMoveUsed: false,
+      counters: 0,
+      fromDump: false,
+      isToken: true,
+    };
+    game.board[player.summonRow][col] = unit;
+    log(game, `${player.name}: 「${def.name}」を生成`);
   },
   gainActCostResources({ game, playerId, card, target }) {
     if (!target) return;
