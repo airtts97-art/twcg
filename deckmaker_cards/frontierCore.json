@@ -1,0 +1,60 @@
+{
+  "id": "frontierCore",
+  "name": "前線司令部",
+  "type": "コア",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 2,
+    "human": 1,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "initialResources": {
+    "gold": 3,
+    "human": 2,
+    "nature": 1,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "life": 22,
+  "defense": 22,
+  "initialHand": 4,
+  "handLimit": 7,
+  "drawPerTurn": 1,
+  "defeatCondition": "このカードが破壊される。",
+  "specialRequirements": [],
+  "attack": 0,
+  "description": "ターン開始時：金②・人①を得る。",
+  "flavorText": "戦線を支える標準司令部。どの戦略にも適応しやすい。",
+  "imageUrl": ""
+}

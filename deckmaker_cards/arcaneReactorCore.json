@@ -1,0 +1,60 @@
+{
+  "id": "arcaneReactorCore",
+  "name": "魔導炉心",
+  "type": "コア",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 1,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 1,
+    "magic": 1
+  },
+  "initialResources": {
+    "gold": 2,
+    "human": 1,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 1,
+    "magic": 1
+  },
+  "life": 18,
+  "defense": 18,
+  "initialHand": 3,
+  "handLimit": 6,
+  "drawPerTurn": 2,
+  "defeatCondition": "このカードが破壊される。",
+  "specialRequirements": ["魔法または電気コストを含むカードを2枚以上入れる"],
+  "attack": 0,
+  "description": "ターン開始時：金①・電①・魔①を得る。毎ターン2枚ドロー。\n[制限] 魔法または電気コストを含むカードを2枚以上入れる。",
+  "flavorText": "魔力炉を中枢に据えた高出力だが脆いコア。",
+  "imageUrl": ""
+}

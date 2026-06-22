@@ -1,0 +1,60 @@
+{
+  "id": "tradeCityCore",
+  "name": "商業都市コア",
+  "type": "コア",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 3,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "initialResources": {
+    "gold": 4,
+    "human": 1,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "life": 20,
+  "defense": 20,
+  "initialHand": 4,
+  "handLimit": 7,
+  "drawPerTurn": 1,
+  "defeatCondition": "このカードが破壊される。",
+  "specialRequirements": ["資金コストを含むカードを4枚以上入れる"],
+  "attack": 0,
+  "description": "ターン開始時：金③を得る。\n[制限] 資金コストを含むカードを4枚以上入れる。",
+  "flavorText": "交易と徴税で軍を動かす都市国家型コア。",
+  "imageUrl": ""
+}
