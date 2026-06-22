@@ -1,0 +1,45 @@
+{
+  "id": "refinery",
+  "name": "精製所",
+  "type": "ストラクト",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": [],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 2,
+      "human": 0,
+      "nature": 0,
+      "mineral": 1,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 2,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "ストラクチャーフェーズ：燃②を得る。",
+  "flavorText": "",
+  "imageUrl": ""
+}
