@@ -205,20 +205,20 @@ const DECKMAKER_TYPE_LABELS = {
 // y=110 相手コマンドロー   (60px)
 // y=170 バトルボード       (472px = 4行×118px)
 // y=642 自コマンドロー     (60px)
-// y=716 自ストラクトゾーン  (36px)
-// y=752 手札               (108px)
+// コマンドロー廃止: Core Card / Deck / Command Zone は盤面召喚行に統合
+// y=96  盤面               (608px = 4×152px)
+// y=704 自ストラクトゾーン  (36px)
+// y=740 手札               (120px)
 // y=860 リソースバー        (40px)
-// y=900  ← 60+36+44+532+44+36+108+40=900
+// y=900  ← 60+36+608+36+120+40=900
 const layout = {
-  board:        { x: 0, y: 140, w: 1440, h: 532 },
-  hand:         { x: 0, y: 752, w: 1440, h: 108 },
+  board:        { x: 0, y: 96,  w: 1440, h: 608 },
+  hand:         { x: 0, y: 740, w: 1440, h: 120 },
   topHand:      { x: 0, y: 60,  w: 1440, h: 20  },
   left:         { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
   right:        { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
   oppStruct:    { x: 0, y: 60,  w: 1440, h: 36  },
-  oppCmd:       { x: 0, y: 96,  w: 1440, h: 44  },
-  playerCmd:    { x: 0, y: 672, w: 1440, h: 44  },
-  playerStruct: { x: 0, y: 716, w: 1440, h: 36  },
+  playerStruct: { x: 0, y: 704, w: 1440, h: 36  },
   resourceBar:  { x: 0, y: 860, w: 1440, h: 40  },
 };
 layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
@@ -5690,13 +5690,11 @@ function render() {
   drawHeader();
   const viewer = viewerPlayerId();
   const opp = opponentOf(viewer);
-  // 相手エリア (上から: struct zone → command row → board)
+  // 相手エリア (上から: struct zone → board)
   drawStructZoneRow(opp,    layout.oppStruct, true);
-  drawCommandRow(opp,       layout.oppCmd,    true);
   drawBoard();
   drawBoardActionButtons();
-  // 自分エリア (boardから: command row → struct zone → hand)
-  drawCommandRow(viewer,    layout.playerCmd,    false);
+  // 自分エリア (board → struct zone → hand)
   drawStructZoneRow(viewer, layout.playerStruct, false);
   drawHand();
   drawResourceBar();
@@ -6411,6 +6409,70 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
   }
 }
 
+// 召喚行 col3: Core Card HP 表示
+function drawCoreInBoardCell(cx, cy, cW, cH, playerId) {
+  const player = state.players[playerId];
+  const isP1 = playerId === "p1";
+  const hp = player.core.hp, maxHp = player.core.maxHp || 20;
+  const ratio = Math.max(0, hp / maxHp);
+  const hpColor = ratio > 0.5 ? (isP1 ? "#4090ff" : "#ff5040") : ratio > 0.25 ? "#e0a020" : "#ff2020";
+  ctx.save();
+  ctx.shadowColor = hpColor; ctx.shadowBlur = 14;
+  roundRect(cx + 2, cy + 2, cW - 4, cH - 4, 6,
+    isP1 ? "rgba(10,25,70,0.95)" : "rgba(70,12,12,0.95)", hpColor, 1.5);
+  ctx.shadowBlur = 0; ctx.restore();
+  ctx.fillStyle = "rgba(200,215,255,0.55)";
+  ctx.font = "600 9px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("CORE CARD", cx + cW / 2, cy + 16);
+  ctx.fillStyle = "rgba(160,180,230,0.6)";
+  ctx.font = "500 9px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(player.name, cx + cW / 2, cy + 28);
+  ctx.fillStyle = hpColor;
+  ctx.font = `800 ${Math.round(cH * 0.28)}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText(`${hp}`, cx + cW / 2, cy + cH / 2 + cH * 0.12);
+  const barY = cy + cH - 10, barW = cW - 20;
+  ctx.fillStyle = "rgba(20,20,40,0.7)"; ctx.fillRect(cx + 10, barY, barW, 5);
+  ctx.fillStyle = hpColor; ctx.fillRect(cx + 10, barY, barW * ratio, 5);
+  ctx.textAlign = "left";
+}
+
+// 召喚行 Deck側セル: DECK + GY
+function drawDeckGYInBoardCell(cx, cy, cW, cH, playerId) {
+  const player = state.players[playerId];
+  const half = Math.floor(cW / 2);
+  roundRect(cx + 2, cy + 2, half - 3, cH - 4, 4, "rgba(10,20,54,0.88)", "rgba(50,90,200,0.5)", 1);
+  ctx.fillStyle = "#7098c8"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("DECK", cx + half / 2, cy + 16);
+  ctx.fillStyle = "#c0d8ff"; ctx.font = `700 ${Math.round(cH * 0.22)}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText(player.mainDeck.length, cx + half / 2, cy + cH / 2 + 8);
+
+  const gyX = cx + half;
+  roundRect(gyX + 1, cy + 2, half - 3, cH - 4, 4, "rgba(14,36,14,0.88)", "rgba(40,130,60,0.5)", 1);
+  ctx.fillStyle = "#70b880"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("GY", gyX + half / 2, cy + 16);
+  ctx.fillStyle = "#c0e8d0"; ctx.font = `700 ${Math.round(cH * 0.22)}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText(player.dump.length, gyX + half / 2, cy + cH / 2 + 8);
+  ctx.textAlign = "left";
+  addHit(gyX + 1, cy + 2, half - 3, cH - 4, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
+}
+
+// 召喚行 Command側セル: Wild/Grand カウント
+function drawCmdZoneInBoardCell(cx, cy, cW, cH, playerId) {
+  const player = state.players[playerId];
+  roundRect(cx + 2, cy + 2, cW - 4, cH - 4, 4, "rgba(60,20,90,0.65)", "rgba(160,80,200,0.5)", 1);
+  ctx.fillStyle = "rgba(180,100,220,0.7)";
+  ctx.font = "600 8px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("COMMAND", cx + cW / 2, cy + 16);
+  ctx.fillStyle = "rgba(220,160,255,0.8)";
+  ctx.font = `600 ${Math.round(cH * 0.11)}px 'Yu Gothic UI', sans-serif`;
+  ctx.fillText(`Wild  ${(player.wildZone || []).length}`, cx + cW / 2, cy + cH / 2 - 4);
+  ctx.fillText(`Grand ${(player.grandZone || []).length}`, cx + cW / 2, cy + cH / 2 + Math.round(cH * 0.13) + 2);
+  ctx.textAlign = "left";
+}
+
 function drawBoard() {
   const { x, y, w, h } = layout.board;
   const cW = layout.cell.w;
@@ -6443,18 +6505,36 @@ function drawBoard() {
       const cy = y + visualRow * cH;
 
       // ゾーン判定
-      const isWild  = (isP1Row && col <= 1) || (!isP1Row && col >= 5);
-      const isGrand = (isP1Row && col >= 5) || (!isP1Row && col <= 1);
+      const isWild    = (isP1Row && col <= 1) || (!isP1Row && col >= 5);
+      const isGrand   = (isP1Row && col >= 5) || (!isP1Row && col <= 1);
       const isP1Summon = row === PLAYERS.p1.summonRow;
       const isP2Summon = row === PLAYERS.p2.summonRow;
+      const isSummon   = isP1Summon || isP2Summon;
+      const summonOwner = isP1Summon ? "p1" : "p2";
 
-      // セル背景色
+      // 召喚行の特殊セル: col 3 = Core Card, col 0/6 = Deck+GY, col 6/0 = Command Zone
+      // p1 召喚行: col0=Command, col3=Core, col6=Deck+GY
+      // p2 召喚行: col0=Deck+GY,  col3=Core, col6=Command
+      const coreCol = 3;
+      const deckCol = isP1Summon ? 6 : 0;
+      const cmdCol  = isP1Summon ? 0 : 6;
+
+      if (isSummon && (col === coreCol || col === deckCol || col === cmdCol)) {
+        if (col === coreCol)  drawCoreInBoardCell(cx, cy, cW, cH, summonOwner);
+        else if (col === deckCol) drawDeckGYInBoardCell(cx, cy, cW, cH, summonOwner);
+        else                      drawCmdZoneInBoardCell(cx, cy, cW, cH, summonOwner);
+        const unit = state.board[row][col];
+        if (unit) drawBoardCard(cx, cy, cW, cH, unit);
+        continue;
+      }
+
+      // 通常セル背景色
       let cellFill;
-      if (isWild)       cellFill = isP1Row ? "rgba(60,20,90,0.45)"  : "rgba(90,20,60,0.45)";
-      else if (isGrand) cellFill = isP1Row ? "rgba(10,50,90,0.45)"  : "rgba(10,50,90,0.45)";
+      if (isWild)        cellFill = isP1Row ? "rgba(60,20,90,0.45)"  : "rgba(90,20,60,0.45)";
+      else if (isGrand)  cellFill = isP1Row ? "rgba(10,50,90,0.45)"  : "rgba(10,50,90,0.45)";
       else if (isP1Summon) cellFill = "rgba(14,40,100,0.55)";
       else if (isP2Summon) cellFill = "rgba(100,20,20,0.45)";
-      else              cellFill = "rgba(8,14,30,0.70)";
+      else               cellFill = "rgba(8,14,30,0.70)";
       ctx.fillStyle = cellFill;
       ctx.fillRect(cx + 1, cy + 1, cW - 2, cH - 2);
 
@@ -6465,7 +6545,7 @@ function drawBoard() {
         : isP1Summon ? "rgba(50,120,255,0.6)"
         : isP2Summon ? "rgba(255,60,40,0.5)"
         : "rgba(30,55,130,0.3)";
-      ctx.lineWidth = (isP1Summon || isP2Summon) ? 1.5 : 1;
+      ctx.lineWidth = isSummon ? 1.5 : 1;
       ctx.strokeRect(cx + 2, cy + 2, cW - 4, cH - 4);
       ctx.restore();
 
@@ -6473,7 +6553,7 @@ function drawBoard() {
       const unit = state.board[row][col];
       if (!unit) {
         const label = isWild ? "Wild Zone" : isGrand ? "Grand Zone"
-          : isP1Summon ? "Summon Field" : isP2Summon ? "Summon Field" : "";
+          : isSummon ? "Summon Field" : "";
         if (label) {
           ctx.fillStyle = isWild ? "rgba(180,100,220,0.28)" : isGrand ? "rgba(80,160,220,0.28)" : "rgba(80,130,255,0.22)";
           ctx.font = "500 10px 'Yu Gothic UI', sans-serif";
