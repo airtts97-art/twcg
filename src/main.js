@@ -1743,6 +1743,7 @@ const cardCatalog = {
       type: "tact",
       name: "神秘捕縛",
       faction: "万神世界",
+      tags: ["地球"],
       cost: { electric: 1 },
       text: "手札から神秘タグを持つユニットを好きなだけ捨て、その登場時効果を発動する。追加で除外し、もう一度その効果を発動する。各カードの呼び出しコスト合計を電気で支払う。不足分は自分のコアがダメージを受ける。",
       abilities: [{ trigger: "onPlay", effect: "mysticCapture" }],

@@ -4,7 +4,7 @@
   "type": "タクト",
   "rarity": "通常",
   "world": "万神世界",
-  "tags": [],
+  "tags": ["地球"],
   "roles": [],
   "costs": {
     "play": { "electric": 1 },
