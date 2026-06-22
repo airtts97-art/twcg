@@ -136,6 +136,10 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1753664991902", // 農民
   "card_1753904806388", // ゴールドラッシュ
   "card_1753716897980", // アングローナ近衛儀礼兵
+  "card_1753904622342", // 銅鉱山
+  "card_1753658925940", // 動死体
+  "card_1753660887452", // 研究
+  "card_1753659473530", // 覆没の脈動
   "card_1753760240197", // 採掘
   "card_1753775442028", // 堕ちし龍の動死体
   "card_1755612018710", // 忌地:森
@@ -577,9 +581,27 @@ const abilityEffects = {
     player.hand.splice(idx, 1);
     const unit = makeUnit(targetCard.id, playerId, player.summonRow, col, { rested: true });
     unit.counters = ability.counters || 0;
+    if (ability.lifeCounterFromPeople) {
+      const paidPeople = Math.min(player.resources.people || 0, ability.maxLifeCounters || 5);
+      player.resources.people -= paidPeople;
+      unit.counters = paidPeople;
+      unit.lifeCounterUnit = true;
+      unit.abilities = [...(unit.abilities || []), { trigger: "onTurnStart", effect: "removeLifeCounterOrBottomDeck" }];
+    }
     game.board[player.summonRow][col] = unit;
     triggerAbilities(game, playerId, unit, "onSummon");
     log(game, `${player.name}: 「${card.name}」で「${targetCard.name}」を出撃`);
+  },
+  removeLifeCounterOrBottomDeck({ game, playerId, card }) {
+    if (!card.lifeCounterUnit) return;
+    if ((card.counters || 0) > 0) {
+      card.counters -= 1;
+      log(game, `${game.players[playerId].name}: ${card.name} life counter -1`);
+      return;
+    }
+    game.board[card.row][card.col] = null;
+    game.players[playerId].mainDeck.push(stripRuntime(card));
+    log(game, `${game.players[playerId].name}: ${card.name} returns to deck bottom`);
   },
   reviveTagUnitsUpToCost({ game, playerId, ability }) {
     const player = game.players[playerId];
@@ -630,6 +652,7 @@ const abilityEffects = {
   damageAllEnemiesAndPushBack({ game, playerId, ability, card }) {
     const opponent = opponentOf(playerId);
     const player = game.players[opponent];
+    let pushed = 0;
     for (const unit of [...unitsOwnedBy(opponent)]) {
       unit.currentHp -= ability.amount || 3;
       const toRow = unit.row - player.forward;
@@ -637,6 +660,16 @@ const abilityEffects = {
         game.board[unit.row][unit.col] = null;
         unit.row = toRow;
         game.board[toRow][unit.col] = unit;
+        pushed++;
+      }
+    }
+    if (pushed > 0 && card?.id === "card_1755906183709") {
+      const targets = unitsOwnedBy(playerId).filter((unit) => unit.instanceId !== card.instanceId);
+      for (let i = 0; i < pushed && targets.length; i++) {
+        const target = targets[i % targets.length];
+        target.atk = (target.atk || 0) + 1;
+        target.maxHp = (target.maxHp || target.hp || 0) + 1;
+        target.currentHp = (target.currentHp || target.hp || 0) + 1;
       }
     }
     cleanupAllDestroyed(card);
@@ -695,6 +728,8 @@ const abilityEffects = {
       const deckCard = player.mainDeck[i];
       const match = ability.cardName
         ? (deckCard.name === ability.cardName || (deckCard.name || "").includes(ability.cardName))
+        : ability.tags
+          ? ability.tags.some((tag) => (deckCard.tags || []).includes(tag))
         : ability.tag
           ? (deckCard.tags || []).includes(ability.tag)
           : false;
@@ -2313,6 +2348,7 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1753661560335") {
     abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "searchCardToHand", tags: ["\u5100\u5f0f", "\u964d\u81e8"], amount: 1 });
     abilities.push({ trigger: "onPlay", effect: "searchCardToHand", tag: "儀式", amount: 1 });
   }
 
@@ -2347,6 +2383,16 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onPlay", effect: "gainResourcePlusPerStructTag", resource: "funds", baseAmount: 2, tag: "鉱山", amountPer: 1 });
   }
 
+  if (card.id === "card_1753904622342") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "chooseExchange",
+      costOptions: [{ resource: "people", amount: 1 }],
+      produces: { ore: 2 },
+    });
+  }
+
   if (card.id === "card_1753716897980") {
     abilities.push({ trigger: "onSummon", effect: "buffSelfHpFromTagCount", tag: "農民" });
   }
@@ -2354,6 +2400,16 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1753760240197") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "drawPlusPayResource", resource: "ore", baseDraw: 1, maxPay: 99 });
+  }
+
+  if (card.id === "card_1753660887452") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "revealTopNPick", amount: 3 });
+  }
+
+  if (card.id === "card_1753659473530") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "revealTopNPick", amount: 3, tagFilter: "\u30c0\u30f3\u30b8\u30e7\u30f3" });
   }
 
   if (card.id === "card_1753775442028") {
@@ -2391,6 +2447,7 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1753662513755") {
     abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "summonNamedFromHand", cardId: "card_1753662603276", counters: 0, lifeCounterFromPeople: true, maxLifeCounters: 5 });
     abilities.push({ trigger: "onPlay", effect: "summonNamedFromHand", cardName: "再生の真なる神", counters: 0 });
   }
 
@@ -2428,8 +2485,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   if (card.id === "card_1753680748888") {
-    abilities.push({ trigger: "onSummon", effect: "adjacentTagBuff", tag: "\u7d14\u4eba\u9593", min: 2, atk: 1, hp: 1 });
-    abilities.push({ trigger: "onTurnStart", effect: "adjacentTagBuff", tag: "\u7d14\u4eba\u9593", min: 2, atk: 1, hp: 1 });
+    abilities.length = 0;
   }
 
   if (card.id === "card_1753664708023") {
@@ -3815,6 +3871,10 @@ function cloneCard(card) {
 
 function makeUnit(cardId, owner, row, col, options = {}) {
   const card = cloneCard(cardCatalog.main[cardId]);
+  if (options.fromDump && cardId === "card_1753658925940") {
+    card.atk = (card.atk || 0) + 1;
+    card.hp = (card.hp || 0) + 1;
+  }
   return {
     ...card,
     instanceId: nextInstanceId++,
@@ -3945,6 +4005,54 @@ function notifyDumpChanged(game, changedPlayerId) {
   }
 }
 
+function sameResourceCost(a = {}, b = {}) {
+  const left = normalizeResourceObject(a);
+  const right = normalizeResourceObject(b);
+  return RESOURCE_KEYS.every((key) => (left[key] || 0) === (right[key] || 0));
+}
+
+function isPlayBlockedBySadGirl(playerId, card) {
+  if (!card || (card.type !== "unit" && card.type !== "tact")) return false;
+  const opponent = opponentOf(playerId);
+  const sadGirlActive = unitsOwnedBy(opponent).some((unit) => unit.id === "card_1755671140352");
+  if (!sadGirlActive) return false;
+  return unitsOwnedBy(opponent).some((unit) => sameResourceCost(unit.cost || {}, card.cost || {}));
+}
+
+function applyConditionalBuff(unit, key, active, { atk = 0, hp = 0 } = {}) {
+  if (!unit) return;
+  if (!unit.continuousBuffs) unit.continuousBuffs = {};
+  const applied = unit.continuousBuffs[key];
+  if (active && !applied) {
+    unit.atk = (unit.atk || 0) + atk;
+    unit.maxHp = (unit.maxHp || unit.hp || 0) + hp;
+    unit.currentHp = (unit.currentHp || unit.hp || 0) + hp;
+    unit.continuousBuffs[key] = { atk, hp };
+  } else if (!active && applied) {
+    unit.atk = (unit.atk || 0) - (applied.atk || 0);
+    unit.maxHp = Math.max(1, (unit.maxHp || unit.hp || 1) - (applied.hp || 0));
+    unit.currentHp = Math.min(unit.maxHp, Math.max(1, (unit.currentHp || 1) - (applied.hp || 0)));
+    delete unit.continuousBuffs[key];
+  }
+}
+
+function refreshContinuousEffects(game = state) {
+  for (const pid of ["p1", "p2"]) {
+    for (const unit of unitsOwnedBy(pid)) {
+      if (unit.id === "card_1753680748888") {
+        const adjacentPureHumans = adjacentCells(unit.row, unit.col).filter(([row, col]) => {
+          const adjacent = game.board[row]?.[col];
+          return adjacent?.owner === pid && (adjacent.tags || []).includes("\u7d14\u4eba\u9593");
+        }).length;
+        applyConditionalBuff(unit, "unitedKingdomInfantry", adjacentPureHumans >= 2, { atk: 1, hp: 1 });
+      }
+      if (unit.id === "card_1753716897980") {
+        applyConditionalBuff(unit, "angronaOpponentTurn", game.activePlayer === opponentOf(pid), { atk: 3, hp: 0 });
+      }
+    }
+  }
+}
+
 function resourceDelta(before = {}, after = {}) {
   const delta = emptyResources();
   for (const key of RESOURCE_KEYS) delta[key] = (after[key] || 0) - (before[key] || 0);
@@ -3970,6 +4078,13 @@ function pay(player, cost = {}) {
   return true;
 }
 
+function findCopperMineReduction(player, card, cost = {}) {
+  if (!card || card.type !== "unit") return null;
+  if (!(card.tags || []).includes("\u6a5f\u68b0")) return null;
+  if ((cost.ore || 0) <= 0) return null;
+  return (player.structs || []).find((struct) => struct.id === "card_1753904622342" && !struct.rested) || null;
+}
+
 function effectiveCostForCard(player, cost = {}, card = null) {
   const effective = normalizeResourceObject(cost);
   if (!card || !player?.id) return effective;
@@ -3987,12 +4102,19 @@ function effectiveCostForCard(player, cost = {}, card = null) {
       effective.electric = (effective.electric || 0) + substitutable;
     }
   }
+  if (findCopperMineReduction(player, card, effective)) {
+    effective.ore = Math.max(0, (effective.ore || 0) - 1);
+  }
   return effective;
 }
 
 function payForCard(player, cost = {}, card = null) {
   const effectiveCost = effectiveCostForCard(player, cost, card);
-  if (pay(player, effectiveCost)) return true;
+  const copperReduction = findCopperMineReduction(player, card, normalizeResourceObject(cost));
+  if (pay(player, effectiveCost)) {
+    if (copperReduction) copperReduction.rested = true;
+    return true;
+  }
   if (!card || !hasKeyword(card, "soulPay")) return false;
 
   const payable = { ...effectiveCost };
@@ -4264,6 +4386,8 @@ function resolveReviveFromDump(index) {
   const player = state.players[pending.playerId];
   const card = pending.eligible[index];
   if (!card) return false;
+  const revivedAtk = (card.atk || 0) + (card.id === "card_1753658925940" ? 1 : 0);
+  const revivedHp = (card.hp || 0) + (card.id === "card_1753658925940" ? 1 : 0);
   const dumpIdx = player.dump.indexOf(card);
   if (dumpIdx >= 0) player.dump.splice(dumpIdx, 1);
   if (dumpIdx >= 0) notifyDumpChanged(state, pending.playerId);
@@ -4277,8 +4401,10 @@ function resolveReviveFromDump(index) {
         owner: pending.playerId,
         row: playerInfo.summonRow,
         col,
-        maxHp: card.hp,
-        currentHp: card.hp,
+        atk: revivedAtk,
+        hp: revivedHp,
+        maxHp: revivedHp,
+        currentHp: revivedHp,
         rested: true,
         attacksThisTurn: 0,
         mobileMoveUsed: false,
@@ -4414,6 +4540,7 @@ function startTurn(game, playerId) {
     unit.mobileMoveUsed = false;
   }
   for (const [key, amount] of Object.entries(player.core.income || {})) addResources(player, key, amount);
+  refreshContinuousEffects(game);
   drawCards(game, playerId, player.core.draw);
   // onTurnStart: trigger for all owned units (destroySelf, payOrDamage, gainShockOrAlert, etc.)
   const turnStartUnits = unitsOwnedBy(playerId);
@@ -4644,6 +4771,7 @@ function placeUnitFromHand(handIndex, row, col) {
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
   if (!card || card.type !== "unit") return fail("ユニットカードを選択してください。");
+  if (isPlayBlockedBySadGirl(state.activePlayer, card)) return fail("This card is blocked by Unknown Sad Girl.");
   if (!canMeetUnitStructRequirement(player, card)) return fail(`${card.requiredStructName || "\u5fc5\u8981\u30b9\u30c8\u30e9\u30af\u30c8"} \u304c\u306a\u3044\u305f\u3081\u51fa\u6483\u3067\u304d\u307e\u305b\u3093\u3002`);
   if (card.requiredSacrificeName && !findRequiredSacrificeUnit(state.activePlayer, card)) return fail(`${card.requiredSacrificeName} がないため出撃できません。`);
   if (!canSummonToRow(card, player, row)) return fail("この行には配置できません。");
@@ -4660,6 +4788,7 @@ function placeUnitFromHand(handIndex, row, col) {
   state.message = `${card.name} をサモンしました。`;
   log(state, `${player.name}: 「${card.name}」を出撃`);
   triggerAbilities(state, state.activePlayer, unit, "onSummon");
+  refreshContinuousEffects(state);
   syncOnlineAction("summon", unit.owner);
   return true;
 }
@@ -4675,6 +4804,7 @@ function playTactFromHand(handIndex) {
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
   if (!card || card.type !== "tact") return fail("指令カードを選択してください。");
+  if (isPlayBlockedBySadGirl(state.activePlayer, card)) return fail("This card is blocked by Unknown Sad Girl.");
   if ((state.globalEffects || []).some((effect) => effect.type === "noTact" && effect.playerId === state.activePlayer)) {
     return fail("現在、指令カードを使用できません。");
   }
@@ -4791,6 +4921,7 @@ function moveSelectedUnit() {
   }
   state.selected = { kind: "unit", row: unit.row, col: unit.col };
   log(state, `${player.name}: 「${unit.name}」が前進`);
+  refreshContinuousEffects(state);
   startMoveAnimation(unit, fromRow, fromCol, toRow, unit.col);
   syncOnlineAction("moveUnit", unit.owner);
   return true;
@@ -4820,6 +4951,7 @@ function retreatSelectedUnit() {
   }
   state.selected = { kind: "unit", row: unit.row, col: unit.col };
   log(state, `${player.name}: 「${unit.name}」が後退`);
+  refreshContinuousEffects(state);
   startMoveAnimation(unit, fromRowR, unit.col, toRow, unit.col);
   syncOnlineAction("retreatUnit", unit.owner);
   return true;
@@ -4997,6 +5129,7 @@ function cleanupAllDestroyed(killer = null) {
       if (unit?.currentHp <= 0) cleanupDestroyed(unit, killer);
     }
   }
+  refreshContinuousEffects(state);
 }
 
 function canAttackCore(unit) {
