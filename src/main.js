@@ -6744,7 +6744,7 @@ function drawBoard() {
       // isTactSummon は通常の召喚フィールドと同じ扱い (戦闘行Tact Zoneと区別するため)
       let cellFill;
       if (isTactZone)
-        cellFill = isP1Row ? "rgba(10,40,25,0.65)" : "rgba(42,10,10,0.65)";
+        cellFill = isP1Row ? "rgba(210,230,220,0.22)" : "rgba(230,215,215,0.22)";
       else if (isGrandZone || isGrandSummon)
         cellFill = "rgba(30,24,5,0.68)";
       else if (isP1Summon) cellFill = "rgba(8,35,20,0.80)";
@@ -6756,7 +6756,7 @@ function drawBoard() {
       // セルボーダー
       ctx.save();
       ctx.strokeStyle = isTactZone
-        ? (isP1Row ? "rgba(50,190,110,0.55)" : "rgba(220,70,60,0.55)")
+        ? (isP1Row ? "rgba(80,180,120,0.75)" : "rgba(210,80,70,0.75)")
         : (isGrandZone || isGrandSummon) ? "rgba(200,160,45,0.55)"
         : isP1Summon ? "rgba(50,190,110,0.65)"
         : isP2Summon ? "rgba(220,70,60,0.55)"
