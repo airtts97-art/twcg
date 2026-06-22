@@ -7600,6 +7600,7 @@ function drawBoardActionButtons() {
   const unit = selectedUnit();
   if (!unit || unit.owner !== state.activePlayer || !canControlActivePlayer()) return;
 
+  const player = state.players[unit.owner];
   const visualRow = boardRowToVisualRow(unit.row);
   const cellX = layout.board.x + unit.col * layout.cell.w;
   const cellY = layout.board.y + visualRow * layout.cell.h;
@@ -7607,37 +7608,71 @@ function drawBoardActionButtons() {
   const cH = layout.cell.h;
   const isViewerUnit = unit.owner === viewerPlayerId();
 
-  const btnH = 22;
-  const panelH = btnH + 8;
+  const btnH = 28;
+  const gap = 3;
+  const panelW = 340;
+  const panelH = btnH * 2 + gap + 8;
 
-  // 自プレイヤーのユニット→セルの下、相手→セルの上
-  let panelY = isViewerUnit ? cellY + cH + 2 : cellY - panelH - 2;
-  if (panelY + panelH > layout.board.y + layout.board.h) panelY = cellY - panelH - 2;
-  if (panelY < layout.board.y) panelY = cellY + cH + 2;
+  let panelX = Math.round(cellX + cW / 2 - panelW / 2);
+  panelX = Math.max(layout.board.x + 2, Math.min(panelX, layout.board.x + layout.board.w - panelW - 2));
 
-  const panelX = cellX + 1;
-  const panelW = cW - 2;
+  let panelY = isViewerUnit ? cellY + cH + 3 : cellY - panelH - 3;
+  if (panelY + panelH > layout.board.y + layout.board.h) panelY = cellY - panelH - 3;
+  if (panelY < layout.board.y) panelY = cellY + cH + 3;
+
+  const canMoveFwd = !unit.rested && !hasKeyword(unit, "immobile");
+  const canMoveBck = canMoveFwd && !unit.noRetreatUntilOpponentTurnEnd;
+  const fwdRow = unit.row + player.forward;
+  const bkRow = unit.row - player.forward;
+
+  function cellOpen(row, col) {
+    return row >= 0 && row < ROWS && col >= 0 && col < COLS && !state.board[row]?.[col];
+  }
+
+  function dirBtn(label, row, col, logLabel, action, canBase) {
+    const valid = canBase && cellOpen(row, col);
+    return {
+      label,
+      fn: valid ? () => relocateUnit(unit, row, col, logLabel, action) : null,
+      dim: !valid,
+    };
+  }
+
+  const hasActivate = (unit.abilities || []).some((a) => a.trigger === "onActivate");
+
+  const advBtns = [
+    dirBtn("↖", fwdRow, unit.col - 1, "前進", "moveUnit", canMoveFwd),
+    dirBtn("↑前進", fwdRow, unit.col, "前進", "moveUnit", canMoveFwd),
+    dirBtn("↗", fwdRow, unit.col + 1, "前進", "moveUnit", canMoveFwd),
+    { label: "攻撃", fn: () => { state.message = "敵ユニットか敵コアを選択"; }, accent: "p1" },
+  ];
+
+  const retBtns = [
+    dirBtn("↙", bkRow, unit.col - 1, "後退", "retreatUnit", canMoveBck),
+    dirBtn("↓後退", bkRow, unit.col, "後退", "retreatUnit", canMoveBck),
+    dirBtn("↘", bkRow, unit.col + 1, "後退", "retreatUnit", canMoveBck),
+    ...(hasActivate ? [{ label: "起動", fn: activateSelectedUnit, accent: "p2" }] : [{ label: "", fn: null, dim: true }]),
+  ];
 
   ctx.save();
   ctx.shadowColor = "#4080ff";
   ctx.shadowBlur = 10;
-  roundRect(panelX, panelY, panelW, panelH, 5, "rgba(4,10,28,0.94)", "rgba(50,100,220,0.8)", 1.5);
+  roundRect(panelX, panelY, panelW, panelH, 6, "rgba(4,10,28,0.94)", "rgba(50,100,220,0.8)", 1.5);
   ctx.shadowBlur = 0;
   ctx.restore();
 
-  const hasActivate = (unit.abilities || []).some((a) => a.trigger === "onActivate");
-  const btns = [
-    { label: "前進", fn: moveSelectedUnit },
-    { label: "後退", fn: retreatSelectedUnit },
-    ...(hasActivate ? [{ label: "起動", fn: activateSelectedUnit, accent: "p2" }] : []),
-    { label: "攻撃", fn: () => { state.message = "敵ユニットか敵コアを選択"; }, accent: "p1" },
-  ];
-  const bw = Math.floor((panelW - 6 - (btns.length - 1) * 2) / btns.length);
-  let bx = panelX + 3;
-  for (const btn of btns) {
-    drawButton(bx, panelY + 3, bw, btnH, btn.label, btn.fn, null, btn.accent ? { accent: btn.accent } : {});
-    bx += bw + 2;
+  function drawRow(btns, rowY) {
+    const bw = Math.floor((panelW - 6 - (btns.length - 1) * gap) / btns.length);
+    let bx = panelX + 3;
+    for (const btn of btns) {
+      const opts = btn.accent ? { accent: btn.accent } : btn.dim ? { accent: "dim" } : {};
+      if (btn.label) drawButton(bx, rowY, bw, btnH, btn.label, btn.fn, null, opts);
+      bx += bw + gap;
+    }
   }
+
+  drawRow(advBtns, panelY + 4);
+  drawRow(retBtns, panelY + 4 + btnH + gap);
 }
 
 function drawTurnStartSummaryPanel() {
