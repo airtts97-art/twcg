@@ -5715,11 +5715,11 @@ function render() {
 }
 
 function drawBackground() {
-  // Base dark gradient
+  // Base dark gradient (dark teal-green: 紺に緑を混ぜて目に優しく)
   const grd = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * 0.8);
-  grd.addColorStop(0, "#0c1428");
-  grd.addColorStop(0.5, "#070c18");
-  grd.addColorStop(1, "#030609");
+  grd.addColorStop(0, "#0a1810");
+  grd.addColorStop(0.5, "#070e0a");
+  grd.addColorStop(1, "#030605");
   ctx.fillStyle = grd;
   ctx.fillRect(0, 0, W, H);
 
@@ -5734,29 +5734,29 @@ function drawBackground() {
     oppGrd.addColorStop(1, "rgba(60,10,10,0.04)");
     ctx.fillStyle = oppGrd;
     ctx.fillRect(bx, by, bw, midY - by);
-    // Player field - subtle navy tint
+    // Player field - subtle green tint (自陣は緑)
     const playerGrd = ctx.createLinearGradient(0, midY, 0, by + bh);
-    playerGrd.addColorStop(0, "rgba(10,20,80,0.04)");
-    playerGrd.addColorStop(1, "rgba(14,32,100,0.14)");
+    playerGrd.addColorStop(0, "rgba(14,80,40,0.05)");
+    playerGrd.addColorStop(1, "rgba(10,60,30,0.13)");
     ctx.fillStyle = playerGrd;
     ctx.fillRect(bx, midY, bw, bh / 2);
     // Row divider lines inside board
-    ctx.strokeStyle = "rgba(40,60,120,0.18)";
+    ctx.strokeStyle = "rgba(40,90,60,0.18)";
     ctx.lineWidth = 1;
     for (let r = 1; r < ROWS; r++) {
       const ry = by + r * layout.cell.h;
       ctx.beginPath(); ctx.moveTo(bx, ry); ctx.lineTo(bx + bw, ry); ctx.stroke();
     }
     // Column divider lines inside board
-    ctx.strokeStyle = "rgba(40,60,120,0.12)";
+    ctx.strokeStyle = "rgba(40,90,60,0.12)";
     for (let c = 1; c < COLS; c++) {
       const cx2 = bx + c * layout.cell.w;
       ctx.beginPath(); ctx.moveTo(cx2, by); ctx.lineTo(cx2, by + bh); ctx.stroke();
     }
   }
 
-  // Hex grid overlay (subtle)
-  ctx.strokeStyle = "rgba(40, 80, 160, 0.05)";
+  // Hex grid overlay (subtle teal)
+  ctx.strokeStyle = "rgba(40, 100, 60, 0.05)";
   ctx.lineWidth = 1;
   const hex = 40;
   const hh = hex * Math.sqrt(3) / 2;
@@ -5781,9 +5781,9 @@ function drawBackground() {
   topGlow.addColorStop(1, "transparent");
   ctx.fillStyle = topGlow;
   ctx.fillRect(0, 0, W, H);
-  // Ambient glow bottom-center
+  // Ambient glow bottom-center (自陣=緑)
   const botGlow = ctx.createRadialGradient(W / 2, H, 0, W / 2, H, 380);
-  botGlow.addColorStop(0, "rgba(20, 80, 200, 0.10)");
+  botGlow.addColorStop(0, "rgba(20, 130, 60, 0.10)");
   botGlow.addColorStop(1, "transparent");
   ctx.fillStyle = botGlow;
   ctx.fillRect(0, 0, W, H);
@@ -6412,32 +6412,36 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
   }
 }
 
-// 召喚行 col3: Core Card HP 表示
+// 召喚行 Core Card: 通常カードと同じ描画スタイル
 function drawCoreInBoardCell(cx, cy, cW, cH, playerId) {
   const player = state.players[playerId];
   const isP1 = playerId === "p1";
   const hp = player.core.hp, maxHp = player.core.maxHp || 20;
   const ratio = Math.max(0, hp / maxHp);
-  const hpColor = ratio > 0.5 ? (isP1 ? "#4090ff" : "#ff5040") : ratio > 0.25 ? "#e0a020" : "#ff2020";
-  ctx.save();
-  ctx.shadowColor = hpColor; ctx.shadowBlur = 14;
-  roundRect(cx + 2, cy + 2, cW - 4, cH - 4, 6,
-    isP1 ? "rgba(10,25,70,0.95)" : "rgba(70,12,12,0.95)", hpColor, 1.5);
+  const hpColor = ratio > 0.5 ? (isP1 ? "#50d080" : "#ff6050") : ratio > 0.25 ? "#e0a020" : "#ff2020";
+
+  const coreCard = {
+    ...player.core,
+    type: player.core.type || "core",
+    currentHp: hp,
+    maxHp,
+    hp: maxHp,
+  };
+
+  const padX = 5, padY = 3;
+  const avW = cW - padX * 2;
+  const avH = cH - padY * 2;
+  const cardH = Math.min(avH, avW / CARD_ASPECT);
+  const cardW = cardH * CARD_ASPECT;
+  const cardX = cx + padX + (avW - cardW) / 2;
+  const cardY = cy + padY + (avH - cardH) / 2;
+
+  ctx.save(); ctx.shadowColor = hpColor; ctx.shadowBlur = 12;
+  drawCard(cardX, cardY, cardW, cardH, coreCard, { noHover: true });
   ctx.shadowBlur = 0; ctx.restore();
-  ctx.fillStyle = "rgba(200,215,255,0.55)";
-  ctx.font = "600 9px 'Yu Gothic UI', sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText("CORE CARD", cx + cW / 2, cy + 16);
-  ctx.fillStyle = "rgba(160,180,230,0.6)";
-  ctx.font = "500 9px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(player.name, cx + cW / 2, cy + 28);
-  ctx.fillStyle = hpColor;
-  ctx.font = `800 ${Math.round(cH * 0.28)}px 'Yu Gothic UI', sans-serif`;
-  ctx.fillText(`${hp}`, cx + cW / 2, cy + cH / 2 + cH * 0.12);
-  const barY = cy + cH - 10, barW = cW - 20;
-  ctx.fillStyle = "rgba(20,20,40,0.7)"; ctx.fillRect(cx + 10, barY, barW, 5);
-  ctx.fillStyle = hpColor; ctx.fillRect(cx + 10, barY, barW * ratio, 5);
-  ctx.textAlign = "left";
+
+  addCardHover(cx, cy, cW, cH, coreCard);
+  addHit(cx, cy, cW, cH, () => { state.message = `${player.name} Core HP: ${hp}/${maxHp}`; });
 }
 
 // 召喚行 Deck側セル: DECK + GY
@@ -6454,7 +6458,7 @@ function drawDeckGYInBoardCell(cx, cy, cW, cH, playerId) {
   const gyX = cx + half;
   roundRect(gyX + 1, cy + 2, half - 3, cH - 4, 4, "rgba(14,36,14,0.88)", "rgba(40,130,60,0.5)", 1);
   ctx.fillStyle = "#70b880"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("GY", gyX + half / 2, cy + 16);
+  ctx.fillText("DUMP", gyX + half / 2, cy + 16);
   ctx.fillStyle = "#c0e8d0"; ctx.font = `700 ${Math.round(cH * 0.22)}px 'Yu Gothic UI', sans-serif`;
   ctx.fillText(player.dump.length, gyX + half / 2, cy + cH / 2 + 8);
   ctx.textAlign = "left";
@@ -6480,8 +6484,8 @@ function drawResourceInBoardCell(cx, cy, cW2, cH, playerId) {
   const player = state.players[playerId];
   const isP1 = playerId === "p1";
   roundRect(cx + 1, cy + 1, cW2 - 2, cH - 2, 4,
-    isP1 ? "rgba(6,12,34,0.88)" : "rgba(34,6,6,0.88)",
-    isP1 ? "rgba(30,70,180,0.45)" : "rgba(180,30,30,0.45)", 1);
+    isP1 ? "rgba(4,18,10,0.90)" : "rgba(22,4,4,0.90)",
+    isP1 ? "rgba(40,160,90,0.45)" : "rgba(180,40,40,0.45)", 1);
 
   const padX = 6, padY = 5;
   const innerW = cW2 - padX * 2;
@@ -6582,23 +6586,26 @@ function drawBoard() {
         // col 10 (p1) / 0 (p2): Grand Zone → 通常描画で下のスタイル適用
       }
 
-      // 通常セル背景色
+      // 通常セル背景色 (p1=緑, p2=赤, Grand=金)
       let cellFill;
-      if (isTactZone || isTactSummon)       cellFill = isP1Row ? "rgba(40,15,70,0.55)"  : "rgba(70,15,40,0.55)";
-      else if (isGrandZone || isGrandSummon) cellFill = "rgba(10,45,80,0.60)";
-      else if (isP1Summon) cellFill = "rgba(14,40,100,0.55)";
-      else if (isP2Summon) cellFill = "rgba(100,20,20,0.45)";
-      else               cellFill = "rgba(8,14,30,0.70)";
+      if (isTactZone || isTactSummon)
+        cellFill = isP1Row ? "rgba(10,40,25,0.65)" : "rgba(42,10,10,0.65)";
+      else if (isGrandZone || isGrandSummon)
+        cellFill = "rgba(30,24,5,0.68)";
+      else if (isP1Summon) cellFill = "rgba(8,35,20,0.80)";
+      else if (isP2Summon) cellFill = "rgba(35,8,8,0.80)";
+      else cellFill = isP1Row ? "rgba(6,22,13,0.72)" : "rgba(22,6,6,0.72)";
       ctx.fillStyle = cellFill;
       ctx.fillRect(cx + 1, cy + 1, cW - 2, cH - 2);
 
       // セルボーダー
       ctx.save();
-      ctx.strokeStyle = (isTactZone || isTactSummon) ? "rgba(160,60,220,0.5)"
-        : (isGrandZone || isGrandSummon) ? "rgba(40,140,220,0.5)"
-        : isP1Summon ? "rgba(50,120,255,0.6)"
-        : isP2Summon ? "rgba(255,60,40,0.5)"
-        : "rgba(30,55,130,0.3)";
+      ctx.strokeStyle = (isTactZone || isTactSummon)
+        ? (isP1Row ? "rgba(50,190,110,0.55)" : "rgba(220,70,60,0.55)")
+        : (isGrandZone || isGrandSummon) ? "rgba(200,160,45,0.55)"
+        : isP1Summon ? "rgba(50,190,110,0.65)"
+        : isP2Summon ? "rgba(220,70,60,0.55)"
+        : (isP1Row ? "rgba(40,160,90,0.32)" : "rgba(200,50,50,0.32)");
       ctx.lineWidth = (isSummon || isGrandZone || isTactZone) ? 1.5 : 1;
       ctx.strokeRect(cx + 2, cy + 2, cW - 4, cH - 4);
       ctx.restore();
@@ -6610,9 +6617,9 @@ function drawBoard() {
           : (isTactZone || isTactSummon) ? "Tact Zone"
           : isSummon ? "Summon Field" : "";
         if (label) {
-          ctx.fillStyle = (isGrandZone || isGrandSummon) ? "rgba(60,140,220,0.28)"
-            : (isTactZone || isTactSummon) ? "rgba(160,60,220,0.28)"
-            : "rgba(80,130,255,0.22)";
+          ctx.fillStyle = (isGrandZone || isGrandSummon) ? "rgba(200,160,50,0.30)"
+            : (isTactZone || isTactSummon) ? (isP1Row ? "rgba(50,190,110,0.30)" : "rgba(220,80,70,0.30)")
+            : (isP1Row ? "rgba(50,180,100,0.22)" : "rgba(200,70,60,0.22)");
           ctx.font = "500 10px 'Yu Gothic UI', sans-serif";
           ctx.textAlign = "center";
           ctx.fillText(label, cx + cW / 2, cy + cH / 2 + 4);
@@ -6631,19 +6638,19 @@ function drawBoard() {
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
       const cy0 = y + visualRow * cH;
-      // Resource|Tact 境界 (p1: col2, p2: col1) ← 紫
+      // Resource|Tact 境界 (p1: col2, p2: col1)
       const lBound = isP1Row ? 2 : 1;
-      ctx.strokeStyle = "rgba(160,60,220,0.45)";
+      ctx.strokeStyle = isP1Row ? "rgba(50,190,110,0.40)" : "rgba(220,70,60,0.40)";
       const lx = x + lBound * cW;
       ctx.beginPath(); ctx.moveTo(lx, cy0); ctx.lineTo(lx, cy0 + cH); ctx.stroke();
-      // Tact|Standard 境界 (p1: col5, p2: col6) ← 薄紫
+      // Tact|Standard 境界 (p1: col5, p2: col6)
       const mBound = isP1Row ? 5 : 6;
-      ctx.strokeStyle = "rgba(120,50,180,0.30)";
+      ctx.strokeStyle = isP1Row ? "rgba(40,160,90,0.25)" : "rgba(200,60,50,0.25)";
       const mx = x + mBound * cW;
       ctx.beginPath(); ctx.moveTo(mx, cy0); ctx.lineTo(mx, cy0 + cH); ctx.stroke();
-      // Standard|Grand 境界 (p1: col10, p2: col9) ← 青
+      // Standard|Grand 境界 (p1: col10, p2: col9) ← 金
       const rBound = isP1Row ? 10 : 9;
-      ctx.strokeStyle = "rgba(40,140,220,0.45)";
+      ctx.strokeStyle = "rgba(200,160,45,0.45)";
       const rx = x + rBound * cW;
       ctx.beginPath(); ctx.moveTo(rx, cy0); ctx.lineTo(rx, cy0 + cH); ctx.stroke();
       ctx.setLineDash([]);
@@ -6729,7 +6736,7 @@ function drawCommandRow(playerId, box, mirrored) {
   const gyX = dkX + cW / 2;
   roundRect(gyX + 1, y + 2, (cW - 4) / 2 - 1, h - 4, 4, "rgba(14,36,14,0.85)", "rgba(40,130,60,0.5)", 1);
   ctx.fillStyle = "#70b880"; ctx.font = "700 8px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("GY", gyX + cW / 4, y + 13);
+  ctx.fillText("DUMP", gyX + cW / 4, y + 13);
   ctx.fillStyle = "#c0e8d0"; ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
   ctx.fillText(player.dump.length, gyX + cW / 4, y + h - 8);
   ctx.textAlign = "left";
@@ -6756,10 +6763,10 @@ function drawStructZoneRow(playerId, box, mirrored) {
   const { x, y, w, h } = box;
   const isViewer = playerId === viewerPlayerId();
 
-  const bg = isP1 ? "rgba(6,12,34,0.90)" : "rgba(34,6,6,0.85)";
+  const bg = isP1 ? "rgba(4,18,10,0.90)" : "rgba(22,4,4,0.88)";
   ctx.fillStyle = bg;
   ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = isP1 ? "rgba(40,80,180,0.4)" : "rgba(180,40,40,0.35)"; ctx.lineWidth = 1;
+  ctx.strokeStyle = isP1 ? "rgba(40,160,90,0.4)" : "rgba(180,40,40,0.38)"; ctx.lineWidth = 1;
   ctx.strokeRect(x, y, w, h);
 
   // Structure Deck インジケーター
@@ -6935,11 +6942,11 @@ function drawSidePanel(playerId, box) {
   ctx.fillText(`D ${player.mainDeck.length}`, box.x + 13, zoneY + 15);
   roundRect(box.x + 8 + zW + 4, zoneY, zW, 22, 4, "rgba(40,80,60,0.5)", "rgba(60,160,100,0.4)", 1);
   ctx.fillStyle = "#80e0a0";
-  ctx.fillText(`G ${player.dump.length}`, box.x + 13 + zW + 4, zoneY + 15);
+  ctx.fillText(`DMP ${player.dump.length}`, box.x + 13 + zW + 4, zoneY + 15);
   addHit(box.x + 8 + zW + 4, zoneY, zW, 22, () => { zoneViewerState = { playerId, zone: "dump", scroll: 0 }; });
-  roundRect(box.x + 8 + (zW + 4) * 2, zoneY, zW, 22, 4, "rgba(80,40,100,0.5)", "rgba(160,80,200,0.4)", 1);
-  ctx.fillStyle = "#c080f0";
-  ctx.fillText(`E ${player.exileZone.length}`, box.x + 13 + (zW + 4) * 2, zoneY + 15);
+  roundRect(box.x + 8 + (zW + 4) * 2, zoneY, zW, 22, 4, "rgba(60,50,20,0.5)", "rgba(180,140,40,0.4)", 1);
+  ctx.fillStyle = "#e0c060";
+  ctx.fillText(`OUT ${player.exileZone.length}`, box.x + 13 + (zW + 4) * 2, zoneY + 15);
   addHit(box.x + 8 + (zW + 4) * 2, zoneY, zW, 22, () => { zoneViewerState = { playerId, zone: "exile", scroll: 0 }; });
 
   // Resources (compact 2-col) - only for viewer player, opponent resources visible too
@@ -7003,6 +7010,7 @@ const CARD_TYPE_THEME = {
   wild:   { grad: ["#102a18", "#081610"], accent: "#30a050", glow: "#208040", text: "#60d080" },
   grand:  { grad: ["#0e2038", "#061020"], accent: "#2070b0", glow: "#1050a0", text: "#60a0e0" },
   struct: { grad: ["#141e2a", "#0a1018"], accent: "#507080", glow: "#305060", text: "#80b0b8" },
+  core:   { grad: ["#1e1a08", "#0e0c04"], accent: "#c0a030", glow: "#a08020", text: "#e0d080" },
 };
 
 const RESOURCE_PILL_COLORS = {
@@ -8149,7 +8157,7 @@ function drawZoneViewerOverlay() {
   const { playerId, zone, scroll } = zoneViewerState;
   const player = state.players[playerId];
   const cards = zone === "dump" ? player.dump : zone === "structDeck" ? player.structDeck : player.exileZone;
-  const zoneLabel = zone === "dump" ? "墓地" : zone === "structDeck" ? "ストラクトデッキ" : "除外";
+  const zoneLabel = zone === "dump" ? "DUMP" : zone === "structDeck" ? "ストラクトデッキ" : "OUT";
   const zoneColor = zone === "dump" ? "#4a6347" : zone === "structDeck" ? "#405080" : "#5a3d6a";
 
   ctx.fillStyle = "rgba(0, 0, 10, 0.82)";
@@ -8270,7 +8278,7 @@ function drawCard(x, y, w, h, card, options = {}) {
   if (statsH > 0) {
     ctx.fillStyle = "rgba(4,8,20,0.85)";
     ctx.fillRect(x + 2, statsY, w - 4, statsH);
-    if (card.type === "unit") {
+    if (card.type === "unit" || card.type === "core") {
       const maxHp = card.maxHp ?? card.hp;
       const curHp = card.currentHp ?? card.hp;
       const hpRatio = maxHp > 0 ? Math.max(0, curHp / maxHp) : 0;
@@ -8278,9 +8286,11 @@ function drawCard(x, y, w, h, card, options = {}) {
       ctx.fillStyle = "rgba(20,20,40,0.8)"; ctx.fillRect(barX, barY, barW, 5);
       const hpCol = hpRatio > 0.5 ? "#30c060" : hpRatio > 0.25 ? "#e0a020" : "#e02020";
       ctx.fillStyle = hpCol; ctx.fillRect(barX, barY, barW * hpRatio, 5);
-      ctx.fillStyle = "#c0d8ff";
-      ctx.font = `700 ${fs}px 'Yu Gothic UI', sans-serif`;
-      ctx.fillText(`${card.atk}`, x + 5, statsY + 12);
+      if (card.type === "unit") {
+        ctx.fillStyle = "#c0d8ff";
+        ctx.font = `700 ${fs}px 'Yu Gothic UI', sans-serif`;
+        ctx.fillText(`${card.atk}`, x + 5, statsY + 12);
+      }
       ctx.textAlign = "right";
       ctx.fillStyle = hpRatio < 0.5 ? "#ff8080" : "#80e080";
       ctx.fillText(`${curHp}`, x + w - 5, statsY + 12);
