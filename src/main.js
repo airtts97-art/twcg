@@ -207,17 +207,20 @@ const DECKMAKER_TYPE_LABELS = {
 // y=642 自コマンドロー     (60px)
 // コマンドロー廃止: Core Card / Deck / Command Zone は盤面召喚行に統合
 // y=96  盤面               (608px = 4×152px)
+// y=60  相手手札            (60px)
+// y=120 相手ストラクトゾーン (36px)
+// y=156 盤面               (548px = 4×137px)
 // y=704 自ストラクトゾーン  (36px)
 // y=740 手札               (120px)
 // y=860 リソースバー        (40px)
-// y=900  ← 60+36+608+36+120+40=900
+// y=900  ← 60+60+36+548+36+120+40=900
 const layout = {
-  board:        { x: 0, y: 96,  w: 1440, h: 608 },
+  board:        { x: 0, y: 156, w: 1440, h: 548 },
   hand:         { x: 0, y: 740, w: 1440, h: 120 },
-  topHand:      { x: 0, y: 60,  w: 1440, h: 20  },
+  topHand:      { x: 0, y: 60,  w: 1440, h: 60  },
   left:         { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
   right:        { x: 0, y: 60,  w: 0,   h: 0   }, // 未使用
-  oppStruct:    { x: 0, y: 60,  w: 1440, h: 36  },
+  oppStruct:    { x: 0, y: 120, w: 1440, h: 36  },
   playerStruct: { x: 0, y: 704, w: 1440, h: 36  },
   resourceBar:  { x: 0, y: 860, w: 1440, h: 40  },
 };
@@ -5690,7 +5693,8 @@ function render() {
   drawHeader();
   const viewer = viewerPlayerId();
   const opp = opponentOf(viewer);
-  // 相手エリア (上から: struct zone → board)
+  // 相手エリア (上から: 手札 → struct zone → board)
+  drawTopHand();
   drawStructZoneRow(opp,    layout.oppStruct, true);
   drawBoard();
   drawBoardActionButtons();
