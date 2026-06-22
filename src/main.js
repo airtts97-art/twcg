@@ -4863,7 +4863,7 @@ function isValidAbilityTarget(item, target) {
 function completeAbilitySource(game, item) {
   if (item.source?.zone !== "tact") return;
   const player = game.players[item.playerId];
-  const index = player.tactZone.indexOf(item.card);
+  const index = player.tactZone.findIndex((c) => c.instanceId === item.card.instanceId);
   if (index >= 0) {
     const [card] = player.tactZone.splice(index, 1);
     player.dump.push(card);
