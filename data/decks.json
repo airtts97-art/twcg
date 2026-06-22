@@ -149,16 +149,12 @@
           "commonArmoredCar",
           "lifeFairy",
           "knowledgeFairy",
-          "fieldOrder",
           "hiddenSupply",
           "grandMandate",
           "mysticCapture",
           "mysticCapture",
           "mysticCapture",
           "mysticCapture",
-          "fieldOrder",
-          "fieldOrder",
-          "fieldOrder",
           "knowledgeFairy",
           "knowledgeFairy",
           "knowledgeFairy",
@@ -183,7 +179,11 @@
           "antiArmorMageTeam328",
           "antiArmorMageTeam328",
           "antiArmorMageTeam328",
-          "antiArmorMageTeam328"
+          "antiArmorMageTeam328",
+          "card_1753660970113",
+          "card_1753660970113",
+          "card_1753660970113",
+          "card_1753660970113"
         ],
         "struct": [
           "town",
@@ -202,11 +202,13 @@
           "card_1753683148866",
           "card_1753683148866",
           "mine",
-          "mine",
-          "refinery"
+          "refinery",
+          "card_1753682701261",
+          "town",
+          "card_1753682701261"
         ]
       },
-      "updatedAt": "2026-06-22T11:49:39.327Z"
+      "updatedAt": "2026-06-22T12:15:45.096Z"
     },
     {
       "id": "deck-mqmb4i3w",
