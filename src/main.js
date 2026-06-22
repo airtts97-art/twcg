@@ -2130,19 +2130,21 @@ function parseDeckmakerKeywords(card) {
 
 function parseDeckmakerAbilities(card, localType) {
   const abilities = [];
-  const generates = fromDeckmakerCosts(card.generates || {});
-  const negEntries = Object.entries(generates).filter(([, a]) => a < 0);
-  const posEntries = Object.entries(generates).filter(([, a]) => a > 0);
-  if (negEntries.length > 1 && posEntries.length > 0) {
-    abilities.push({
-      trigger: "onStructurePhase",
-      effect: "chooseExchange",
-      costOptions: negEntries.map(([resource, amount]) => ({ resource, amount: Math.abs(amount) })),
-      produces: Object.fromEntries(posEntries),
-    });
-  } else {
-    for (const [resource, amount] of Object.entries(generates)) {
-      abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource, amount });
+  if (localType === "struct") {
+    const generates = fromDeckmakerCosts(card.generates || {});
+    const negEntries = Object.entries(generates).filter(([, a]) => a < 0);
+    const posEntries = Object.entries(generates).filter(([, a]) => a > 0);
+    if (negEntries.length > 1 && posEntries.length > 0) {
+      abilities.push({
+        trigger: "onStructurePhase",
+        effect: "chooseExchange",
+        costOptions: negEntries.map(([resource, amount]) => ({ resource, amount: Math.abs(amount) })),
+        produces: Object.fromEntries(posEntries),
+      });
+    } else {
+      for (const [resource, amount] of Object.entries(generates)) {
+        abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource, amount });
+      }
     }
   }
   const text = String(card.description || "");
