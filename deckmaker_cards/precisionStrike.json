@@ -7,14 +7,39 @@
   "tags": [],
   "roles": [],
   "costs": {
-    "play": { "gold": 1, "electric": 1 },
-    "act": {},
+    "play": {
+      "gold": 1,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 1,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
     "choice": [],
     "choiceAct": []
   },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
   "attack": 0,
   "defense": 0,
-  "description": "敵ユニット1体に2ダメージ。対象を選択する。",
+  "description": "敵ユニット1体に2ダメージ（対象選択）。",
   "flavorText": "",
   "imageUrl": ""
 }

@@ -7,14 +7,39 @@
   "tags": ["神秘", "妖精"],
   "roles": [],
   "costs": {
-    "play": { "magic": 1 },
-    "act": {},
+    "play": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 1
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
     "choice": [],
     "choiceAct": []
   },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
   "attack": 0,
   "defense": 1,
-  "description": "妖精でさえも知恵を貸してくれる\n処理: 出撃時: カード2枚ドロー",
-  "flavorText": "",
+  "description": "出撃時：カードを2枚引く。",
+  "flavorText": "妖精でさえも知恵を貸してくれる",
   "imageUrl": ""
 }

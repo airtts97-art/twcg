@@ -7,14 +7,39 @@
   "tags": ["歩兵", "純人間"],
   "roles": [],
   "costs": {
-    "play": { "gold": 1, "human": 1 },
-    "act": {},
+    "play": {
+      "gold": 1,
+      "human": 1,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
     "choice": [],
     "choiceAct": []
   },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
   "attack": 1,
   "defense": 2,
-  "description": "もっとも安価な部類の歩兵、侮ることはできない。\nキーワード: 警戒",
-  "flavorText": "",
+  "description": "[警戒]",
+  "flavorText": "もっとも安価な部類の歩兵、侮ることはできない。",
   "imageUrl": ""
 }

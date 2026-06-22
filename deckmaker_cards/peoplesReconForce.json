@@ -7,14 +7,39 @@
   "tags": ["歩兵", "純人間", "魔法", "獣人"],
   "roles": [],
   "costs": {
-    "play": { "human": 2, "gold": 2 },
-    "act": { "human": 1 },
+    "play": {
+      "gold": 2,
+      "human": 2,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 1,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
     "choice": [],
     "choiceAct": []
   },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
   "attack": 2,
   "defense": 3,
-  "description": "血を流し、人を消耗する、そして…次の作戦とその術が与えられる。\n処理: 敵ユニット破壊時: カード1枚ドロー、資金3を得る",
-  "flavorText": "",
+  "description": "敵ユニットを破壊した時：カードを1枚引く。金③を得る。",
+  "flavorText": "血を流し、人を消耗する、そして…次の作戦とその術が与えられる。",
   "imageUrl": ""
 }

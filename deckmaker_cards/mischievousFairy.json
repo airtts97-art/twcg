@@ -7,14 +7,39 @@
   "tags": ["神秘", "妖精"],
   "roles": [],
   "costs": {
-    "play": { "magic": 1 },
-    "act": {},
+    "play": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 1
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
     "choice": [],
     "choiceAct": []
   },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
   "attack": 1,
   "defense": 1,
-  "description": "いたずらでは済まない。妖精の攻撃は意外と危険\n処理: 出撃時: 敵ユニット1体に2ダメージ（対象選択）",
-  "flavorText": "",
+  "description": "出撃時：敵ユニット1体に2ダメージ（対象選択）。",
+  "flavorText": "いたずらでは済まない。妖精の攻撃は意外と危険",
   "imageUrl": ""
 }
