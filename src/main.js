@@ -71,6 +71,17 @@ const RESOURCE_LABELS = {
   electric: "電気",
   magic: "魔法",
 };
+const RESOURCE_ICON_PATHS = {
+  funds: "assets/resources/funds.png",
+  people: "assets/resources/people.png",
+  nature: "assets/resources/nature.png",
+  ore: "assets/resources/ore.png",
+  fuel: "assets/resources/fuel.png",
+  electric: "assets/resources/electric.png",
+  magic: "assets/resources/magic.png",
+  none: "assets/resources/none.png",
+};
+
 const KEYWORD_DEFINITIONS = {
   armor: { label: "装甲", description: "Reduce incoming damage by the keyword value." },
   pierce: { label: "貫通", description: "Ignore armor up to the keyword value." },
@@ -614,7 +625,7 @@ const abilityEffects = {
     const col = findFirstEmptyColInRow(game, player.summonRow);
     if (col < 0) return;
     player.hand.splice(idx, 1);
-    const unit = makeUnit(targetCard.id, playerId, player.summonRow, col, { rested: true });
+    const unit = makeUnit(targetCard.id, playerId, player.summonRow, col, { rested: false });
     unit.counters = ability.counters || 0;
     game.board[player.summonRow][col] = unit;
     triggerAbilities(game, playerId, unit, "onSummon");
@@ -645,7 +656,7 @@ const abilityEffects = {
       player.dump.splice(i, 1);
       i--;
       remaining -= cost;
-      const unit = makeUnit(c.id, playerId, player.summonRow, col, { rested: true, fromDump: true });
+      const unit = makeUnit(c.id, playerId, player.summonRow, col, { rested: false, fromDump: true });
       game.board[player.summonRow][col] = unit;
       triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
       count++;
@@ -1132,7 +1143,7 @@ const abilityEffects = {
       const emptyCol = findFirstEmptyColInRow(game, player.summonRow);
       if (emptyCol < 0) break;
       const unitCard = player.mainDeck.splice(i, 1)[0];
-      const unit = makeUnit(unitCard.id, playerId, player.summonRow, emptyCol, { rested: true });
+      const unit = makeUnit(unitCard.id, playerId, player.summonRow, emptyCol, { rested: false });
       game.board[player.summonRow][emptyCol] = unit;
       log(game, `${player.name}: 「${card.name}」効果 — 「${unitCard.name}」出撃`);
       placed++;
@@ -1232,7 +1243,7 @@ const abilityEffects = {
     if (col < 0) return;
     const [unitCard] = player.dump.splice(idx, 1);
     notifyDumpChanged(game, playerId);
-    const unit = makeUnit(unitCard.id, playerId, player.summonRow, col, { rested: true, fromDump: true });
+    const unit = makeUnit(unitCard.id, playerId, player.summonRow, col, { rested: false, fromDump: true });
     game.board[player.summonRow][col] = unit;
     card.rested = true;
     triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
@@ -1247,7 +1258,7 @@ const abilityEffects = {
     const col = findFirstEmptyColInRow(game, opponent.summonRow);
     if (col < 0) return;
     const [unitCard] = player.hand.splice(idx, 1);
-    const unit = makeUnit(unitCard.id, opponentId, opponent.summonRow, col, { rested: true });
+    const unit = makeUnit(unitCard.id, opponentId, opponent.summonRow, col, { rested: false });
     game.board[opponent.summonRow][col] = unit;
     triggerAbilities(game, opponentId, unit, "onSummon");
     log(game, `${game.players[playerId].name}: ${card.name} gives ${unit.name} to opponent`);
@@ -1298,10 +1309,21 @@ const abilityEffects = {
 
 function findFirstEmptyColInRow(game, row) {
   if (row < 0 || row >= ROWS) return -1;
-  for (let col = 0; col < COLS; col += 1) {
+  for (const col of unitFieldColsForRow(row)) {
     if (!game.board[row][col]) return col;
   }
   return -1;
+}
+
+function unitFieldColsForRow(row) {
+  if (row === PLAYERS.p2.summonRow) return [1, 2, 3, 4];
+  if (row === PLAYERS.p1.summonRow) return [6, 7, 8, 9];
+  if (row < ROWS / 2) return [1, 2, 3, 4, 5];
+  return [5, 6, 7, 8, 9];
+}
+
+function isUnitFieldCell(row, col) {
+  return unitFieldColsForRow(row).includes(col);
 }
 
 function isGolemCard(card, maxCost = 3) {
@@ -1329,7 +1351,7 @@ function summonGolemFromZones(game, playerId, { maxCost = 3, row = null, sourceC
   }
 
   const [card] = player[zone].splice(index, 1);
-  const unit = makeUnit(card.id, playerId, targetRow, col, { rested: true });
+  const unit = makeUnit(card.id, playerId, targetRow, col, { rested: false });
   game.board[targetRow][col] = unit;
   log(game, `${sourceCardName}: ${card.name} を場に出しました`);
   triggerAbilities(game, playerId, unit, "onSummon", { from: zone });
@@ -4025,6 +4047,85 @@ function getCardImage(card) {
   return entry;
 }
 
+function getResourceIcon(key) {
+  const src = RESOURCE_ICON_PATHS[key] || RESOURCE_ICON_PATHS.none;
+  if (!src) return null;
+  if (cardImageCache.has(src)) return cardImageCache.get(src);
+  const image = new Image();
+  const entry = { image, loaded: false, failed: false };
+  image.onload = () => {
+    entry.loaded = true;
+    render();
+  };
+  image.onerror = () => {
+    entry.failed = true;
+    render();
+  };
+  image.src = src;
+  cardImageCache.set(src, entry);
+  return entry;
+}
+
+function drawResourceIcon(key, x, y, size, options = {}) {
+  const entry = getResourceIcon(key);
+  ctx.save();
+  ctx.globalAlpha = options.alpha ?? 1;
+  if (entry?.loaded && !entry.failed) {
+    ctx.drawImage(entry.image, x, y, size, size);
+  } else {
+    const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(30,40,70,0.7)", border: "rgba(80,100,180,0.7)", text: "#a0b0d0" };
+    roundRect(x, y, size, size, Math.max(3, size * 0.18), colors.bg, colors.border, 1);
+    ctx.fillStyle = colors.text || "#c0d0e8";
+    ctx.font = `700 ${Math.max(8, Math.floor(size * 0.36))}px 'Yu Gothic UI', sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(RESOURCE_LABELS[key] || "-", x + size / 2, y + size / 2);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+  }
+  ctx.restore();
+}
+
+function drawResourceAmount(key, amount, x, y, size, options = {}) {
+  drawResourceIcon(key, x, y, size, options);
+  const label = String(amount);
+  const badgeW = Math.max(14, Math.min(size, 9 + label.length * 7));
+  const badgeH = Math.max(12, Math.floor(size * 0.42));
+  const bx = x + size - badgeW + 1;
+  const by = y + size - badgeH + 1;
+  roundRect(bx, by, badgeW, badgeH, Math.max(3, badgeH / 2), "rgba(4,8,18,0.86)", "rgba(255,255,255,0.32)", 1);
+  ctx.fillStyle = "#f4f7ff";
+  ctx.font = `800 ${Math.max(9, Math.floor(size * 0.38))}px 'Yu Gothic UI', sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, bx + badgeW / 2, by + badgeH / 2);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+}
+
+function drawCostIcons(cost = {}, x, y, options = {}) {
+  const entries = Object.entries(normalizeResourceObject(cost)).filter(([, amount]) => amount > 0);
+  const size = options.size || 18;
+  const gap = options.gap ?? 3;
+  if (!entries.length) {
+    if (options.showNone) drawResourceIcon("none", x, y, size, { alpha: 0.78 });
+    return x + (options.showNone ? size : 0);
+  }
+  entries.forEach(([key, amount], i) => {
+    drawResourceAmount(key, amount, x + i * (size + gap), y, size);
+  });
+  return x + entries.length * (size + gap) - gap;
+}
+
+function cardIsAffordable(player, card) {
+  if (!player || !card) return false;
+  if (card.type === "unit" || card.type === "tact" || card.type === "wild" || card.type === "grand") {
+    return canPay(player, effectiveCostForCard(player, card.cost || {}, card));
+  }
+  if (card.type === "struct") return canPay(player, card.cost || {});
+  return false;
+}
+
 function emptyResources() {
   return Object.fromEntries(RESOURCE_KEYS.map((key) => [key, 0]));
 }
@@ -4564,7 +4665,7 @@ function resolveLifeCounterPayment(amount) {
   }
   player.resources.people -= payAmount;
   player.hand.splice(pending.targetHandIndex, 1);
-  const unit = makeUnit(targetCard.id, pending.playerId, player.summonRow, col, { rested: true });
+  const unit = makeUnit(targetCard.id, pending.playerId, player.summonRow, col, { rested: false });
   unit.counters = payAmount;
   unit.lifeCounterUnit = true;
   unit.abilities = [...(unit.abilities || []), { trigger: "onTurnStart", effect: "removeLifeCounterOrBottomDeck" }];
@@ -4968,7 +5069,7 @@ function placeUnitFromHand(handIndex, row, col) {
 
   applyUnitSacrificeRequirement(state.activePlayer, card);
   revealCardUse(state.activePlayer, card, "summon");
-  const unit = makeUnit(card.id, state.activePlayer, row, col, { rested: true });
+  const unit = makeUnit(card.id, state.activePlayer, row, col, { rested: false });
   state.board[row][col] = unit;
   player.hand.splice(handIndex, 1);
   state.selected = { kind: "unit", row, col };
@@ -6429,16 +6530,34 @@ function drawCoreInBoardCell(cx, cy, cW, cH, playerId) {
   };
 
   const padX = 5, padY = 3;
+  const statsH = 18;
   const avW = cW - padX * 2;
-  const avH = cH - padY * 2;
+  const avH = cH - padY * 2 - statsH;
   const cardH = Math.min(avH, avW / CARD_ASPECT);
   const cardW = cardH * CARD_ASPECT;
   const cardX = cx + padX + (avW - cardW) / 2;
   const cardY = cy + padY + (avH - cardH) / 2;
 
   ctx.save(); ctx.shadowColor = hpColor; ctx.shadowBlur = 12;
-  drawCard(cardX, cardY, cardW, cardH, coreCard, { noHover: true });
+  drawCard(cardX, cardY, cardW, cardH, coreCard, { noHover: true, artOnly: true });
   ctx.shadowBlur = 0; ctx.restore();
+
+  const sy = cy + cH - statsH;
+  ctx.fillStyle = "rgba(4,8,20,0.84)";
+  ctx.fillRect(cx + 2, sy, cW - 4, statsH);
+  ctx.fillStyle = "#c8d8ff";
+  ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("LP", cx + 5, sy + 12);
+  ctx.textAlign = "right";
+  ctx.fillStyle = hpColor;
+  ctx.fillText(`${hp}`, cx + cW - 5, sy + 12);
+  ctx.textAlign = "left";
+  const barY = sy + statsH - 5;
+  const barW = cW - 8;
+  ctx.fillStyle = "rgba(20,20,40,0.8)";
+  ctx.fillRect(cx + 4, barY, barW, 4);
+  ctx.fillStyle = hpColor;
+  ctx.fillRect(cx + 4, barY, barW * ratio, 4);
 
   addCardHover(cx, cy, cW, cH, coreCard);
   addHit(cx, cy, cW, cH, () => { state.message = `${player.name} Core HP: ${hp}/${maxHp}`; });
@@ -6503,15 +6622,7 @@ function drawResourceInBoardCell(cx, cy, cW2, cH, playerId) {
     const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(30,40,70,0.6)", border: "rgba(80,100,180,0.5)", text: "#a0b0d0", glow: "#6080c0" };
     const amt = player.resources?.[key] || 0;
     roundRect(px, py, pillW, pillH, 2, colors.bg, colors.border, 0.8);
-    ctx.save();
-    ctx.shadowColor = colors.glow || "#804040"; ctx.shadowBlur = 2;
-    ctx.fillStyle = colors.text;
-    ctx.font = `600 7px 'Yu Gothic UI', sans-serif`;
-    ctx.textAlign = "center";
-    ctx.fillText(RESOURCE_LABELS[key], px + pillW / 2, py + 9);
-    ctx.font = `700 ${pillH >= 26 ? 13 : 10}px 'Yu Gothic UI', sans-serif`;
-    ctx.fillText(String(amt), px + pillW / 2, py + pillH - 3);
-    ctx.shadowBlur = 0; ctx.restore();
+    drawResourceAmount(key, amt, px + Math.max(1, Math.floor((pillW - Math.min(20, pillH - 3)) / 2)), py + 2, Math.min(20, pillH - 3));
   });
   ctx.textAlign = "left";
 }
@@ -6901,7 +7012,10 @@ function handleCellClick(row, col) {
   if (selected?.kind === "hand" && selected.confirmed && (!selected.playerId || selected.playerId === state.activePlayer)) {
     if (!requireActivePlayerControl()) return;
     const card = state.players[state.activePlayer].hand[selected.index];
-    if (card?.type === "unit") return placeUnitFromHand(selected.index, row, col);
+    if (card?.type === "unit") {
+      if (!isUnitFieldCell(row, col)) return fail("ユニットフィールドに配置してください。");
+      return placeUnitFromHand(selected.index, row, col);
+    }
   }
   if (selected?.kind === "unit" && unit?.owner !== state.activePlayer) {
     if (!requireActivePlayerControl()) return;
@@ -6989,7 +7103,7 @@ function drawSidePanel(playerId, box) {
       if (by + cH > panelBottom) return;
       const selected = state.selected?.kind === "structDeck" && state.selected.playerId === playerId && state.selected.index === absI;
       const canAfford = canPay(player, card.cost);
-      drawCard(bx, by, cW, cH, card, { selected, small: true, artOnly: true });
+      drawCard(bx, by, cW, cH, card, { selected, small: true, artOnly: true, affordable: canAfford });
       if (!canAfford) {
         ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(bx, by, cW, cH);
       }
@@ -7032,15 +7146,12 @@ function drawResourceList(player, x, y) {
     const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(30,40,70,0.6)", border: "rgba(80,100,180,0.5)", text: "#a0b0d0", glow: "#6080c0" };
     const amt = player.resources[key] || 0;
     roundRect(rx, ry, pillW, pillH, 5, colors.bg, colors.border, 1);
-    ctx.save(); ctx.shadowColor = colors.glow; ctx.shadowBlur = 3;
-    ctx.fillStyle = colors.text;
-    ctx.font = "600 9px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(RESOURCE_LABELS[key], rx + 6, ry + 11);
-    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(String(amt), rx + 6, ry + 23);
+    ctx.save(); ctx.shadowColor = colors.glow || "#6080c0"; ctx.shadowBlur = 3;
+    drawResourceAmount(key, amt, rx + 5, ry + 4, 20);
     if (gained[key] > 0) {
       ctx.textAlign = "right";
       ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+      ctx.fillStyle = colors.text || "#a0b0d0";
       ctx.fillText(`+${gained[key]}`, rx + pillW - 4, ry + 23);
       ctx.textAlign = "left";
     }
@@ -7074,7 +7185,7 @@ function drawHand() {
     const cy = hy + 18;
     if (cx + cardW > hx + hw - 8) return;
     const isSelected = state.selected?.kind === "hand" && state.selected.playerId === player.id && state.selected.index === i;
-    drawCard(cx, cy, cardW, cardH, card, { selected: isSelected, small: false, artOnly: true });
+    drawCard(cx, cy, cardW, cardH, card, { selected: isSelected, small: false, artOnly: true, affordable: cardIsAffordable(player, card) });
     addHit(cx, cy, cardW, cardH, () => {
       if (!requireActivePlayerControl()) return;
       state.selected = { kind: "hand", playerId: player.id, index: i, confirmed: false };
@@ -7120,14 +7231,7 @@ function drawTopHand() {
     const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(60,20,20,0.6)", border: "rgba(160,60,60,0.5)", text: "#c09090", glow: "#804040" };
     const amt = opponent.resources[key] || 0;
     roundRect(px, y + 5, pillW, pillH, 3, colors.bg, colors.border, 0.8);
-    ctx.save(); ctx.shadowColor = colors.glow || "#804040"; ctx.shadowBlur = 2;
-    ctx.fillStyle = colors.text;
-    ctx.font = "600 8px 'Yu Gothic UI', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(RESOURCE_LABELS[key], px + pillW / 2, y + 16);
-    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(String(amt), px + pillW / 2, y + h - 8);
-    ctx.shadowBlur = 0; ctx.restore();
+    drawResourceAmount(key, amt, px + Math.max(2, Math.floor((pillW - 22) / 2)), y + 8, 22);
   });
   ctx.textAlign = "left";
 }
@@ -7235,15 +7339,12 @@ function drawResourceBar() {
     const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(30,40,70,0.6)", border: "rgba(80,100,180,0.5)", text: "#a0b0d0", glow: "#6080c0" };
     const amt = player.resources[key] || 0;
     roundRect(px, py, pillW, pillH, 4, colors.bg, colors.border, 1);
-    ctx.save(); ctx.shadowColor = colors.glow; ctx.shadowBlur = 3;
-    ctx.fillStyle = colors.text;
-    ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(RESOURCE_LABELS[key], px + 6, py + 13);
-    ctx.font = "800 16px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(String(amt), px + 6, py + 27);
+    ctx.save(); ctx.shadowColor = colors.glow || "#6080c0"; ctx.shadowBlur = 3;
+    drawResourceAmount(key, amt, px + 6, py + 5, Math.min(28, Math.max(18, pillH - 2)));
     if (gained[key] > 0) {
       ctx.textAlign = "right";
       ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+      ctx.fillStyle = colors.text || "#a0b0d0";
       ctx.fillText(`+${gained[key]}`, px + pillW - 4, py + 27);
       ctx.textAlign = "left";
     }
@@ -7372,6 +7473,31 @@ function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
   acGrd.addColorStop(1, "transparent");
   ctx.fillStyle = acGrd;
   ctx.fillRect(x, y, w, 2);
+}
+
+function drawSelectableChoiceCard(x, y, cardW, cardH, card, { selected = false, disabled = false, label = "", onClick = null } = {}) {
+  drawCard(x, y, cardW, cardH, card, { selected, small: true, affordable: !disabled });
+  if (disabled) {
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(x, y, cardW, cardH);
+  }
+  if (selected) {
+    ctx.save();
+    ctx.shadowColor = "#ffd84a";
+    ctx.shadowBlur = 12;
+    roundRect(x - 3, y - 3, cardW + 6, cardH + 6, 8, null, "#ffd84a", 3);
+    ctx.restore();
+  }
+  if (label) {
+    const ly = y + cardH + 4;
+    roundRect(x, ly, cardW, 20, 5, selected ? "rgba(110,78,18,0.90)" : "rgba(8,14,32,0.88)", selected ? "#ffd84a" : "rgba(70,100,180,0.45)", 1);
+    ctx.fillStyle = selected ? "#fff2b0" : "#c8d8f0";
+    ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x + cardW / 2, ly + 14, cardW - 8);
+    ctx.textAlign = "left";
+  }
+  if (onClick && !disabled) addHit(x, y, cardW, cardH + (label ? 24 : 0), onClick);
 }
 
 function drawMysticCapturePanel(pending) {
@@ -7582,12 +7708,12 @@ function destroyChoiceCandidates() {
   for (let row = 0; row < ROWS; row++) {
     for (let col = 0; col < COLS; col++) {
       const unit = state.board[row]?.[col];
-      if (unit) items.push({ key: `unit:${row}:${col}`, label: unit.name, sub: `Unit ${unit.owner} R${row + 1}C${col + 1}` });
+      if (unit) items.push({ key: `unit:${row}:${col}`, card: unit, label: unit.name, sub: `Unit ${unit.owner} R${row + 1}C${col + 1}` });
     }
   }
   for (const pid of ["p1", "p2"]) {
     state.players[pid].structs.forEach((struct, index) => {
-      items.push({ key: `struct:${pid}:${index}`, label: struct.name, sub: `Struct ${state.players[pid].name}` });
+      items.push({ key: `struct:${pid}:${index}`, card: struct, label: struct.name, sub: `Struct ${state.players[pid].name}` });
     });
   }
   return items;
@@ -7606,18 +7732,17 @@ function drawSelectDestroyCardsPanel(pending) {
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`追加コスト ${formatCost(pending.cost || {}) || "なし"} / ${pending.amount}枚まで選択。現在: ${selected.size}枚`, x + 28, y + 64, w - 56);
   const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
-  candidates.slice(0, 18).forEach((item, i) => {
-    const cx = x + 28 + (i % 3) * 242;
-    const cy = y + 92 + Math.floor(i / 3) * 52;
+  const cardW = 74;
+  const cardH = Math.round(cardW / CARD_ASPECT);
+  candidates.slice(0, 16).forEach((item, i) => {
+    const cx = x + 28 + (i % 8) * (cardW + 18);
+    const cy = y + 92 + Math.floor(i / 8) * (cardH + 30);
     const active = selected.has(item.key);
-    roundRect(cx, cy, 224, 42, 6, active ? "rgba(160,50,40,0.8)" : "rgba(30,24,34,0.82)", active ? "rgba(255,140,100,0.9)" : "rgba(120,70,70,0.5)", active ? 2 : 1);
-    ctx.fillStyle = active ? "#ffe0d0" : "#c8b8b8";
-    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(`${active ? "✓ " : ""}${item.label}`, cx + 9, cy + 17, 206);
-    ctx.fillStyle = "rgba(210,170,160,0.7)";
-    ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(item.sub, cx + 9, cy + 33, 206);
-    if (isController) addHit(cx, cy, 224, 42, () => toggleDestroyChoice(item.key));
+    drawSelectableChoiceCard(cx, cy, cardW, cardH, item.card, {
+      selected: active,
+      label: active ? "TARGET" : item.sub.replace(/^.*? /, ""),
+      onClick: isController ? () => toggleDestroyChoice(item.key) : null,
+    });
   });
   if (isController) {
     const canPayCost = canPay(player, pending.cost || {});
@@ -7644,23 +7769,23 @@ function drawKaijuAwakenPanel(pending) {
     ctx.fillStyle = "#caa0ff";
     ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
     ctx.fillText(title, baseX, y + 100);
-    items.slice(0, 7).forEach((item, i) => {
+    const cardW = 70;
+    const cardH = Math.round(cardW / CARD_ASPECT);
+    items.slice(0, 3).forEach((item, i) => {
       const value = item.value;
       const active = selectedValue === value;
-      const by = y + 118 + i * 48;
-      roundRect(baseX, by, 246, 38, 6, active ? "rgba(110,55,170,0.85)" : "rgba(22,20,42,0.82)", active ? "rgba(210,140,255,0.95)" : "rgba(100,80,150,0.55)", active ? 2 : 1);
-      ctx.fillStyle = active ? "#f0dcff" : "#c8b8e8";
-      ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
-      ctx.fillText(`${active ? "✓ " : ""}${item.label}`, baseX + 9, by + 16, 228);
-      ctx.fillStyle = "rgba(180,160,210,0.72)";
-      ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
-      ctx.fillText(item.sub || "", baseX + 9, by + 31, 228);
-      if (isController) addHit(baseX, by, 246, 38, () => toggleKaijuAwakenChoice(kind, value));
+      const cx = baseX + i * (cardW + 10);
+      const cy = y + 118;
+      drawSelectableChoiceCard(cx, cy, cardW, cardH, item.card, {
+        selected: active,
+        label: active ? "SELECTED" : item.sub || "",
+        onClick: isController ? () => toggleKaijuAwakenChoice(kind, value) : null,
+      });
     });
   };
-  drawColumn("ユニット", units.map((unit) => ({ value: unit.instanceId, label: unit.name, sub: `R${unit.row + 1}C${unit.col + 1}` })), pending.selectedUnitInstanceId, "unit", x + 28);
-  drawColumn("ストラクト", structs.map((struct, index) => ({ value: index, label: struct.name, sub: formatCost(struct.cost || {}) })), pending.selectedStructIndex, "struct", x + 298);
-  drawColumn("手札", hand.map((card, index) => ({ value: index, label: card.name, sub: `${card.type} ${formatCost(card.cost || {})}` })), pending.selectedHandIndex, "hand", x + 568);
+  drawColumn("Unit", units.map((unit) => ({ value: unit.instanceId, card: unit, label: unit.name, sub: `R${unit.row + 1}C${unit.col + 1}` })), pending.selectedUnitInstanceId, "unit", x + 28);
+  drawColumn("Struct", structs.map((struct, index) => ({ value: index, card: struct, label: struct.name, sub: "STRUCT" })), pending.selectedStructIndex, "struct", x + 298);
+  drawColumn("Hand", hand.map((card, index) => ({ value: index, card, label: card.name, sub: card.type.toUpperCase() })), pending.selectedHandIndex, "hand", x + 568);
   if (isController) {
     const ready = pending.selectedUnitInstanceId != null && pending.selectedStructIndex != null && pending.selectedHandIndex != null;
     drawButton(x + w - 198, y + h - 56, 170, 36, "覚醒する", ready ? resolveKaijuAwakenChoice : null, null, ready ? { accent: "p1" } : { accent: "dim" });
@@ -8243,11 +8368,14 @@ function drawCard(x, y, w, h, card, options = {}) {
   const fs = isSmall ? 10 : 13;
 
   ctx.save();
-  if (isSelected) { ctx.shadowColor = "#f0c040"; ctx.shadowBlur = 20; }
+  if (isSelected || options.affordable) {
+    ctx.shadowColor = isSelected ? "#f0c040" : "#ffd84a";
+    ctx.shadowBlur = isSelected ? 20 : 14;
+  }
   const bgGrd = ctx.createLinearGradient(x, y, x, y + h);
   bgGrd.addColorStop(0, theme.grad[0]);
   bgGrd.addColorStop(1, theme.grad[1]);
-  roundRect(x, y, w, h, 6, bgGrd, isSelected ? "#f0c040" : theme.accent, isSelected ? 2.5 : 1.5);
+  roundRect(x, y, w, h, 6, bgGrd, isSelected ? "#f0c040" : options.affordable ? "#ffd84a" : theme.accent, isSelected || options.affordable ? 2.5 : 1.5);
   ctx.shadowBlur = 0;
   ctx.restore();
 
@@ -8295,11 +8423,12 @@ function drawCard(x, y, w, h, card, options = {}) {
       ctx.fillStyle = hpRatio < 0.5 ? "#ff8080" : "#80e080";
       ctx.fillText(`${curHp}`, x + w - 5, statsY + 12);
       ctx.textAlign = "left";
+      if (statsH > 30) drawCostIcons(card.cost || {}, x + 5, statsY + 15, { size: Math.max(10, Math.min(14, Math.floor(w / 7))), showNone: true });
       const keywords = keywordLabels(card).join(" ");
-      if (keywords && statsH > 22) {
+      if (keywords && statsH > 42) {
         ctx.fillStyle = theme.text;
         ctx.font = `600 ${Math.max(8, fs - 2)}px 'Yu Gothic UI', sans-serif`;
-        ctx.fillText(keywords, x + 5, statsY + 24, w - 10);
+        ctx.fillText(keywords, x + 5, statsY + 38, w - 10);
       }
       if (card.rested && !options.noRestOverlay) drawRestedOverlay(x, y, w, h, options);
     } else {
@@ -8307,6 +8436,7 @@ function drawCard(x, y, w, h, card, options = {}) {
       ctx.fillStyle = theme.text;
       ctx.font = `700 ${fs}px 'Yu Gothic UI', sans-serif`;
       ctx.fillText(typeLabel, x + 5, statsY + 14);
+      if (statsH > 30) drawCostIcons(card.cost || {}, x + 5, statsY + 18, { size: Math.max(10, Math.min(14, Math.floor(w / 7))), showNone: true });
     }
   }
 }
