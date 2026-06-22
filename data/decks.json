@@ -1,7 +1,7 @@
 {
   "emailplayer@example.com": [
     {
-      "id": "deck-mqoic7qz",
+      "id": "deck-mqou7yxp",
       "name": "対戦用テストデッキ",
       "deck": {
         "core": "frontierCore",
@@ -26,11 +26,11 @@
           "magicWell"
         ]
       },
-      "updatedAt": "2026-06-22T00:59:02.075Z"
+      "updatedAt": "2026-06-22T06:31:39.421Z"
     },
     {
-      "id": "deck-mqoic7qx",
-      "name": "テストデッキ-1782089942072",
+      "id": "deck-mqou7yxo",
+      "name": "テストデッキ-1782109899419",
       "deck": {
         "core": "frontierCore",
         "main": [
@@ -56,10 +56,10 @@
           "magicWell"
         ]
       },
-      "updatedAt": "2026-06-22T00:59:02.073Z"
+      "updatedAt": "2026-06-22T06:31:39.420Z"
     },
     {
-      "id": "deckmaker-mqoic7f3-1",
+      "id": "deckmaker-mqou7yo1-1",
       "name": "Deckmaker All Data Sample",
       "deck": {
         "core": "frontierCore",
@@ -87,10 +87,10 @@
           "magicWell"
         ]
       },
-      "updatedAt": "2026-06-22T00:59:01.647Z"
+      "updatedAt": "2026-06-22T06:31:39.073Z"
     },
     {
-      "id": "deckmaker-mqoic7f0",
+      "id": "deckmaker-mqou7yns",
       "name": "Deckmaker Sample",
       "deck": {
         "core": "frontierCore",
@@ -104,7 +104,7 @@
           "grove"
         ]
       },
-      "updatedAt": "2026-06-22T00:59:01.644Z"
+      "updatedAt": "2026-06-22T06:31:39.064Z"
     }
   ],
   "guestguestplayer": [
@@ -142,7 +142,7 @@
       "id": "deck-mqnn3agi",
       "name": "48枚デッキ",
       "deck": {
-        "core": "frontierCore",
+        "core": "arcaneReactorCore",
         "main": [
           "lightInfantry",
           "smallFieldGunFuel",
@@ -176,22 +176,14 @@
           "lightInfantry",
           "hiddenSupply",
           "grandMandate",
-          "card_1753662603276",
-          "card_1753662603276",
-          "card_1753662603276",
-          "card_1753662603276",
           "grandMandate",
           "grandMandate",
           "hiddenSupply",
           "hiddenSupply",
-          "peoplesReconForce",
-          "peoplesReconForce",
-          "peoplesReconForce",
-          "peoplesReconForce",
-          "card_1753680748888",
-          "card_1753680748888",
-          "card_1753680748888",
-          "card_1753680748888"
+          "antiArmorMageTeam328",
+          "antiArmorMageTeam328",
+          "antiArmorMageTeam328",
+          "antiArmorMageTeam328"
         ],
         "struct": [
           "town",
@@ -201,11 +193,8 @@
           "powerPlant",
           "magicWell",
           "town",
-          "town",
-          "town",
           "grove",
           "mine",
-          "refinery",
           "powerPlant",
           "magicWell",
           "powerPlant",
@@ -213,10 +202,11 @@
           "card_1753683148866",
           "card_1753683148866",
           "mine",
-          "mine"
+          "mine",
+          "refinery"
         ]
       },
-      "updatedAt": "2026-06-21T10:24:17.586Z"
+      "updatedAt": "2026-06-22T11:49:39.327Z"
     },
     {
       "id": "deck-mqmb4i3w",
@@ -401,7 +391,79 @@
   ],
   "google106283491381279952050": [
     {
-      "id": "deckmaker-mqmkad2z",
+      "id": "deck-mqp4no43",
+      "name": "鉱魔ゴーレムkill",
+      "deck": {
+        "core": "card_1755670973607",
+        "main": [
+          "card_1753611194289",
+          "card_1753611194289",
+          "card_1753611194289",
+          "card_1753611194289",
+          "card_1753611179145",
+          "card_1753611179145",
+          "card_1753611179145",
+          "card_1753611179145",
+          "card_1753611186441",
+          "card_1753611186441",
+          "card_1753611186441",
+          "card_1753611186441",
+          "card_1753611167885",
+          "card_1753663497202",
+          "card_1753663497202",
+          "card_1753663497202",
+          "card_1753663497202",
+          "card_1753664708023",
+          "card_1753664708023",
+          "card_1753664708023",
+          "card_1753660970113",
+          "card_1753660970113",
+          "card_1753660970113",
+          "card_1753660970113",
+          "card_1753659473530",
+          "card_1753659473530",
+          "card_1753659473530",
+          "card_1753659473530",
+          "card_1753660736818",
+          "card_1753660736818",
+          "card_1753660736818",
+          "card_1753660736818",
+          "card_1753659571381",
+          "card_1753659571381",
+          "card_1753659571381",
+          "card_1753659571381",
+          "card_1753659700866",
+          "card_1753659700866",
+          "card_1753659700866",
+          "card_1753659700866"
+        ],
+        "struct": [
+          "card_1753682701261",
+          "card_1753682701261",
+          "card_1753682865389",
+          "card_1753682865389",
+          "card_1753682865389",
+          "card_1753682865389",
+          "card_1753683148866",
+          "card_1753683148866",
+          "card_1753683148866",
+          "card_1753683148866",
+          "card_1753683067735",
+          "card_1753661462969",
+          "card_1753661462969",
+          "card_1753683243290",
+          "card_1753683243290",
+          "card_1753661462969",
+          "card_1753682701261",
+          "card_1753682701261",
+          "card_1753904622342",
+          "card_1755654825932"
+        ]
+      },
+      "updatedAt": "2026-06-22T11:23:48.051Z"
+    },
+    {
+      "id": "deckmaker-mqp4mwu3",
       "name": "鉱魔ゴーレムコントロール",
       "deck": {
         "core": "card_1755670973607",
@@ -463,14 +525,14 @@
           "card_1753661462969",
           "card_1753683243290",
           "card_1753683243290",
-          "card_1753664241159",
-          "card_1753661462969",
           "card_1753661462969",
           "card_1753682701261",
-          "card_1753682701261"
+          "card_1753682701261",
+          "card_1753904622342",
+          "card_1755654825932"
         ]
       },
-      "updatedAt": "2026-06-20T16:18:53.088Z"
+      "updatedAt": "2026-06-22T11:23:12.699Z"
     }
   ],
   "google108838653366835930197": [

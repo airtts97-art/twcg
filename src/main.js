@@ -62,6 +62,7 @@ const SERVER_BASE = (() => {
   }
   return "";
 })();
+const ONLINE_DEBUG = false;
 const RESOURCE_LABELS = {
   funds: "資金",
   people: "人",
@@ -1320,9 +1321,8 @@ function unitFieldColsForRow(row) {
   // 召喚行: col0-2=資源/Grand等, col3-5=SF左, col6=Core, col7-9=SF右, col10-12=Dump/Out/Grand等
   if (row === PLAYERS.p1.summonRow) return [3, 4, 5, 7, 8, 9];
   if (row === PLAYERS.p2.summonRow) return [3, 4, 5, 7, 8, 9];
-  // 戦闘行: col0-2=資源パネル(p1)またはTact(p2), col3-9=Standard, col10-12=Tact(p1)または資源パネル(p2)
-  if (row < ROWS / 2) return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-  return [3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  // 戦闘行: col3-9=Standard (ユニット配置可能領域)
+  return [3, 4, 5, 6, 7, 8, 9];
 }
 
 function isUnitFieldCell(row, col) {
@@ -3102,17 +3102,46 @@ async function loadServerConfig() {
 }
 
 let googleInitialized = false;
-function signInWithGoogle() {
-  if (googleSignInEnabled && googleClientId && window.google?.accounts?.id) {
-    if (!googleInitialized) {
-      window.google.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: handleGoogleCredential,
-      });
-      googleInitialized = true;
+let googleScriptLoading = null;
+function loadGoogleClientScript() {
+  if (window.google?.accounts?.id) return Promise.resolve();
+  if (googleScriptLoading) return googleScriptLoading;
+  googleScriptLoading = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Google sign-in script failed to load."));
+    document.head.appendChild(script);
+  });
+  return googleScriptLoading;
+}
+async function signInWithGoogle() {
+  if (googleSignInEnabled && googleClientId) {
+    try {
+      await loadGoogleClientScript();
+      if (!window.google?.accounts?.id) throw new Error("Google client unavailable.");
+      if (!googleInitialized) {
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: handleGoogleCredential,
+        });
+        googleInitialized = true;
+      }
+      window.google.accounts.id.prompt();
+      return;
+    } catch {
+      app.auth = {
+        provider: null,
+        signedIn: false,
+        name: "未ログイン",
+        email: null,
+        message: "Googleログイン準備に失敗しました。",
+      };
+      render();
+      return;
     }
-    window.google.accounts.id.prompt();
-    return;
   }
   app.auth = {
     provider: null,
@@ -3367,8 +3396,10 @@ function sendOnline(payload) {
     return false;
   }
   const str = JSON.stringify(payload);
-  const byteLen = new TextEncoder().encode(str).byteLength;
-  console.log("[sendOnline]", payload.type, payload.reason || "-", "strLen=", str.length, "byteLen=", byteLen);
+  if (ONLINE_DEBUG) {
+    const byteLen = new TextEncoder().encode(str).byteLength;
+    console.log("[sendOnline]", payload.type, payload.reason || "-", "strLen=", str.length, "byteLen=", byteLen);
+  }
   onlineSocket.send(str);
   return true;
 }
@@ -3384,12 +3415,12 @@ function sendOnlineStateSnapshot(reason = "action", opId = null) {
 }
 
 function requestOnlineStateSync(reason = "manual") {
-  if (app.match.status !== "online" || !app.match.roomCode) return false;
+  if (app.match.status !== "online" || !app.match.roomCode || queuedOnlineAction) return false;
   return sendOnline({ type: "syncRequest", roomCode: app.match.roomCode, reason });
 }
 
 setInterval(() => {
-  if (app.screen !== "game" || app.match.status !== "online") return;
+  if (app.screen !== "game" || app.match.status !== "online" || queuedOnlineAction) return;
   requestOnlineStateSync("poll");
 }, 2500);
 
@@ -5425,7 +5456,7 @@ function cleanupAllDestroyed(killer = null) {
 
 function canAttackCore(unit) {
   const player = state.players[unit.owner];
-  return player.side === "bottom" ? unit.row <= player.directRow : unit.row >= player.directRow;
+  return player.side === "bottom" ? unit.row < player.directRow : unit.row > player.directRow;
 }
 
 function cleanupDestroyed(unit, killer = null) {

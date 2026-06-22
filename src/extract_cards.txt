@@ -1,0 +1,21 @@
+From main.js - IMPLEMENTED EFFECTS (in abilityEffects object):
+1. produceResource - リソース生成
+2. drawCards - カード引く
+3. gainResource - リソース獲得
+4. millCards - デッキから墓地へ送る
+5. destroyAll - 全ユニット・タクト・ストラクト破壊
+6. searchSelfToHand - 自分を手札に検索
+7. destroyTargetStruct - 相手ストラクト破壊
+8. summonSelfFromDump - 墓地から自分を出す
+9. buffTagUnitsAtk - タグユニット攻撃力+
+10. buffFriendlyUnitsHp - 味方全体HP+
+11. buffFriendlyUnitsAtk - 味方全体ATK+
+12. descentEffect - [降臨] 効果
+13. searchUnitToCostHand - コスト制限でユニット検索
+14. searchCardToHand - カード名またはタグで検索
+15. summonSelfFromDumpMobile - 墓地から[機動]付きで出す
+16. mysticCapture - 神秘捕縛 選択効果
+17. damageEnemyCore - 敵コアダメージ
+18. damageTargetUnit - ユニットダメージ
+19. grantDestroyGain - 破壊時リソース獲得付与
+20. chooseExchange - リソース交換選択
