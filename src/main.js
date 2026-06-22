@@ -6709,7 +6709,7 @@ function drawBoard() {
       const isP2Summon = row === PLAYERS.p2.summonRow;
       const isSummon   = isP1Summon || isP2Summon;
 
-      const isTactZone    = !isSummon && ((isP1Row && col >= 10 && col <= 12) || (!isP1Row && col >= 0 && col <= 2));
+      const isTactZone    = false;
       const isGrandZone   = false;
       const isTactSummon  = isSummon && ((isP1Summon && col >= 10 && col <= 12) || (isP2Summon && col >= 0 && col <= 2));
       const isGrandSummon = isSummon && ((isP1Summon && col === 12) || (isP2Summon && col === 0));
@@ -6784,20 +6784,6 @@ function drawBoard() {
       if (unit) drawBoardCard(cx, cy, cW, cH, unit);
     }
 
-    // ゾーン境界破線 (戦闘行のみ)
-    const isSummonRow = (row === PLAYERS.p1.summonRow || row === PLAYERS.p2.summonRow);
-    if (!isSummonRow) {
-      ctx.save();
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 4]);
-      const cy0 = y + visualRow * cH;
-      // Standard|Tact 境界 (col10, 両プレイヤー共通)
-      ctx.strokeStyle = isP1Row ? "rgba(50,190,110,0.40)" : "rgba(220,70,60,0.40)";
-      const mx = x + 10 * cW;
-      ctx.beginPath(); ctx.moveTo(mx, cy0); ctx.lineTo(mx, cy0 + cH); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-    }
   }
 }
 
@@ -7249,25 +7235,6 @@ function drawTopHand() {
     drawCardBack(cx2, y + 5, cardW, cardH);
   }
 
-  // 区切り線
-  ctx.save();
-  ctx.strokeStyle = "rgba(200,60,60,0.3)";
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(x + handAreaW, y + 6); ctx.lineTo(x + handAreaW, y + h - 6); ctx.stroke();
-  ctx.restore();
-
-  // リソースエリア (右側)
-  const resX = x + handAreaW + 6;
-  const resW = w - handAreaW - 10;
-  const pillW = Math.floor((resW - (RESOURCE_KEYS.length - 1) * 3) / RESOURCE_KEYS.length);
-  const pillH = h - 10;
-  RESOURCE_KEYS.forEach((key, i) => {
-    const px = resX + i * (pillW + 3);
-    const colors = RESOURCE_PILL_COLORS[key] || { bg: "rgba(60,20,20,0.6)", border: "rgba(160,60,60,0.5)", text: "#c09090", glow: "#804040" };
-    const amt = opponent.resources[key] || 0;
-    roundRect(px, y + 5, pillW, pillH, 3, colors.bg, colors.border, 0.8);
-    drawResourceAmount(key, amt, px + Math.max(2, Math.floor((pillW - 22) / 2)), y + 8, 22);
-  });
   ctx.textAlign = "left";
 }
 
