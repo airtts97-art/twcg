@@ -41,5 +41,5 @@
   "defense": 1,
   "description": "出撃時：味方ユニット全体のHPを+1する。",
   "flavorText": "生命の妖精は多くの命を強化する",
-  "imageUrl": ""
+  "imageUrl": "/assets/cards/lifeFairy.jpeg"
 }
