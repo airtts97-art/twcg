@@ -190,6 +190,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782192967652",  // 第108高人歩兵大隊
   "card_1782152241822",  // 大建設計画
   "card_1782240416000",  // 第82空挺歩兵大隊
+  "card_1782239599000",  // 第302衝撃大隊
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -1115,6 +1116,7 @@ const abilityEffects = {
       playerId,
       revealed,
       tagFilter: ability.tagFilter || null,
+      shuffleToBottom: ability.shuffleToBottom || false,
       queueItem: { playerId, card, ability, source },
     };
     game.selected = { kind: "choice", choice: "revealPick" };
@@ -3007,6 +3009,12 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "bigConstructionPlanPlay" });
     // レスト：金3鉱5燃2 / 5回後自壊 / 破壊時コスト総量18以上を手札 は bigConstructionPlanActivate で処理
+  }
+
+  if (card.id === "card_1782239599000") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onDamageReceived", effect: "revealTopNPick", amount: 5, tagFilter: "王国勇者主義", shuffleToBottom: true });
+    // [衝撃]は keywords から自動付与
   }
 
   return abilities;
@@ -4978,7 +4986,8 @@ function resolveRevealPick(cardIndex) {
   }
   pending.revealed.splice(cardIndex, 1);
   player.hand.push(card);
-  for (const c of pending.revealed) player.mainDeck.push(c);
+  const rest = pending.shuffleToBottom ? shuffleCards(pending.revealed) : pending.revealed;
+  for (const c of rest) player.mainDeck.push(c);
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
@@ -4993,7 +5002,8 @@ function resolveRevealPickSkip() {
   const pending = state.pendingChoice;
   if (pending?.type !== "revealPick") return false;
   const player = state.players[pending.playerId];
-  for (const c of pending.revealed) player.mainDeck.push(c);
+  const rest = pending.shuffleToBottom ? shuffleCards(pending.revealed) : pending.revealed;
+  for (const c of rest) player.mainDeck.push(c);
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
