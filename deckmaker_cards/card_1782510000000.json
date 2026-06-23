@@ -4,7 +4,7 @@
   "type": "ユニット",
   "rarity": "通常",
   "world": "ユニフォール",
-  "tags": ["グラダナ連邦共和国", "機械", "車両"],
+  "tags": ["グラダナ連邦共和国", "機械", "車両", "戦車"],
   "roles": [],
   "costs": {
     "play": { "gold": 4, "human": 2, "nature": 0, "mineral": 1, "fuel": 3, "electric": 0, "magic": 0 },
