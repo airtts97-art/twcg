@@ -7535,7 +7535,11 @@ function drawCoreInBoardCell(cx, cy, cW, cH, playerId) {
   ctx.fillRect(cx + 4, barY, barW * ratio, 4);
 
   addCardHover(cx, cy, cW, cH, coreCard);
-  addHit(cx, cy, cW, cH, () => { state.message = `${player.name} Core HP: ${hp}/${maxHp}`; });
+  if (playerId !== state.activePlayer && selectedUnit()) {
+    addHit(cx, cy, cW, cH, () => attackWithSelectedUnit({ kind: "core" }));
+  } else {
+    addHit(cx, cy, cW, cH, () => { state.message = `${player.name} Core HP: ${hp}/${maxHp}`; });
+  }
 }
 
 // 召喚行 Deck側セル: DECK + GY
