@@ -2490,6 +2490,26 @@ function parseDeckmakerAbilities(card, localType) {
     }
   }
 
+  // onActivate (no rest): "X(cost) を支払い、レストせずに：effect" (unit cards only)
+  if (localType === "unit") {
+    const noRestMatch = text.match(/(?:([^。\n\r]*?)(?:を支払い|を消費)[、,\s]*)?(?:レストせずに|レストしない)[：:](.*?)(?=[。]|$)/ms);
+    if (noRestMatch) {
+      const costText = noRestMatch[1] || "";
+      const effectText = (noRestMatch[2] || "").trim();
+      const activationCost = parseActivationCostFromText(costText);
+      if (/デッキから.*タクトカード/.test(effectText) || /デッキからタクト/.test(effectText)) {
+        abilities.push({ trigger: "onActivate", effect: "searchDeckByType", cardType: "tact", amount: 1, activationCost, noRest: true });
+      } else if (/クォーツトークン/.test(effectText)) {
+        abilities.push({ trigger: "onActivate", effect: "summonToken", tokenId: "quartzToken", activationCost, noRest: true });
+      } else if (/デッキからコスト総量/.test(effectText)) {
+        const m2 = effectText.match(/コスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)以下(?:の\[([^\]]+)\])?ユニット/);
+        if (m2) {
+          abilities.push({ trigger: "onActivate", effect: "searchUnitToCostHand", maxCost: parseDeckmakerKeywordValue(m2[1]) || 3, tag: m2[2] || null, amount: 1, activationCost, noRest: true });
+        }
+      }
+    }
+  }
+
   if (card.id === "card_1755655012242") {
     abilities.length = 0;
     abilities.push({
@@ -4881,7 +4901,7 @@ function resolveChooseActivationResource(resource) {
   }
   addResources(player, resource, -pending.amount);
   const unit = state.board[pending.unitRow]?.[pending.unitCol];
-  if (unit) unit.rested = true;
+  if (unit && !pending.noRest) unit.rested = true;
   const costLabel = `${RESOURCE_LABELS[resource] || resource}${pending.amount}`;
   log(state, `${player.name}: 「${unit?.name || "?"}」起動（${costLabel}）`);
   state.pendingChoice = null;
@@ -5579,6 +5599,7 @@ function activateSelectedUnit() {
       unitRow: unit.row,
       unitCol: unit.col,
       abilityEffect: ability.effect,
+      noRest: ability.noRest || false,
     };
     state.selected = { kind: "choice", choice: "chooseActivationResource" };
     state.message = "支払う資源を1種類選んでください。";
@@ -5587,7 +5608,7 @@ function activateSelectedUnit() {
   }
   const cost = ability.activationCost || {};
   if (!pay(player, cost)) return fail("起動コストが不足しています。");
-  unit.rested = true;
+  if (!ability.noRest) unit.rested = true;
   const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
   log(state, `${player.name}: 「${unit.name}」起動${costLabel ? `（${costLabel}）` : ""}`);
   triggerAbilities(state, state.activePlayer, unit, "onActivate");
