@@ -1,0 +1,20 @@
+{
+  "id": "card_1782204551547",
+  "name": "第76森人狙撃分隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ヘルメネアの大地",
+  "tags": ["リ・サンティウ連合王国", "歩兵", "狙撃", "純人間"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 0, "human": 4, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "act": { "gold": 0, "human": 0, "nature": 3, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 2,
+  "defense": 1,
+  "description": "[貫通②][対空①][曲射①][潜伏]\n敵撃破時：人①を得る",
+  "flavorText": "旧セラート地帯塹壕戦はまさに地獄だった。遮蔽物の影から指一本でも出せば撃ち抜かれ、補給の為でさえ戦友だったものを盾に動くしかなかった。",
+  "imageUrl": "assets/cards/card_1782204551547.jpeg"
+}
