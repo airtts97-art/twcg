@@ -1261,7 +1261,15 @@ const abilityEffects = {
     const def = TOKEN_DEFS[ability.tokenId];
     if (!def) return;
     const player = game.players[playerId];
-    const col = findFirstEmptyColInRow(game, player.summonRow);
+    const hasRaid = (def.keywords || []).some((k) => k.id === "raid");
+    const raidRow = player.summonRow + player.forward;
+    let targetRow = player.summonRow;
+    let col = -1;
+    if (hasRaid && !enemyInRow(playerId, raidRow)) {
+      col = findFirstEmptyColInRow(game, raidRow);
+      if (col >= 0) targetRow = raidRow;
+    }
+    if (col < 0) col = findFirstEmptyColInRow(game, player.summonRow);
     if (col < 0) {
       log(game, `${player.name}: 場が満員のため「${def.name}」を出せない`);
       return;
@@ -1281,7 +1289,7 @@ const abilityEffects = {
       hp: def.hp,
       instanceId: nextInstanceId++,
       owner: playerId,
-      row: player.summonRow,
+      row: targetRow,
       col,
       maxHp: def.hp,
       currentHp: def.hp,
@@ -1292,7 +1300,7 @@ const abilityEffects = {
       fromDump: false,
       isToken: true,
     };
-    game.board[player.summonRow][col] = unit;
+    game.board[targetRow][col] = unit;
     log(game, `${player.name}: 「${def.name}」を生成`);
   },
   gainActCostResources({ game, playerId, card, target }) {
