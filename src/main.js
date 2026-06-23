@@ -8898,6 +8898,30 @@ function drawCard(x, y, w, h, card, options = {}) {
     // フィールド表示用: アートのみ、名前・ステータスなし
     drawCardArt(x + 2, y + 2, w - 4, h - 4, card, options);
     if (card.rested && !options.noRestOverlay) drawRestedOverlay(x, y, w, h, options);
+    if ((card.counters || 0) > 0) {
+      const r = options.small ? 9 : 12;
+      const bx = x + r + 4;
+      const by = y + h - r - 4;
+      ctx.save();
+      ctx.shadowColor = "#c0a000";
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(180,130,0,0.92)";
+      ctx.fill();
+      ctx.strokeStyle = "#ffe060";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#fff8c0";
+      ctx.font = `800 ${options.small ? 9 : 11}px 'Yu Gothic UI', sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(card.counters), bx, by);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.restore();
+    }
     return;
   }
 
@@ -8938,6 +8962,13 @@ function drawCard(x, y, w, h, card, options = {}) {
       ctx.fillStyle = hpRatio < 0.5 ? "#ff8080" : "#80e080";
       ctx.fillText(`${curHp}`, x + w - 5, statsY + 12);
       ctx.textAlign = "left";
+      if ((card.counters || 0) > 0) {
+        ctx.fillStyle = "#ffe060";
+        ctx.font = `700 ${Math.max(8, fs - 2)}px 'Yu Gothic UI', sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText(`◆${card.counters}`, x + w / 2, statsY + 12);
+        ctx.textAlign = "left";
+      }
       if (statsH > 30) drawCostIcons(card.cost || {}, x + 5, statsY + 15, { size: Math.max(10, Math.min(14, Math.floor(w / 7))), showNone: true });
       const keywords = keywordLabels(card).join(" ");
       if (keywords && statsH > 42) {
