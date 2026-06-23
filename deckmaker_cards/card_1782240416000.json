@@ -4,7 +4,7 @@
   "type": "ユニット",
   "rarity": "通常",
   "world": "ユニフォール",
-  "tags": ["グラダブ連邦共和国", "歩兵", "空挺", "純人間"],
+  "tags": ["グラダナ連邦共和国", "歩兵", "空挺", "純人間"],
   "roles": [],
   "costs": {
     "play": { "gold": 2, "human": 2, "nature": 0, "mineral": 0, "fuel": 1, "electric": 0, "magic": 0 },
