@@ -532,10 +532,10 @@ const abilityEffects = {
   addCounterIfTagDestroyed({ game, playerId, card, ability, source }) {
     const destroyed = source?.target;
     if (!destroyed) return;
-    const tag = ability.tag || "純人間";
-    if (!(destroyed.tags || []).includes(tag)) return;
+    if (!matchesCond(destroyed, ability.cond || ability.tag)) return;
     card.counters = (card.counters || 0) + (ability.amount || 1);
-    log(game, `${game.players[playerId].name}: 「${card.name}」唯字論カウンター +${ability.amount || 1}（${tag}破壊）`);
+    const label = ability.cond?.tag || ability.cond?.nameContains || ability.tag || "?";
+    log(game, `${game.players[playerId].name}: 「${card.name}」カウンター +${ability.amount || 1}（${label}破壊）`);
   },
   discardForDraw({ game, playerId, card, ability }) {
     const player = game.players[playerId];
@@ -544,7 +544,7 @@ const abilityEffects = {
       type: "discardForDraw",
       playerId,
       cardName: card.name,
-      pureHumanTag: ability.pureHumanTag || "純人間",
+      bonusCond: ability.cond || (ability.pureHumanTag ? { tag: ability.pureHumanTag } : { tag: "純人間" }),
     };
     return "pending";
   },
@@ -555,12 +555,13 @@ const abilityEffects = {
   },
   payGoldAndDeployHero({ game, playerId, card, ability }) {
     const player = game.players[playerId];
+    const heroCond = ability.cond || (ability.heroTag ? { tag: ability.heroTag } : { tag: "勇者" });
     const heroOptions = player.hand
       .map((c, i) => {
         const totalCost = totalCostAmount(c.cost || {});
         return { card: c, handIdx: i, totalCost, minGold: Math.ceil(totalCost / 2) };
       })
-      .filter((opt) => opt.card.type === "unit" && (opt.card.tags || []).includes(ability.heroTag || "勇者"));
+      .filter((opt) => opt.card.type === "unit" && matchesCond(opt.card, heroCond));
     if (!heroOptions.length) {
       log(game, `${player.name}: 「${card.name}」手札に[勇者]ユニットなし`);
       return;
@@ -1432,7 +1433,8 @@ const abilityEffects = {
       cards: player.hand.filter((c) => (c.tags || []).includes(tag)),
     }));
     // 必須：[勇者]を見せる（ログのみ、手札に存在は play 時チェック済み）
-    const heroCard = player.hand.find((c) => (c.tags || []).includes(ability.requireTagInHand || "勇者"));
+    const heroCond2 = ability.cond || (ability.requireTagInHand ? { tag: ability.requireTagInHand } : null);
+    const heroCard = heroCond2 ? player.hand.find((c) => matchesCond(c, heroCond2)) : null;
     if (heroCard) log(game, `${player.name}: 「${heroCard.name}」を相手に見せた`);
     game.pendingChoice = {
       type: "revealTagsForResources",
@@ -2464,18 +2466,22 @@ function parseDeckmakerAbilities(card, localType) {
     }
   }
 
-  // 手札の[勇者]を見せて発動 + タグカードを見せて人・金×N
-  const revealHeroMatch = text.match(/手札の\[([^\]]+)\]ユニットを相手に見せて発動/);
+  // 手札の[tag]/「name」を見せて発動 + タグカードを見せて人・金×N
+  const revealHeroTagMatch = text.match(/手札の\[([^\]]+)\]ユニットを相手に見せて発動/);
+  const revealHeroNameMatch = text.match(/手札の「([^」]+)」ユニットを相手に見せて発動/);
   const revealTagGainMatch = text.match(/手札から(.+?)カードをそれぞれ、1枚まで.*?見せてもよい.*?枚数×([0-9０-９①②③④⑤⑥⑦⑧⑨⑩]*)だけ([人金自鉱燃電魔]+)と([人金自鉱燃電魔]+)を得る/);
+  const revealHeroMatch = revealHeroTagMatch || revealHeroNameMatch;
   if (revealHeroMatch && revealTagGainMatch) {
-    const requireTag = revealHeroMatch[1];
+    const heroCond = revealHeroTagMatch
+      ? { tag: revealHeroTagMatch[1] }
+      : { nameContains: revealHeroNameMatch[1] };
     const tagStr = revealTagGainMatch[1];
     const tagGroups = tagStr.match(/\[([^\]]+)\]/g)?.map((t) => t.slice(1, -1)) || [];
     const per = parseDeckmakerKeywordValue(revealTagGainMatch[2]) || 3;
     const resMap = { 人: "people", 金: "funds", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic" };
     const res1 = resMap[revealTagGainMatch[3]] || "people";
     const res2 = resMap[revealTagGainMatch[4]] || "funds";
-    abilities.push({ trigger: baseTrigger, effect: "revealTagsForResources", requireTagInHand: requireTag, tagGroups, resourcePer: per, resources: [res1, res2] });
+    abilities.push({ trigger: baseTrigger, effect: "revealTagsForResources", cond: heroCond, tagGroups, resourcePer: per, resources: [res1, res2] });
   }
 
   // 被ダメージ時：破壊されず + 資源支払いで+N/+M
@@ -2921,19 +2927,19 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1782330000000") {
     abilities.length = 0;
-    abilities.push({ trigger: "onAttack", effect: "payGoldAndDeployHero", heroTag: "勇者" });
+    abilities.push({ trigger: "onAttack", effect: "payGoldAndDeployHero", cond: { tag: "勇者" } });
   }
 
   if (card.id === "card_1782180616372") {
     abilities.length = 0;
-    abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "addCounterIfTagDestroyed", tag: "純人間", amount: 1 });
+    abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "addCounterIfTagDestroyed", cond: { tag: "純人間" }, amount: 1 });
     abilities.push({ trigger: "onActivate", effect: "spendCountersForBuff", costCounters: 5, atkBuff: 5, hpBuff: 5, noRest: true });
     abilities.push({ effect: "selfCounterDeathShield", cost: 2 });
   }
 
   if (card.id === "card_1782182910548") {
     abilities.length = 0;
-    abilities.push({ trigger: "onPlay", effect: "discardForDraw", pureHumanTag: "純人間" });
+    abilities.push({ trigger: "onPlay", effect: "discardForDraw", cond: { tag: "純人間" } });
     abilities.push({ trigger: "onPlay", effect: "grantCounterArmor", armorValue: 2 });
   }
 
@@ -4661,6 +4667,15 @@ function totalCostAmount(cost = {}) {
   return Object.values(cost).reduce((sum, amount) => sum + amount, 0);
 }
 
+// 「name」→ 名前に含む、[tag] → タグに含む の条件チェック
+function matchesCond(card, cond) {
+  if (!cond) return true;
+  if (typeof cond === "string") return (card.tags || []).includes(cond); // 旧形式互換
+  if (cond.tag) return (card.tags || []).includes(cond.tag);
+  if (cond.nameContains) return (card.name || "").includes(cond.nameContains);
+  return true;
+}
+
 function drawCards(game, playerId, count, announce = true) {
   const player = game.players[playerId];
   const drewAny = player.mainDeck.length > 0 && count > 0;
@@ -5037,7 +5052,7 @@ function resolveDiscardForDraw(index) {
   log(state, `${player.name}: 「${discarded.name}」を捨てた`);
   drawCards(state, pending.playerId, 1);
   const drawn = player.hand[player.hand.length - 1];
-  if (drawn && (drawn.tags || []).includes(pending.pureHumanTag || "純人間")) {
+  if (drawn && matchesCond(drawn, pending.bonusCond)) {
     drawCards(state, pending.playerId, 1);
     log(state, `${player.name}: [純人間]を引いたのでもう1枚ドロー`);
   }
@@ -5716,10 +5731,11 @@ function playTactFromHand(handIndex) {
         return fail(`${card.name}: 対象がいないため使用できません。`);
       }
     }
-    if (ability.trigger === "onPlay" && ability.requireTagInHand) {
-      const tag = ability.requireTagInHand;
-      const hasTag = player.hand.some((c) => c !== card && (c.tags || []).includes(tag));
-      if (!hasTag) return fail(`${card.name}: 手札に[${tag}]ユニットが必要です。`);
+    if (ability.trigger === "onPlay" && (ability.requireTagInHand || ability.cond)) {
+      const playCond = ability.cond || { tag: ability.requireTagInHand };
+      const hasMatch = player.hand.some((c) => c !== card && matchesCond(c, playCond));
+      const condLabel = playCond.tag ? `[${playCond.tag}]` : `「${playCond.nameContains}」`;
+      if (!hasMatch) return fail(`${card.name}: 手札に${condLabel}ユニットが必要です。`);
     }
   }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
