@@ -6244,7 +6244,8 @@ function attackWithSelectedUnit(target) {
   const rawDamage = calculateAttackDamage(unit, defender);
   const damage = hasKeyword(defender, "oneDamage") ? Math.min(rawDamage, 1) : rawDamage;
   defender.currentHp -= damage;
-  triggerAbilities(state, defender.owner, defender, "onDamageReceived", { source: unit, damage });
+  const damageReceiveResult = triggerAbilities(state, defender.owner, defender, "onDamageReceived", { source: unit, damage });
+  if (damageReceiveResult === "pending") return "pending";
   if (damage > 0 && hasKeyword(unit, "shock")) defender.rested = true;
   applyCleave(unit, defender);
   if (canCounterAttack(defender, unit)) {
