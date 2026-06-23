@@ -576,6 +576,27 @@ const abilityEffects = {
       }
     }
   },
+  coreStructStartDiscardOrHP({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    if (!player.hand.length) {
+      player.core.hp -= ability.hpCostOnDecline || 2;
+      for (const [res, amt] of Object.entries(ability.gainOnDecline || {})) addResources(player, res, amt);
+      log(game, `${player.name}: 「${card.name}」手札なし → コアHP-${ability.hpCostOnDecline || 2}、資源獲得`);
+      checkWinner(game);
+      return;
+    }
+    game.pendingChoice = {
+      type: "coreStructStartDiscard",
+      playerId,
+      cardName: card.name,
+      gainOnDiscard: ability.gainOnDiscard || {},
+      gainOnDecline: ability.gainOnDecline || {},
+      hpCostOnDecline: ability.hpCostOnDecline || 2,
+    };
+    game.selected = { kind: "choice", choice: "coreStructStartDiscard" };
+    game.message = `「${card.name}」手札を1枚捨てますか？`;
+    return "pending";
+  },
   addCounterIfTagDestroyed({ game, playerId, card, ability, source }) {
     const destroyed = source?.target;
     if (!destroyed) return;
@@ -3017,6 +3038,11 @@ function parseDeckmakerAbilities(card, localType) {
     // [衝撃]は keywords から自動付与
   }
 
+  if (card.id === "card_1782450000000") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onStructurePhaseStart", effect: "coreStructStartDiscardOrHP", gainOnDiscard: { nature: 1, people: 2 }, gainOnDecline: { nature: 1 }, hpCostOnDecline: 2 });
+  }
+
   return abilities;
 }
 
@@ -5156,6 +5182,52 @@ function resolveDiscardForDraw(index) {
   return true;
 }
 
+function resolveCoreStructStartDiscard(handIndex) {
+  if (!canControlActivePlayer()) return false;
+  const pending = state.pendingChoice;
+  if (pending?.type !== "coreStructStartDiscard") return false;
+  const player = state.players[pending.playerId];
+  if (handIndex === undefined || !player.hand[handIndex]) return false;
+  const discarded = player.hand.splice(handIndex, 1)[0];
+  player.dump.push(discarded);
+  notifyDumpChanged(state, pending.playerId);
+  for (const [res, amt] of Object.entries(pending.gainOnDiscard)) addResources(player, res, amt);
+  const label = Object.entries(pending.gainOnDiscard).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("・");
+  log(state, `${player.name}: 「${discarded.name}」捨て → ${label}`);
+  const afterResolve = pending._afterResolve;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (afterResolve?.type === "continueStructPhase") {
+    finishStartTurn(state, afterResolve.playerId, afterResolve.resourcesBefore, afterResolve.handBefore);
+  }
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveCoreStructStartDecline() {
+  if (!canControlActivePlayer()) return false;
+  const pending = state.pendingChoice;
+  if (pending?.type !== "coreStructStartDiscard") return false;
+  const player = state.players[pending.playerId];
+  player.core.hp -= pending.hpCostOnDecline || 2;
+  for (const [res, amt] of Object.entries(pending.gainOnDecline)) addResources(player, res, amt);
+  const label = Object.entries(pending.gainOnDecline).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("・");
+  log(state, `${player.name}: 手札を捨てず → コアHP-${pending.hpCostOnDecline}${label ? `、${label}` : ""}`);
+  checkWinner(state);
+  const afterResolve = pending._afterResolve;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (afterResolve?.type === "continueStructPhase") {
+    finishStartTurn(state, afterResolve.playerId, afterResolve.resourcesBefore, afterResolve.handBefore);
+  }
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function resolveReviveFromDump(index) {
   const pending = state.pendingChoice;
   if (pending?.type !== "reviveFromDump") return false;
@@ -5546,6 +5618,19 @@ function startTurn(game, playerId) {
       triggerAbilities(game, playerId, unit, "onTurnStart");
     }
   }
+  // Core onStructurePhaseStart ability (e.g. 六端星の第一王城)
+  if ((player.core.abilities || []).some((a) => a.trigger === "onStructurePhaseStart")) {
+    const result = triggerAbilities(game, playerId, player.core, "onStructurePhaseStart");
+    if (result === "pending" && game.pendingChoice) {
+      game.pendingChoice._afterResolve = { type: "continueStructPhase", playerId, resourcesBefore, handBefore };
+      return;
+    }
+  }
+  finishStartTurn(game, playerId, resourcesBefore, handBefore);
+}
+
+function finishStartTurn(game, playerId, resourcesBefore, handBefore) {
+  const player = game.players[playerId];
   const structsWithEffect = player.structs.filter(
     (s) => (s.abilities || []).some((a) => a.trigger === "onStructurePhase")
   );
@@ -8356,6 +8441,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "payForBuff") drawPayForBuffPanel(pending);
   else if (pending.type === "revealTagsForResources") drawRevealTagsForResourcesPanel(pending);
   else if (pending.type === "discardForDraw") drawDiscardForDrawPanel(pending);
+  else if (pending.type === "coreStructStartDiscard") drawCoreStructStartDiscardPanel(pending);
   else if (pending.type === "deployHeroFromAttack") drawDeployHeroFromAttackPanel(pending);
 }
 
@@ -8648,6 +8734,45 @@ function drawDiscardForDrawPanel(pending) {
   });
   if (isController && sel !== undefined) {
     drawButton(px + pw / 2 - 60, py + ph - 48, 120, 34, "捨てる", () => resolveDiscardForDraw(sel), null, { accent: "p1" });
+  }
+}
+
+function drawCoreStructStartDiscardPanel(pending) {
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const player = state.players[pending.playerId];
+  const hand = player.hand;
+  const cardW = 80, cardH = 112, gap = 8;
+  const cols = Math.min(hand.length, 8);
+  const pw = Math.max(500, cols * (cardW + gap) + 40);
+  const ph = 310;
+  const px = (W - pw) / 2, py = (H - ph) / 2;
+  const sel = pending.selectedIdx;
+  drawChoicePanelBase(px, py, pw, ph, "rgba(40,80,160,0.7)", "#4060c0");
+  ctx.fillStyle = "#c0d8ff";
+  ctx.font = "700 17px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」— ストラクトフェーズ開始時`, px + 20, py + 30);
+  ctx.fillStyle = "rgba(180,210,255,0.9)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  const discardLabel = Object.entries(pending.gainOnDiscard).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("・");
+  const declineLabel = Object.entries(pending.gainOnDecline).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("・");
+  ctx.fillText(`捨てた場合：${discardLabel}`, px + 20, py + 54);
+  ctx.fillText(`捨てない場合：コアHP-${pending.hpCostOnDecline}${declineLabel ? `、${declineLabel}` : ""}`, px + 20, py + 74);
+  const cardsY = py + 94;
+  hand.forEach((card, i) => {
+    const cx = px + 20 + i * (cardW + gap);
+    if (isController) {
+      addHit(cx, cardsY, cardW, cardH, () => {
+        pending.selectedIdx = pending.selectedIdx === i ? undefined : i;
+        render();
+      });
+    }
+    drawCard(cx, cardsY, cardW, cardH, card, { selected: sel === i, small: true });
+  });
+  if (isController) {
+    if (sel !== undefined) {
+      drawButton(px + pw / 2 - 135, py + ph - 48, 120, 34, "捨てる", () => resolveCoreStructStartDiscard(sel), null, { accent: "p1" });
+    }
+    drawButton(px + pw / 2 + (sel !== undefined ? 5 : -100), py + ph - 48, 210, 34, `スキップ（コアHP-${pending.hpCostOnDecline}）`, () => resolveCoreStructStartDecline());
   }
 }
 

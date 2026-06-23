@@ -1,0 +1,19 @@
+{
+  "id": "card_1782450000000",
+  "name": "六端星の第一王城",
+  "type": "コア",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["リッサジオール連合王国"],
+  "roles": [],
+  "life": 20,
+  "initialHand": 5,
+  "drawPerTurn": 1,
+  "handLimit": 7,
+  "initialResources": { "gold": 3, "nature": 2 },
+  "generates": {},
+  "defeatCondition": "このカードが破壊される。",
+  "description": "自分のストラクトフェーズの始め、手札を1枚捨てることができる。\n捨てた場合：自然+1・人+2を得る。\n捨てない場合：コアのHPを2減らし自然+1を得る。",
+  "flavorText": "\"この国は偉大で力強かった。しかし、この国には致命的な欠陥がある、権力は偏ってはならないということだ、なんと愚かな…\"",
+  "imageUrl": "assets/cards/card_1782450000000.jpeg"
+}
