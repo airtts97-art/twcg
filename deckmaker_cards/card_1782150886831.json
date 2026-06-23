@@ -1,0 +1,45 @@
+{
+  "id": "card_1782150886831",
+  "name": "超巨大高射砲塔",
+  "type": "フォート",
+  "rarity": "伝説",
+  "world": "ニュートラル",
+  "tags": ["砲", "要塞"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 6,
+      "human": 6,
+      "nature": 0,
+      "mineral": 6,
+      "fuel": 6,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 3,
+      "fuel": 3,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 10,
+  "defense": 15,
+  "description": "[装甲⑤][衝撃][連撃⓶][対空⑤][曲射⓶][警戒][守護][不動]\n敵撃破時：鉱３を得る",
+  "flavorText": "多数の高射砲が地上を支配し空へと挑む。もはやこの方の高みに打ち勝てる者はいない。無論いなかったことになっただけではあるが。",
+  "imageUrl": "/assets/cards/card_1782150886831.jpeg"
+}

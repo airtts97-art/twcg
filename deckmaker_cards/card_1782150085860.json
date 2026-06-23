@@ -1,0 +1,45 @@
+{
+  "id": "card_1782150085860",
+  "name": "トーチカ",
+  "type": "フォート",
+  "rarity": "通常",
+  "world": "ニュートラル",
+  "tags": ["要塞"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 2,
+      "human": 1,
+      "nature": 0,
+      "mineral": 1,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 1,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 2,
+  "defense": 4,
+  "description": "[装甲⓶][衝撃][警戒][奇襲][不動][不攻]",
+  "flavorText": "「この中なら当分安全だ」",
+  "imageUrl": "/assets/cards/card_1782150085860.jpeg"
+}

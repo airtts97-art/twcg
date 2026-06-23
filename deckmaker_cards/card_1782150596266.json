@@ -1,0 +1,45 @@
+{
+  "id": "card_1782150596266",
+  "name": "超巨大要塞",
+  "type": "フォート",
+  "rarity": "伝説",
+  "world": "ニュートラル",
+  "tags": ["拠点", "砲", "要塞"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 6,
+      "human": 6,
+      "nature": 0,
+      "mineral": 7,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 3,
+      "fuel": 3,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 5,
+  "defense": 12,
+  "description": "[装甲⑩][貫通⑤][衝撃][連撃⓶][警戒][守護][不動]\n敵撃破時：鉱３と燃３を得る",
+  "flavorText": "勝利のために築かれ、敗北を忘れた要塞。もはやその外がどうであろうと、終戦を拒み続ける最後の象徴となりうるだろう。",
+  "imageUrl": "/assets/cards/card_1782150596266.jpeg"
+}

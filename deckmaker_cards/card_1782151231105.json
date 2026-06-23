@@ -1,0 +1,45 @@
+{
+  "id": "card_1782151231105",
+  "name": "超巨大報復砲",
+  "type": "フォート",
+  "rarity": "伝説",
+  "world": "ニュートラル",
+  "tags": ["砲", "要塞", "機械"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 7,
+      "human": 3,
+      "nature": 0,
+      "mineral": 7,
+      "fuel": 5,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 5,
+      "fuel": 5,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 15,
+  "defense": 1,
+  "description": "[装甲①][衝撃][曲射③][不動][巨撃]\n敵撃破時：鉱5、燃3を得る",
+  "flavorText": "「こんな木偶の坊の弾に当たるヤツなんているのか？」と疑問を呈した者すら、この砲の報復の前では木偶の坊にしかなれなかった。",
+  "imageUrl": "/assets/cards/card_1782151231105.jpeg"
+}

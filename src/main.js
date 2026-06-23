@@ -91,6 +91,7 @@ const KEYWORD_DEFINITIONS = {
   mobile: { label: "機動", description: "Once each turn, moving does not rest this unit." },
   multiStrike: { label: "連撃", description: "Can attack this many times before resting." },
   flying: { label: "航空", description: "Cannot be attacked or countered by non-flying units with ATK at or below the value." },
+  antiAir: { label: "対空", description: "Can attack flying units regardless of their flying value." },
   arc: { label: "曲射", description: "Can attack up to this many rows ahead without counterattack." },
   legendary: { label: "伝説", description: "Only one copy should be put in a deck." },
   alert: { label: "警戒", description: "Unrests at the end of its controller's turn." },
@@ -2118,7 +2119,7 @@ function deckmakerTypeToLocal(cardOrType) {
   const type = typeof cardOrType === "object" ? cardOrType?.type : cardOrType;
   const value = String(type || "").trim().toLowerCase();
   if (["core", "コア"].includes(value)) return "core";
-  if (["unit", "ユニット"].includes(value)) return "unit";
+  if (["unit", "ユニット", "fort", "フォート"].includes(value)) return "unit";
   if (["tact", "tactic", "command", "指令", "タクト"].includes(value)) return "tact";
   if (["wild"].includes(value)) return "wild";
   if (["grand", "グランド"].includes(value)) return "grand";
@@ -2153,34 +2154,40 @@ function fromDeckmakerCosts(costs = {}) {
 
 function parseDeckmakerKeywordValue(raw = "") {
   const text = String(raw);
-  const match = text.match(/[0-9０-９①②③④⑤⑥⑦⑧⑨]+/);
+  const match = text.match(/[0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]+/);
   if (!match) return undefined;
   const token = match[0];
-  const circled = { "①": 1, "②": 2, "③": 3, "④": 4, "⑤": 5, "⑥": 6, "⑦": 7, "⑧": 8, "⑨": 9 };
+  const circled = {
+    "①": 1, "②": 2, "③": 3, "④": 4, "⑤": 5, "⑥": 6, "⑦": 7, "⑧": 8, "⑨": 9, "⑩": 10,
+    "⓵": 1, "⓶": 2, "⓷": 3, "⓸": 4, "⓹": 5, "⓺": 6, "⓻": 7, "⓼": 8, "⓽": 9, "⓾": 10,
+  };
   if (circled[token]) return circled[token];
   return Number(token.replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))) || undefined;
 }
 
 function parseDeckmakerKeywords(card) {
   const text = `${card.description || ""}\n${(card.keywords || []).join(" ")}`;
+  const NUM = String.raw`[①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾0-9０-９]*`;
+  const numRe = (label) => new RegExp(`${label}${NUM}`, "g");
   const patterns = [
-    ["armor", /装甲[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
-    ["pierce", /貫通[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["armor", numRe("装甲")],
+    ["pierce", numRe("貫通")],
     ["shock", /衝撃/g],
     ["charge", /帯電/g],
     ["mobile", /機動/g],
-    ["multiStrike", /連撃[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
-    ["flying", /航空[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
-    ["arc", /曲射[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["multiStrike", numRe("連撃")],
+    ["flying", numRe("航空")],
+    ["antiAir", numRe("対空")],
+    ["arc", numRe("曲射")],
     ["legendary", /伝説/g],
     ["alert", /警戒/g],
     ["guard", /守護/g],
-    ["selfDestruct", /自爆[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["selfDestruct", numRe("自爆")],
     ["raid", /奇襲/g],
     ["immobile", /不動/g],
     ["noAttack", /不攻/g],
     ["soulPay", /魂/g],
-    ["cleave", /巨撃[①②③④⑤⑥⑦⑧⑨0-9０-９]*/g],
+    ["cleave", numRe("巨撃")],
     ["oneDamage", /ダメージを1[づず]つしか受けない/g],
   ];
   const keywords = [];
@@ -2305,20 +2312,39 @@ function parseDeckmakerAbilities(card, localType) {
     }
   }
 
-  // onDestroyEnemyUnit resource gain (structs and units): "相手ユニットを破壊するたび"
+  // onDestroyEnemyUnit resource gain (structs and units): "相手ユニットを破壊するたび" / "敵撃破時"
   const destroyGainPatterns = [
-    [/相手.*?破壊.*?人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
-    [/相手.*?破壊.*?金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
-    [/相手.*?破壊.*?自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
-    [/相手.*?破壊.*?鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
-    [/相手.*?破壊.*?電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
-    [/相手.*?破壊.*?魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
   ];
   for (const [pattern, resource] of destroyGainPatterns) {
     const match = text.match(pattern);
     if (match) {
       const amount = parseDeckmakerKeywordValue(match[1]) || 1;
       abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource, amount });
+    }
+  }
+
+  // onDamageDealt resource gain: "与ダメージ時：鉱Xと燃Yを得る"
+  const dealDamageGainPatterns = [
+    [/与ダメージ時[^。\n]*?金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
+    [/与ダメージ時[^。\n]*?人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
+    [/与ダメージ時[^。\n]*?自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
+    [/与ダメージ時[^。\n]*?鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
+    [/与ダメージ時[^。\n]*?燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
+    [/与ダメージ時[^。\n]*?電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
+    [/与ダメージ時[^。\n]*?魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+  ];
+  for (const [pattern, resource] of dealDamageGainPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const amount = parseDeckmakerKeywordValue(match[1]) || 1;
+      abilities.push({ trigger: "onDamageDealt", effect: "gainResource", resource, amount });
     }
   }
 
@@ -5647,7 +5673,7 @@ function canAttackUnit(attacker, defender) {
   if (forwardDistance < 1 || forwardDistance > maxRows) {
     return { ok: false, reason: "攻撃範囲外です。" };
   }
-  if (hasKeyword(defender, "flying") && !hasKeyword(attacker, "flying") && attacker.atk <= keywordValue(defender, "flying")) {
+  if (hasKeyword(defender, "flying") && !hasKeyword(attacker, "flying") && !hasKeyword(attacker, "antiAir") && attacker.atk <= keywordValue(defender, "flying")) {
     return { ok: false, reason: "航空ユニットへ攻撃できません。" };
   }
   if (isGuardedFrom(attacker, defender)) {
