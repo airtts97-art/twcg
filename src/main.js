@@ -5553,8 +5553,10 @@ function moveSelectedUnit() {
   if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
   const toRow = unit.row + player.forward;
   if (toRow < 0 || toRow >= ROWS) return fail("これ以上前進できません。");
+  const enemyId = opponentOf(unit.owner);
+  const colBlocked = (c) => c !== unit.col && state.board.some((r) => r[c]?.owner === enemyId);
   const candidateCols = [unit.col, unit.col - 1, unit.col + 1].filter((c) => c >= 0 && c < COLS);
-  const destCol = candidateCols.find((c) => !state.board[toRow][c]);
+  const destCol = candidateCols.find((c) => !state.board[toRow][c] && !colBlocked(c));
   if (destCol == null) return fail("前方のマスが埋まっています。");
   return relocateUnit(unit, toRow, destCol, "前進", "moveUnit");
 }
@@ -5570,8 +5572,10 @@ function retreatSelectedUnit() {
   if (unit.noRetreatUntilOpponentTurnEnd) return fail("This unit cannot retreat now.");
   const toRow = unit.row - player.forward;
   if (toRow < 0 || toRow >= ROWS) return fail("これ以上後退できません。");
+  const enemyId2 = opponentOf(unit.owner);
+  const colBlocked2 = (c) => c !== unit.col && state.board.some((r) => r[c]?.owner === enemyId2);
   const candidateCols = [unit.col, unit.col - 1, unit.col + 1].filter((c) => c >= 0 && c < COLS);
-  const destCol = candidateCols.find((c) => !state.board[toRow][c]);
+  const destCol = candidateCols.find((c) => !state.board[toRow][c] && !colBlocked2(c));
   if (destCol == null) return fail("後方のマスが埋まっています。");
   return relocateUnit(unit, toRow, destCol, "後退", "retreatUnit");
 }
@@ -7804,8 +7808,14 @@ function drawBoardActionButtons() {
     return row >= 0 && row < ROWS && col >= 0 && col < COLS && !state.board[row]?.[col];
   }
 
+  function colHasEnemy(col) {
+    const enemyId = opponentOf(unit.owner);
+    return state.board.some((r) => r[col]?.owner === enemyId);
+  }
+
   function dirBtn(label, row, col, logLabel, action, canBase) {
-    const valid = canBase && cellOpen(row, col);
+    const isDiag = col !== unit.col;
+    const valid = canBase && cellOpen(row, col) && !(isDiag && colHasEnemy(col));
     return {
       label,
       fn: valid ? () => relocateUnit(unit, row, col, logLabel, action) : null,
