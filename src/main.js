@@ -5673,8 +5673,8 @@ function startTurn(game, playerId) {
   }
   // Core onStructurePhaseStart ability (e.g. 六端星の第一王城)
   if ((player.core.abilities || []).some((a) => a.trigger === "onStructurePhaseStart")) {
-    const result = triggerAbilities(game, playerId, player.core, "onStructurePhaseStart");
-    if (result === "pending" && game.pendingChoice) {
+    triggerAbilities(game, playerId, player.core, "onStructurePhaseStart");
+    if (game.pendingChoice) {
       game.pendingChoice._afterResolve = { type: "continueStructPhase", playerId, resourcesBefore, handBefore };
       return;
     }
