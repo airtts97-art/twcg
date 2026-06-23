@@ -5399,6 +5399,14 @@ function playTactFromHand(handIndex) {
   if ((state.globalEffects || []).some((effect) => effect.type === "noTact" && effect.playerId === state.activePlayer)) {
     return fail("現在、指令カードを使用できません。");
   }
+  for (const ability of card.abilities || []) {
+    if (ability.trigger === "onPlay" && ability.target) {
+      const fakeItem = { ability, playerId: state.activePlayer, card };
+      if (!hasValidAbilityTarget(state, fakeItem)) {
+        return fail(`${card.name}: 対象がいないため使用できません。`);
+      }
+    }
+  }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
   revealCardUse(state.activePlayer, card, "play");
   player.hand.splice(handIndex, 1);
@@ -8516,11 +8524,17 @@ function drawHandConfirmOverlay() {
   }
 
   const useLabel = card.type === "unit" ? "使う: 配置先選択" : card.type === "struct" ? "使う: 建設" : "使う";
+  const missingTarget = (card.abilities || []).some((a) => {
+    if (a.trigger !== "onPlay" || !a.target) return false;
+    return !hasValidAbilityTarget(state, { ability: a, playerId: viewerPlayerId(), card });
+  });
   drawButton(x + w - 316, y + h - 58, 154, 38, "戻る", () => {
     state.selected = null;
     state.message = "カード選択を解除しました。";
   });
-  drawButton(x + w - 146, y + h - 58, 120, 38, useLabel, useSelectedPlayableCard, null, { accent: "p1" });
+  drawButton(x + w - 146, y + h - 58, 120, 38, useLabel,
+    missingTarget ? null : useSelectedPlayableCard, null,
+    missingTarget ? { accent: "dim" } : { accent: "p1" });
 }
 
 function drawFieldCardDetailOverlay() {
