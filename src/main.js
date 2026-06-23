@@ -670,7 +670,7 @@ const abilityEffects = {
     }
     game.pendingChoice = {
       type: "deployHeroFromAttack",
-      step: "chooseHero",
+      step: "chooseGold",
       playerId,
       cardName: card.name,
       sourceRow: card.row,
@@ -678,7 +678,7 @@ const abilityEffects = {
       heroOptions,
       adjCells,
       selectedHeroIdx: null,
-      goldToPay: null,
+      goldToPay: 0,
     };
     return "pending";
   },
@@ -5167,12 +5167,11 @@ function resolveDeployHeroChooseHero(heroIdx) {
   const opt = pending.heroOptions[heroIdx];
   if (!opt) return false;
   const player = state.players[pending.playerId];
-  if ((player.resources.funds || 0) < opt.minGold) {
-    state.message = `金が不足しています（必要: ${opt.minGold}）。`;
+  if ((player.resources.funds || 0) < pending.goldToPay) {
+    state.message = `金が不足しています（支払額: ${pending.goldToPay}）。`;
     return false;
   }
   pending.selectedHeroIdx = heroIdx;
-  pending.goldToPay = opt.minGold;
   pending.step = "chooseCell";
   state.message = "出撃させるマスを選択してください。";
   render();
@@ -8702,6 +8701,37 @@ function drawRevealTagsForResourcesPanel(pending) {
 
 function drawDeployHeroFromAttackPanel(pending) {
   const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  if (pending.step === "chooseGold") {
+    // Gold selection step
+    const player = state.players[pending.playerId];
+    const availableGold = player.resources.funds || 0;
+    const maxGold = Math.max(...(pending.heroOptions || []).map(h => h.minGold || 1));
+    const px = W / 2 - 240, py = H / 2 - 120;
+    const pw = 480, ph = 240;
+    drawChoicePanelBase(px, py, pw, ph, "rgba(200,160,20,0.7)", "#d4a020");
+    ctx.fillStyle = "#fff4c0";
+    ctx.font = "700 17px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`「${pending.cardName}」— 支払う金を選択`, px + 20, py + 30);
+    ctx.fillStyle = "rgba(230,200,120,0.85)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`現在の金: ${availableGold} | 支払う金: ${pending.goldToPay}`, px + 20, py + 56);
+    const btnW = 60, btnH = 28, btnGap = 8;
+    const startX = px + 20;
+    for (let g = 0; g <= maxGold && g <= availableGold; g++) {
+      const btnX = startX + (g % 8) * (btnW + btnGap);
+      const btnY = py + 80 + Math.floor(g / 8) * (btnH + btnGap);
+      if (isController) {
+        drawButton(btnX, btnY, btnW, btnH, `${g}`, () => {
+          pending.goldToPay = g;
+          pending.step = "chooseHero";
+          render();
+        }, null, pending.goldToPay === g ? { accent: "p1" } : {});
+      } else {
+        drawButton(btnX, btnY, btnW, btnH, `${g}`, null, null, {});
+      }
+    }
+    return;
+  }
   if (pending.step === "chooseCell") {
     // Highlight eligible cells on board (drawn over the board overlay)
     const { adjCells } = pending;
