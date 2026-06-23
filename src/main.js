@@ -186,6 +186,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782320000000",  // 勇者の名誉
   "card_1782180616372",  // 唯字の騎士
   "card_1782182910548",  // 血統整理委員会
+  "card_1782330000000",  // 連合王国特務航空勇者機動群 "天撃"
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -551,6 +552,42 @@ const abilityEffects = {
     if (!game.globalEffects) game.globalEffects = [];
     game.globalEffects.push({ type: "counterArmor", playerId, armorValue: ability.armorValue || 2 });
     log(game, `${game.players[playerId].name}: 「${card.name}」カウンター持ちユニットに装甲${ability.armorValue || 2}付与`);
+  },
+  payGoldAndDeployHero({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const heroOptions = player.hand
+      .map((c, i) => {
+        const totalCost = totalCostAmount(c.cost || {});
+        return { card: c, handIdx: i, totalCost, minGold: Math.ceil(totalCost / 2) };
+      })
+      .filter((opt) => opt.card.type === "unit" && (opt.card.tags || []).includes(ability.heroTag || "勇者"));
+    if (!heroOptions.length) {
+      log(game, `${player.name}: 「${card.name}」手札に[勇者]ユニットなし`);
+      return;
+    }
+    const adjCells = [
+      { row: card.row - 1, col: card.col },
+      { row: card.row + 1, col: card.col },
+      { row: card.row, col: card.col - 1 },
+      { row: card.row, col: card.col + 1 },
+    ].filter(({ row, col }) => row >= 0 && row < ROWS && col >= 0 && col < COLS && !game.board[row][col]);
+    if (!adjCells.length) {
+      log(game, `${player.name}: 「${card.name}」隣接する空きマスなし`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "deployHeroFromAttack",
+      step: "chooseHero",
+      playerId,
+      cardName: card.name,
+      sourceRow: card.row,
+      sourceCol: card.col,
+      heroOptions,
+      adjCells,
+      selectedHeroIdx: null,
+      goldToPay: null,
+    };
+    return "pending";
   },
   healSelfAndRemoveCounter({ game, playerId, card, ability }) {
     if ((card.counters || 0) > 0) card.counters -= 1;
@@ -2882,6 +2919,11 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onTurnStart", effect: "payResourceOrCoreDamage", resource: "people", amount: 7, damage: 7 });
   }
 
+  if (card.id === "card_1782330000000") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onAttack", effect: "payGoldAndDeployHero", heroTag: "勇者" });
+  }
+
   if (card.id === "card_1782180616372") {
     abilities.length = 0;
     abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "addCounterIfTagDestroyed", tag: "純人間", amount: 1 });
@@ -4939,6 +4981,52 @@ function resolveRevealTagsForResources(selectedByTag) {
   return true;
 }
 
+function resolveDeployHeroChooseHero(heroIdx) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "deployHeroFromAttack" || pending.step !== "chooseHero") return false;
+  const opt = pending.heroOptions[heroIdx];
+  if (!opt) return false;
+  const player = state.players[pending.playerId];
+  if ((player.resources.funds || 0) < opt.minGold) {
+    state.message = `金が不足しています（必要: ${opt.minGold}）。`;
+    return false;
+  }
+  pending.selectedHeroIdx = heroIdx;
+  pending.goldToPay = opt.minGold;
+  pending.step = "chooseCell";
+  state.message = "出撃させるマスを選択してください。";
+  render();
+  return true;
+}
+
+function resolveDeployHeroCell(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "deployHeroFromAttack" || pending.step !== "chooseCell") return false;
+  const isEligible = (pending.adjCells || []).some((c) => c.row === row && c.col === col);
+  if (!isEligible) { state.message = "そのマスには出撃できません。"; render(); return false; }
+  const player = state.players[pending.playerId];
+  const opt = pending.heroOptions[pending.selectedHeroIdx];
+  if (!opt) return false;
+  const goldNeeded = pending.goldToPay;
+  if ((player.resources.funds || 0) < goldNeeded) { state.message = "金が不足しています。"; return false; }
+  addResources(player, "funds", -goldNeeded);
+  const heroCard = player.hand[opt.handIdx];
+  player.hand.splice(opt.handIdx, 1);
+  const unit = { ...cloneCard(heroCard), instanceId: nextInstanceId++, owner: pending.playerId,
+    row, col, maxHp: heroCard.hp, currentHp: heroCard.hp, rested: false,
+    attacksThisTurn: 0, mobileMoveUsed: false, counters: 0,
+    returnAtPlayer: pending.playerId, returnAtTurn: state.turn + 1 };
+  state.board[row][col] = unit;
+  triggerAbilities(state, pending.playerId, unit, "onSummon");
+  log(state, `${player.name}: 「${unit.name}」を金${goldNeeded}で出撃（次の自分のターン終了時に手札へ戻る）`);
+  state.pendingChoice = null;
+  state.selected = null;
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function resolveDiscardForDraw(index) {
   const pending = state.pendingChoice;
   if (pending?.type !== "discardForDraw") return false;
@@ -5486,6 +5574,17 @@ function endTurn() {
   if (state.winner) return false;
   const endingPlayer = state.activePlayer;
   const shouldSyncOnline = app.screen === "game" && app.match.status === "online" && !applyingRemoteState;
+  // 天撃効果: 次の自分のターン終了時に手札へ返却
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const u = state.board[r]?.[c];
+      if (u && u.returnAtPlayer === endingPlayer && state.turn >= u.returnAtTurn) {
+        state.board[r][c] = null;
+        state.players[endingPlayer].hand.push(stripRuntime(u));
+        log(state, `「${u.name}」→ 手札に戻る（天撃効果）`);
+      }
+    }
+  }
   for (const unit of unitsOwnedBy(endingPlayer)) {
     if (hasKeyword(unit, "alert")) unit.rested = false;
   }
@@ -7636,6 +7735,11 @@ function drawCore(playerId, x, y, w, h) {
 function handleCellClick(row, col) {
   const selected = state.selected;
   const unit = state.board[row][col];
+  if (state.pendingChoice?.type === "deployHeroFromAttack" && state.pendingChoice.step === "chooseCell") {
+    if (!requireActivePlayerControl()) return;
+    resolveDeployHeroCell(row, col);
+    return;
+  }
   if (state.pendingTarget) {
     if (!requireActivePlayerControl()) return;
     resolvePendingTarget(row, col);
@@ -8121,6 +8225,11 @@ function drawTurnStartSummaryPanel() {
 function drawChoiceOverlay() {
   const pending = state.pendingChoice;
   if (!pending) return;
+  // deployHeroFromAttack/chooseCell overlays on top of board without darkening
+  if (pending.type === "deployHeroFromAttack" && pending.step === "chooseCell") {
+    drawDeployHeroFromAttackPanel(pending);
+    return;
+  }
   ctx.fillStyle = "rgba(0, 0, 8, 0.75)";
   ctx.fillRect(0, 0, W, H);
   if (pending.type === "mysticCapture") drawMysticCapturePanel(pending);
@@ -8136,6 +8245,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "payForBuff") drawPayForBuffPanel(pending);
   else if (pending.type === "revealTagsForResources") drawRevealTagsForResourcesPanel(pending);
   else if (pending.type === "discardForDraw") drawDiscardForDrawPanel(pending);
+  else if (pending.type === "deployHeroFromAttack") drawDeployHeroFromAttackPanel(pending);
 }
 
 function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
@@ -8325,6 +8435,75 @@ function drawRevealTagsForResourcesPanel(pending) {
   if (isController) {
     drawButton(px + pw - 250, py + ph - 48, 110, 34, "確定", () => resolveRevealTagsForResources({ ...sel }), null, { accent: "p1" });
     drawButton(px + pw - 130, py + ph - 48, 110, 34, "何も見せない", () => resolveRevealTagsForResources({}));
+  }
+}
+
+function drawDeployHeroFromAttackPanel(pending) {
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  if (pending.step === "chooseCell") {
+    // Highlight eligible cells on board (drawn over the board overlay)
+    const { adjCells } = pending;
+    for (const { row, col } of (adjCells || [])) {
+      const visualRow = boardRowToVisualRow(row);
+      const cx2 = layout.board.x + col * layout.cell.w;
+      const cy2 = layout.board.y + visualRow * layout.cell.h;
+      const cw2 = layout.cell.w, ch2 = layout.cell.h;
+      ctx.save();
+      ctx.shadowColor = "#40ff80";
+      ctx.shadowBlur = 8;
+      roundRect(cx2 + 2, cy2 + 2, cw2 - 4, ch2 - 4, 4, "rgba(40,200,80,0.18)", "#40ff80", 3);
+      ctx.restore();
+      if (isController) {
+        addHit(cx2, cy2, cw2, ch2, () => resolveDeployHeroCell(row, col));
+      }
+    }
+    const px = W / 2 - 200, py = 20;
+    roundRect(px, py, 400, 36, 6, "rgba(8,20,8,0.92)", "#40ff80", 1.5);
+    ctx.fillStyle = "#a0ffb0";
+    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("出撃させるマスをクリックしてください", W / 2, py + 24);
+    ctx.textAlign = "left";
+    return;
+  }
+  // step === "chooseHero"
+  const player = state.players[pending.playerId];
+  const heroOptions = pending.heroOptions || [];
+  const cardW = 80, cardH = 112, gap = 8;
+  const cols = Math.max(1, heroOptions.length);
+  const pw = Math.max(400, cols * (cardW + gap) + 60);
+  const ph = 300;
+  const px = (W - pw) / 2, py = (H - ph) / 2;
+  drawChoicePanelBase(px, py, pw, ph, "rgba(200,160,20,0.7)", "#d4a020");
+  ctx.fillStyle = "#fff4c0";
+  ctx.font = "700 17px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」— 出撃させる[勇者]を選択`, px + 20, py + 30);
+  ctx.fillStyle = "rgba(230,200,120,0.85)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("金を払って[勇者]ユニットを隣接マスに出撃。次の自分のターン終了時に手札へ戻る。", px + 20, py + 52, pw - 40);
+  const cardsY = py + 68;
+  heroOptions.forEach((opt, i) => {
+    const cx = px + 20 + i * (cardW + gap);
+    const canAfford = (player.resources.funds || 0) >= opt.minGold;
+    const isSelected = pending.selectedHeroIdx === i;
+    if (isController && canAfford) {
+      addHit(cx, cardsY, cardW, cardH, () => resolveDeployHeroChooseHero(i));
+    }
+    drawCard(cx, cardsY, cardW, cardH, opt.card, { selected: isSelected, small: true, dim: !canAfford });
+    ctx.fillStyle = canAfford ? "#ffe060" : "#888";
+    ctx.font = `600 10px 'Yu Gothic UI', sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText(`金${opt.minGold}必要`, cx + cardW / 2, cardsY + cardH + 14);
+    ctx.textAlign = "left";
+  });
+  if (isController) {
+    drawButton(px + pw - 130, py + ph - 48, 110, 34, "スキップ", () => {
+      state.pendingChoice = null;
+      state.selected = null;
+      processEffectQueue(state);
+      syncOnlineAction("resolveChoice", pending.playerId);
+      render();
+    });
   }
 }
 

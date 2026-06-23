@@ -1,0 +1,20 @@
+{
+  "id": "card_1782330000000",
+  "name": "連合王国特務航空勇者機動群 \"天撃\"",
+  "type": "ユニット",
+  "rarity": "稀少",
+  "world": "ユニフォール",
+  "tags": ["リッサジオール連合王国", "純人間", "空中艦艇", "歩兵", "王国勇者主義"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 0, "human": 1, "nature": 1, "mineral": 0, "fuel": 0, "electric": 0, "magic": 1 },
+    "act": { "gold": 0, "human": 2, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 1 },
+    "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 3,
+  "defense": 3,
+  "description": "[装甲③][貫通①][機動][航空③]\n攻撃時、金を好きなだけ支払い、そのコストの2倍以下のコストを持つ[勇者]ユニットをこのユニットの左右前後の空いているマスに出撃させてもよい。\nそうしたらそのユニットは次の自分のフェーズ終わりに手札に戻る。",
+  "flavorText": "空より現れ空より去る、露出を管理された勇者工学に基づき最適な火力を提示する",
+  "imageUrl": "/assets/cards/card_1782330000000.jpeg"
+}
