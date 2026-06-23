@@ -5733,6 +5733,7 @@ function activateStructInPhase(index) {
   if (state.pendingChoice) return false;
   const pending = state.pendingStructPhase;
   if (!pending) return false;
+  if (pending.pendingResourceChoice) return false;
   if (pending.activatedIndexes.includes(index)) return false;
   const player = state.players[pending.playerId];
   const struct = player.structs[index];
@@ -9221,10 +9222,10 @@ function drawStructPhaseOverlay() {
     const hpAbility = (struct.abilities || []).find((a) => a.trigger === "onStructurePhaseHP");
     const btnY = cy + cardH + 22;
     if (isController && !activated) {
-      if (affordable) {
+      if (affordable && !choice) {
         drawButton(cx, btnY, cardW, btnH, "発動", () => activateStructInPhase(origIdx));
       } else {
-        drawButton(cx, btnY, cardW, btnH, "発動不可", null, null, { accent: "dim" });
+        drawButton(cx, btnY, cardW, btnH, affordable ? "選択中..." : "発動不可", null, null, { accent: "dim" });
       }
     } else if (activated) {
       ctx.fillStyle = "#50d880";
