@@ -1615,6 +1615,7 @@ const cardCatalog = {
       text: "もっとも安価な部類の歩兵、侮ることはできない。",
       keywords: [{ id: "alert" }],
       abilities: [],
+      imageUrl: "/assets/cards/lightInfantry.jpeg",
     },
     smallFieldGunFuel: {
       id: "smallFieldGunFuel",
@@ -1689,6 +1690,7 @@ const cardCatalog = {
       text: "生命の妖精は多くの命を強化する",
       keywords: [],
       abilities: [{ trigger: "onSummon", effect: "buffFriendlyUnitsHp", amount: 1 }],
+      imageUrl: "/assets/cards/lifeFairy.jpeg",
     },
     knowledgeFairy: {
       id: "knowledgeFairy",
@@ -1703,6 +1705,7 @@ const cardCatalog = {
       text: "妖精でさえも知恵を貸してくれる",
       keywords: [],
       abilities: [{ trigger: "onSummon", effect: "drawCards", amount: 2 }],
+      imageUrl: "/assets/cards/knowledgeFairy.jpeg",
     },
     mischievousFairy: {
       id: "mischievousFairy",
@@ -1717,6 +1720,7 @@ const cardCatalog = {
       text: "いたずらでは済まない。妖精の攻撃は意外と危険",
       keywords: [],
       abilities: [{ trigger: "onSummon", effect: "damageTargetUnit", target: "enemyUnit", amount: 2 }],
+      imageUrl: "/assets/cards/mischievousFairy.jpeg",
     },
     militia: {
       id: "militia",
@@ -2021,6 +2025,7 @@ cardCatalog.main.disruptionEngineer = {
   text: "このユニットに隣接する味方ユニットは[効果保護①]を得る。",
   keywords: [],
   abilities: [{ trigger: "onSummon", effect: "grantEffectProtectToAdjacent", value: 1 }],
+  imageUrl: "/assets/cards/disruptionEngineer.jpeg",
 };
 
 cardCatalog.main.turbulentRepatriation = {
@@ -2172,14 +2177,18 @@ function loadCustomCardsIntoCatalog() {
 function loadBundledDeckData() {
   const cards = Array.isArray(deckData?.cards) ? deckData.cards : [];
   for (const deckmakerCard of cards) {
-    const card = fromDeckmakerCard(deckmakerCard);
-    if (!card) continue;
-    const group = catalogGroupForCard(card);
-    // Bundled cards usually don't overwrite user-customized versions already in catalog.
-    // Core cards are refreshed from Deckmaker source so corrected initialResources
-    // migrate even when an older imported copy is still stored in localStorage.
-    if (!cardCatalog[group][card.id] || FORCE_BUNDLED_CARD_IDS.has(card.id) || (group === "cores" && deckmakerCard.initialResources)) {
-      cardCatalog[group][card.id] = card;
+    try {
+      const card = fromDeckmakerCard(deckmakerCard);
+      if (!card) continue;
+      const group = catalogGroupForCard(card);
+      // Bundled cards usually don't overwrite user-customized versions already in catalog.
+      // Core cards are refreshed from Deckmaker source so corrected initialResources
+      // migrate even when an older imported copy is still stored in localStorage.
+      if (!cardCatalog[group][card.id] || FORCE_BUNDLED_CARD_IDS.has(card.id) || (group === "cores" && deckmakerCard.initialResources)) {
+        cardCatalog[group][card.id] = card;
+      }
+    } catch (e) {
+      console.warn("loadBundledDeckData: error processing card", deckmakerCard?.id, e);
     }
   }
 }
@@ -3002,6 +3011,12 @@ function importDeckmakerAllData(payload) {
     const card = fromDeckmakerCard(deckmakerCard);
     if (!card) continue;
     const group = catalogGroupForCard(card);
+    // For FORCE_BUNDLED cards, always use the bundled imageUrl.
+    // Deckmaker exports base64 imageUrls which fromDeckmakerCard strips to a wrong fallback path.
+    if (FORCE_BUNDLED_CARD_IDS.has(card.id)) {
+      const bundled = cardCatalog[group][card.id];
+      if (bundled?.imageUrl) card.imageUrl = bundled.imageUrl;
+    }
     groups[group][card.id] = card;
     cardCatalog[group][card.id] = card;
     importedCards += 1;
