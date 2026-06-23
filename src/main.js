@@ -2515,7 +2515,10 @@ function parseDeckmakerAbilities(card, localType) {
 
   // Simple resource gain for non-struct tact/unit cards (exclude quoted ability grants)
   if (localType !== "struct" && localType !== "core") {
-    const textForGain = text.replace(/「[^」]*」を与える/g, "");
+    const textForGain = text
+      .replace(/「[^」]*」を与える/g, "")
+      .replace(/(?:相手.*?破壊|敵撃破時)[^。\n]*/g, "")
+      .replace(/与ダメージ時[^。\n]*/g, "");
     const resourceGainPatterns = [
       [/金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
       [/人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
@@ -5652,6 +5655,12 @@ function startTurn(game, playerId) {
   for (const unit of turnStartUnits) {
     if ((unit.abilities || []).some((a) => a.trigger === "onTurnStart")) {
       triggerAbilities(game, playerId, unit, "onTurnStart");
+    }
+  }
+  // onTurnStart: 永続タクトカード
+  for (const tact of (player.tactZone || [])) {
+    if ((tact.abilities || []).some((a) => a.trigger === "onTurnStart")) {
+      triggerAbilities(game, playerId, tact, "onTurnStart");
     }
   }
   // Core onStructurePhaseStart ability (e.g. 六端星の第一王城)
