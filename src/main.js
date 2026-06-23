@@ -9189,6 +9189,7 @@ function drawStructPhaseOverlay() {
     ctx.textAlign = "left";
   }
 
+  const choice = pending.pendingResourceChoice;
   visibleStructs.forEach(({ s: struct, origIdx }, i) => {
     const activated = pending.activatedIndexes.includes(origIdx);
     const affordable = canAffordStructActivation(struct, player);
@@ -9243,7 +9244,6 @@ function drawStructPhaseOverlay() {
     }
   });
 
-  const choice = pending.pendingResourceChoice;
   if (choice) {
     const choiceY = y + h - footerH - choiceH + 6;
     roundRect(x + 14, choiceY, w - 28, 58, 6, "rgba(4,14,28,0.92)", "rgba(60,120,200,0.7)", 1.5);
