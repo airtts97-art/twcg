@@ -193,6 +193,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782239599000",  // 第302衝撃大隊
   "card_1782500000000",  // 北東軍第65歩兵大隊
   "card_1782510000000",  // 第122戦車大隊
+  "card_1782520000000",  // 北東軍総司令部
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -576,6 +577,15 @@ const abilityEffects = {
       } else {
         log(game, `${player.name}: コスト総量18以上のカードがデッキにありません`);
       }
+    }
+  },
+  defeatIfNamedUnitDestroyed({ game, playerId, ability, source }) {
+    const destroyed = source?.target;
+    if (!destroyed || !ability.targetName) return;
+    if ((destroyed.name || "").includes(ability.targetName)) {
+      game.players[playerId].core.hp = 0;
+      log(game, `${game.players[playerId].name}: 「${destroyed.name}」が破壊され、敗北条件達成`);
+      checkWinner(game);
     }
   },
   gainStatBuff({ game, playerId, card, ability }) {
@@ -3058,6 +3068,10 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onActivate", effect: "gainStatBuff", activationCost: { nature: 1, fuel: 1 }, atkBuff: 2, hpBuff: 0 });
   }
 
+  if (card.id === "card_1782520000000") {
+    abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "defeatIfNamedUnitDestroyed", targetName: "北東軍最高司令官" });
+  }
+
   return abilities;
 }
 
@@ -3102,6 +3116,7 @@ function fromDeckmakerCard(card) {
     base.startResources = fromDeckmakerCosts(card.startResources || card.initialResources || {});
     base.income = fromDeckmakerCosts(card.income || card.generates || {});
     base.specialRequirements = Array.isArray(card.specialRequirements) ? card.specialRequirements : [];
+    base.armor = Number(card.armor) || 0;
   }
   return normalizeCardResources(base);
 }
@@ -6151,9 +6166,11 @@ function attackWithSelectedUnit(target) {
     if (!payAttackCosts(player, unit)) return fail("アクトコストが不足しています。");
     triggerAttackAbilities(unit);
     const defender = state.players[opponentOf(unit.owner)];
-    defender.core.hp -= unit.atk;
+    const coreArmor = defender.core.armor || 0;
+    const coreDmg = Math.max(0, unit.atk - coreArmor);
+    defender.core.hp -= coreDmg;
     afterAttack(unit);
-    log(state, `${player.name}: 「${unit.name}」がコアに${unit.atk}ダメージ`);
+    log(state, `${player.name}: 「${unit.name}」がコアに${coreDmg}ダメージ${coreArmor > 0 ? `（装甲${coreArmor}軽減）` : ""}`);
     checkWinner(state);
     syncOnlineAction("attackCore", unit.owner);
     return true;

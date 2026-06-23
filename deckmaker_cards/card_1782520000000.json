@@ -1,0 +1,20 @@
+{
+  "id": "card_1782520000000",
+  "name": "北東軍総司令部",
+  "type": "コア",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["アトラス北東軍"],
+  "roles": [],
+  "hp": 15,
+  "initialHand": 5,
+  "drawPerTurn": 1,
+  "handLimit": 7,
+  "armor": 3,
+  "initialResources": { "gold": 4, "mineral": 2 },
+  "generates": { "human": 1 },
+  "defeatCondition": "このカードが破壊される。「北東軍最高司令官」ユニットが破壊される。",
+  "description": "[装甲③]\nターン開始時：人を得る。",
+  "flavorText": "この若き国家は抑えきれぬ軍拡の熱意と野心に包まれている。その矛先をいつまで国外に向けられるか。",
+  "imageUrl": "assets/cards/card_1782520000000.jpeg"
+}
