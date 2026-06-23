@@ -1,4 +1,4 @@
-{
+﻿{
   "id": "antiArmorMageTeam328",
   "name": "328-野戦対装甲魔導士隊",
   "type": "ユニット",
@@ -41,5 +41,5 @@
   "defense": 2,
   "description": "[奇襲][貫通①]",
   "flavorText": "強襲、攻撃、破壊、魔法により得られる可能性は大きい。",
-  "imageUrl": "/assets/cards/antiArmorMageTeam328.jpg"
+  "imageUrl": "assets/cards/antiArmorMageTeam328.jpg"
 }

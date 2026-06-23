@@ -1,4 +1,4 @@
-{
+﻿{
   "id": "card_1753626357784",
   "name": "カッパーゴーレム",
   "type": "ユニット",
@@ -41,5 +41,5 @@
   "defense": 3,
   "description": "[機動][帯電][連撃][航空①][警戒]",
   "flavorText": "銅は文明と共にある金属だ。浮いてることだってあるだろう",
-  "imageUrl": "/assets/cards/card_1753626357784.jpeg"
+  "imageUrl": "assets/cards/card_1753626357784.jpeg"
 }

@@ -1,4 +1,4 @@
-{
+﻿{
   "id": "disruptionEngineer",
   "name": "攪乱工兵",
   "type": "ユニット",
@@ -41,5 +41,5 @@
   "defense": 3,
   "description": "このユニットに隣接する味方ユニットは[効果保護①]を得る。",
   "flavorText": "いかに強力な魔法であってもその概念を適切に乱せばその脅威は別の場所にそれる。",
-  "imageUrl": "/assets/cards/disruptionEngineer.jpeg"
+  "imageUrl": "assets/cards/disruptionEngineer.jpeg"
 }

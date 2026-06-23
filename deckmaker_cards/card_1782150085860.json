@@ -1,4 +1,4 @@
-{
+﻿{
   "id": "card_1782150085860",
   "name": "トーチカ",
   "type": "フォート",
@@ -41,5 +41,5 @@
   "defense": 4,
   "description": "[装甲⓶][衝撃][警戒][奇襲][不動][不攻]",
   "flavorText": "「この中なら当分安全だ」",
-  "imageUrl": "/assets/cards/card_1782150085860.jpeg"
+  "imageUrl": "assets/cards/card_1782150085860.jpeg"
 }

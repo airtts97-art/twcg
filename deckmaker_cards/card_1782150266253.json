@@ -1,4 +1,4 @@
-{
+﻿{
   "id": "card_1782150266253",
   "name": "要塞",
   "type": "フォート",
@@ -41,5 +41,5 @@
   "defense": 5,
   "description": "[装甲⑤][貫通③][衝撃][警戒][奇襲][不動]\n与ダメージ時：鉱１と燃１を得る",
   "flavorText": "「あのボロトーチカは吹っ飛ばされたが...ここなら安全だ」",
-  "imageUrl": "/assets/cards/card_1782150266253.jpeg"
+  "imageUrl": "assets/cards/card_1782150266253.jpeg"
 }

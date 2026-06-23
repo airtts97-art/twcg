@@ -1,4 +1,4 @@
-{
+﻿{
   "id": "mischievousFairy",
   "name": "悪戯妖精",
   "type": "ユニット",
@@ -41,5 +41,5 @@
   "defense": 1,
   "description": "出撃時：敵ユニット1体に2ダメージ（対象選択）。",
   "flavorText": "いたずらでは済まない。妖精の攻撃は意外と危険",
-  "imageUrl": "/assets/cards/mischievousFairy.jpeg"
+  "imageUrl": "assets/cards/mischievousFairy.jpeg"
 }

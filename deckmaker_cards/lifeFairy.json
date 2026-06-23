@@ -1,4 +1,4 @@
-{
+﻿{
   "id": "lifeFairy",
   "name": "生命妖精",
   "type": "ユニット",
@@ -41,5 +41,5 @@
   "defense": 1,
   "description": "出撃時：味方ユニット全体のHPを+1する。",
   "flavorText": "生命の妖精は多くの命を強化する",
-  "imageUrl": "/assets/cards/lifeFairy.jpeg"
+  "imageUrl": "assets/cards/lifeFairy.jpeg"
 }

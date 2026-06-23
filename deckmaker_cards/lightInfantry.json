@@ -1,4 +1,4 @@
-{
+﻿{
   "id": "lightInfantry",
   "name": "軽歩兵",
   "type": "ユニット",
@@ -41,5 +41,5 @@
   "defense": 2,
   "description": "[警戒]",
   "flavorText": "もっとも安価な部類の歩兵、侮ることはできない。",
-  "imageUrl": "/assets/cards/lightInfantry.jpeg"
+  "imageUrl": "assets/cards/lightInfantry.jpeg"
 }

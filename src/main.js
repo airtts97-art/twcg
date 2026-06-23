@@ -1615,7 +1615,7 @@ const cardCatalog = {
       text: "もっとも安価な部類の歩兵、侮ることはできない。",
       keywords: [{ id: "alert" }],
       abilities: [],
-      imageUrl: "/assets/cards/lightInfantry.jpeg",
+      imageUrl: "assets/cards/lightInfantry.jpeg",
     },
     smallFieldGunFuel: {
       id: "smallFieldGunFuel",
@@ -1690,7 +1690,7 @@ const cardCatalog = {
       text: "生命の妖精は多くの命を強化する",
       keywords: [],
       abilities: [{ trigger: "onSummon", effect: "buffFriendlyUnitsHp", amount: 1 }],
-      imageUrl: "/assets/cards/lifeFairy.jpeg",
+      imageUrl: "assets/cards/lifeFairy.jpeg",
     },
     knowledgeFairy: {
       id: "knowledgeFairy",
@@ -1705,7 +1705,7 @@ const cardCatalog = {
       text: "妖精でさえも知恵を貸してくれる",
       keywords: [],
       abilities: [{ trigger: "onSummon", effect: "drawCards", amount: 2 }],
-      imageUrl: "/assets/cards/knowledgeFairy.jpeg",
+      imageUrl: "assets/cards/knowledgeFairy.jpeg",
     },
     mischievousFairy: {
       id: "mischievousFairy",
@@ -1720,7 +1720,7 @@ const cardCatalog = {
       text: "いたずらでは済まない。妖精の攻撃は意外と危険",
       keywords: [],
       abilities: [{ trigger: "onSummon", effect: "damageTargetUnit", target: "enemyUnit", amount: 2 }],
-      imageUrl: "/assets/cards/mischievousFairy.jpeg",
+      imageUrl: "assets/cards/mischievousFairy.jpeg",
     },
     militia: {
       id: "militia",
@@ -2025,7 +2025,7 @@ cardCatalog.main.disruptionEngineer = {
   text: "このユニットに隣接する味方ユニットは[効果保護①]を得る。",
   keywords: [],
   abilities: [{ trigger: "onSummon", effect: "grantEffectProtectToAdjacent", value: 1 }],
-  imageUrl: "/assets/cards/disruptionEngineer.jpeg",
+  imageUrl: "assets/cards/disruptionEngineer.jpeg",
 };
 
 cardCatalog.main.turbulentRepatriation = {
