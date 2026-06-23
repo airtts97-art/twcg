@@ -191,6 +191,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782152241822",  // 大建設計画
   "card_1782240416000",  // 第82空挺歩兵大隊
   "card_1782239599000",  // 第302衝撃大隊
+  "card_1782500000000",  // 北東軍第65歩兵大隊
+  "card_1782510000000",  // 第122戦車大隊
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -575,6 +577,14 @@ const abilityEffects = {
         log(game, `${player.name}: コスト総量18以上のカードがデッキにありません`);
       }
     }
+  },
+  gainStatBuff({ game, playerId, card, ability }) {
+    card.atk = (card.atk || 0) + (ability.atkBuff || 0);
+    if (ability.hpBuff) {
+      card.currentHp = (card.currentHp || 0) + ability.hpBuff;
+      card.maxHp = (card.maxHp || card.hp || 0) + ability.hpBuff;
+    }
+    log(game, `${game.players[playerId].name}: 「${card.name}」+${ability.atkBuff || 0}/+${ability.hpBuff || 0}の修正`);
   },
   coreStructStartDiscardOrHP({ game, playerId, card, ability }) {
     const player = game.players[playerId];
@@ -3041,6 +3051,11 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782450000000") {
     abilities.length = 0;
     abilities.push({ trigger: "onStructurePhaseStart", effect: "coreStructStartDiscardOrHP", gainOnDiscard: { funds: 1, people: 2 }, gainOnDecline: { magic: 1 }, hpCostOnDecline: 2 });
+  }
+
+  if (card.id === "card_1782500000000") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onActivate", effect: "gainStatBuff", activationCost: { nature: 1, fuel: 1 }, atkBuff: 2, hpBuff: 0 });
   }
 
   return abilities;

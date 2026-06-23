@@ -1,0 +1,20 @@
+{
+  "id": "card_1782510000000",
+  "name": "第122戦車大隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["グラダナ連邦共和国", "機械", "車両"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 4, "human": 2, "nature": 0, "mineral": 1, "fuel": 3, "electric": 0, "magic": 0 },
+    "act": { "gold": 1, "human": 0, "nature": 0, "mineral": 0, "fuel": 2, "electric": 0, "magic": 0 },
+    "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 4,
+  "defense": 2,
+  "description": "[装甲④][貫通③][衝撃][機動]",
+  "flavorText": "\"我ら鋼鉄の騎兵、連邦の槍と盾\"",
+  "imageUrl": "assets/cards/card_1782510000000.jpeg"
+}

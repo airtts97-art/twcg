@@ -1,0 +1,20 @@
+{
+  "id": "card_1782500000000",
+  "name": "北東軍第65歩兵大隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["アトラス北東軍", "純人間", "獣", "龍", "歩兵"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1, "human": 3, "nature": 1, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "act": { "gold": 0, "human": 0, "nature": 1, "mineral": 0, "fuel": 1, "electric": 0, "magic": 0 },
+    "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 3,
+  "defense": 10,
+  "description": "[貫通①][警戒]\n自を支払う燃を支払う：+2/0の修正を得る",
+  "flavorText": "歩兵は前線を構成する最も一般的な存在であり、彼ら無しでは戦争は行えない。",
+  "imageUrl": "assets/cards/card_1782500000000.jpeg"
+}
