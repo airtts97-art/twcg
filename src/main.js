@@ -189,6 +189,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782330000000",  // 連合王国特務航空勇者機動群 "天撃"
   "card_1782192967652",  // 第108高人歩兵大隊
   "card_1782152241822",  // 大建設計画
+  "card_1782240416000",  // 第82空挺歩兵大隊
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
