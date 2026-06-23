@@ -1262,46 +1262,25 @@ const abilityEffects = {
     if (!def) return;
     const player = game.players[playerId];
     const hasRaid = (def.keywords || []).some((k) => k.id === "raid");
-    const raidRow = player.summonRow + player.forward;
-    let targetRow = player.summonRow;
-    let col = -1;
-    if (hasRaid && !enemyInRow(playerId, raidRow)) {
-      col = findFirstEmptyColInRow(game, raidRow);
-      if (col >= 0) targetRow = raidRow;
+    const validRows = [];
+    for (let row = 0; row < ROWS; row++) {
+      if (hasRaid && row === player.summonRow + player.forward && !enemyInRow(playerId, row)) {
+        validRows.push(row);
+      } else if (row === player.summonRow) {
+        validRows.push(row);
+      }
     }
-    if (col < 0) col = findFirstEmptyColInRow(game, player.summonRow);
-    if (col < 0) {
-      log(game, `${player.name}: 場が満員のため「${def.name}」を出せない`);
-      return;
-    }
-    const unit = {
-      id: ability.tokenId,
-      type: "unit",
-      name: def.name,
-      faction: "ニュートラル",
-      tags: [],
-      cost: {},
-      actCost: {},
-      text: def.text,
-      keywords: def.keywords.map((k) => ({ ...k })),
-      abilities: [],
-      atk: def.atk,
-      hp: def.hp,
-      instanceId: nextInstanceId++,
-      owner: playerId,
-      row: targetRow,
-      col,
-      maxHp: def.hp,
-      currentHp: def.hp,
-      rested: true,
-      attacksThisTurn: 0,
-      mobileMoveUsed: false,
-      counters: 0,
-      fromDump: false,
-      isToken: true,
+    game.pendingChoice = {
+      type: "summonToken",
+      playerId,
+      tokenDef: def,
+      tokenId: ability.tokenId,
+      validRows,
+      hasRaid,
     };
-    game.board[targetRow][col] = unit;
-    log(game, `${player.name}: 「${def.name}」を生成`);
+    game.selected = { kind: "choice", choice: "summonToken" };
+    game.message = `「${def.name}」を出すマスをクリックしてください`;
+    return "pending";
   },
   gainActCostResources({ game, playerId, card, target }) {
     if (!target) return;
@@ -5252,6 +5231,53 @@ function resolveCoreStructStartDiscard(handIndex) {
   return true;
 }
 
+function resolveSummonToken(row, col) {
+  if (!canControlActivePlayer()) return false;
+  const pending = state.pendingChoice;
+  if (pending?.type !== "summonToken") return false;
+  if (!pending.validRows.includes(row)) return false;
+  const unit = state.board[row][col];
+  if (unit) {
+    state.message = "そのマスは空いていません。";
+    return false;
+  }
+  const player = state.players[pending.playerId];
+  const tokenUnit = {
+    id: pending.tokenId,
+    type: "unit",
+    name: pending.tokenDef.name,
+    faction: "ニュートラル",
+    tags: [],
+    cost: {},
+    actCost: {},
+    text: pending.tokenDef.text,
+    keywords: pending.tokenDef.keywords.map((k) => ({ ...k })),
+    abilities: [],
+    atk: pending.tokenDef.atk,
+    hp: pending.tokenDef.hp,
+    instanceId: nextInstanceId++,
+    owner: pending.playerId,
+    row,
+    col,
+    maxHp: pending.tokenDef.hp,
+    currentHp: pending.tokenDef.hp,
+    rested: true,
+    attacksThisTurn: 0,
+    mobileMoveUsed: false,
+    counters: 0,
+    fromDump: false,
+    isToken: true,
+  };
+  state.board[row][col] = tokenUnit;
+  log(state, `${player.name}: 「${pending.tokenDef.name}」を生成`);
+  state.pendingChoice = null;
+  state.selected = null;
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function resolveCoreStructStartDecline() {
   if (!canControlActivePlayer()) return false;
   const pending = state.pendingChoice;
@@ -7742,6 +7768,20 @@ function drawBoard() {
         }
       }
 
+      // トークン出現選択中のマスをハイライト
+      if (state.pendingChoice?.type === "summonToken") {
+        const pending = state.pendingChoice;
+        const isValidRow = pending.validRows.includes(row);
+        const isFreeCell = !unit;
+        if (isValidRow && isFreeCell) {
+          ctx.save();
+          ctx.shadowColor = "#ffff00";
+          ctx.shadowBlur = 8;
+          roundRect(cx + 2, cy + 2, cW - 4, cH - 4, 4, "rgba(255,255,0,0.15)", "#ffff00", 2);
+          ctx.restore();
+        }
+      }
+
       addHit(cx, cy, cW, cH, () => handleCellClick(row, col));
       if (unit) drawBoardCard(cx, cy, cW, cH, unit);
 
@@ -7995,6 +8035,11 @@ function drawCore(playerId, x, y, w, h) {
 function handleCellClick(row, col) {
   const selected = state.selected;
   const unit = state.board[row][col];
+  if (state.pendingChoice?.type === "summonToken") {
+    if (!requireActivePlayerControl()) return;
+    resolveSummonToken(row, col);
+    return;
+  }
   if (state.pendingChoice?.type === "deployHeroFromAttack" && state.pendingChoice.step === "chooseCell") {
     if (!requireActivePlayerControl()) return;
     resolveDeployHeroCell(row, col);
