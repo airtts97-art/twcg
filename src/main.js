@@ -3040,7 +3040,7 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1782450000000") {
     abilities.length = 0;
-    abilities.push({ trigger: "onStructurePhaseStart", effect: "coreStructStartDiscardOrHP", gainOnDiscard: { nature: 1, people: 2 }, gainOnDecline: { nature: 1 }, hpCostOnDecline: 2 });
+    abilities.push({ trigger: "onStructurePhaseStart", effect: "coreStructStartDiscardOrHP", gainOnDiscard: { funds: 1, people: 2 }, gainOnDecline: { magic: 1 }, hpCostOnDecline: 2 });
   }
 
   return abilities;
