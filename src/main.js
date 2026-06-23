@@ -188,6 +188,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782182910548",  // 血統整理委員会
   "card_1782330000000",  // 連合王国特務航空勇者機動群 "天撃"
   "card_1782192967652",  // 第108高人歩兵大隊
+  "card_1782152241822",  // 大建設計画
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -535,6 +536,43 @@ const abilityEffects = {
     card.hasAttackedEver = true;
     card.counters = (card.counters || 0) + (ability.amount || 1);
     log(game, `${game.players[playerId].name}: 「${card.name}」初攻撃カウンター +${ability.amount || 1}`);
+  },
+  bigConstructionPlanPlay({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const tactIndex = player.tactZone.findIndex((c) => c.instanceId === card.instanceId);
+    if (tactIndex >= 0) player.tactZone.splice(tactIndex, 1);
+    const structCard = cloneCard(card);
+    structCard.type = "struct";
+    structCard.rested = false;
+    structCard.activationCount = 0;
+    structCard.abilities = [{ trigger: "onStructurePhase", effect: "bigConstructionPlanActivate" }];
+    player.structs.push(structCard);
+    log(game, `${player.name}: 「${card.name}」を施設として配置`);
+  },
+  bigConstructionPlanActivate({ game, playerId, card }) {
+    const player = game.players[playerId];
+    addResources(player, "funds", 3);
+    addResources(player, "ore", 5);
+    addResources(player, "fuel", 2);
+    card.activationCount = (card.activationCount || 0) + 1;
+    log(game, `${player.name}: 「${card.name}」発動${card.activationCount}回目 → 金+3、鉱+5、燃+2`);
+    if (card.activationCount >= 5) {
+      const idx = player.structs.findIndex((s) => s.instanceId === card.instanceId);
+      if (idx >= 0) {
+        player.structs.splice(idx, 1);
+        player.dump.push(card);
+        notifyDumpChanged(game, playerId);
+      }
+      log(game, `${player.name}: 「${card.name}」5回発動後に自壊`);
+      const highCostIdx = player.mainDeck.findIndex((c) => totalCostAmount(c.cost || {}) >= 18);
+      if (highCostIdx >= 0) {
+        const found = player.mainDeck.splice(highCostIdx, 1)[0];
+        player.hand.push(found);
+        log(game, `${player.name}: デッキからコスト総量18以上「${found.name}」を手札に`);
+      } else {
+        log(game, `${player.name}: コスト総量18以上のカードがデッキにありません`);
+      }
+    }
   },
   addCounterIfTagDestroyed({ game, playerId, card, ability, source }) {
     const destroyed = source?.target;
@@ -2964,6 +3002,12 @@ function parseDeckmakerAbilities(card, localType) {
     // 隣接2体[純人間]で+2/±0は refreshContinuousEffects で処理
   }
 
+  if (card.id === "card_1782152241822") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "bigConstructionPlanPlay" });
+    // レスト：金3鉱5燃2 / 5回後自壊 / 破壊時コスト総量18以上を手札 は bigConstructionPlanActivate で処理
+  }
+
   return abilities;
 }
 
@@ -4611,7 +4655,7 @@ function refreshContinuousEffects(game = state) {
           const adjacent = game.board[row]?.[col];
           return adjacent?.owner === pid && (adjacent.tags || []).includes("\u7d14\u4eba\u9593");
         }).length;
-        applyConditionalBuff(unit, "unitedKingdomInfantry", adjacentPureHumans >= 2, { atk: 1, hp: 1 });
+        applyConditionalBuff(unit, "unitedKingdomInfantry", adjacentPureHumans >= 2, { atk: 1, hp: 0 });
       }
       if (unit.id === "card_1753716897980") {
         applyConditionalBuff(unit, "angronaOpponentTurn", game.activePlayer === opponentOf(pid), { atk: 3, hp: 0 });

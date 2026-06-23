@@ -1,0 +1,20 @@
+{
+  "id": "card_1753680748888",
+  "name": "緊急\"招集\"兵",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ヘルメネアの大地",
+  "tags": ["リ・サンティウ連合王国", "純人間", "歩兵"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 0, "human": 1, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "act": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 1,
+  "defense": 3,
+  "description": "隣接するユニットのうち２つが[純人間]ユニットなら、+1／±0の修正を得る",
+  "flavorText": "リボルナーテの戦い、通称「奴隷決戦」は魔導帝国と統合王国の使い捨ての兵士同士での悲惨な戦いであった。その死傷率は英雄大戦まで更新されなかったほどだ。",
+  "imageUrl": "assets/cards/card_1753680748888.jpeg"
+}
