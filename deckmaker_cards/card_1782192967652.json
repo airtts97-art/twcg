@@ -1,0 +1,20 @@
+{
+  "id": "card_1782192967652",
+  "name": "第108高人歩兵大隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ヘルメネアの大地",
+  "tags": ["リ・サンティウ連合王国", "歩兵", "純人間", "唯字論"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 0, "human": 4, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "act": { "gold": 0, "human": 0, "nature": 1, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 2,
+  "defense": 9,
+  "description": "[警戒]\n隣接するユニットのうち２つが[純人間]ユニットなら、+2/±0の修正を得る\n初めての攻撃時：これに唯字論カウンターが①個載る",
+  "flavorText": "シャーレン丘の塹壕戦を唯一生き残ったこの中隊はその惨状から統合王国への不信感と、絶対的な唯字論への忠誠を併せ持つチグハグな思想で知られる。",
+  "imageUrl": "assets/cards/card_1782192967652.jpeg"
+}

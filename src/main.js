@@ -187,6 +187,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782180616372",  // 唯字の騎士
   "card_1782182910548",  // 血統整理委員会
   "card_1782330000000",  // 連合王国特務航空勇者機動群 "天撃"
+  "card_1782192967652",  // 第108高人歩兵大隊
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -528,6 +529,12 @@ const abilityEffects = {
   addCounters({ game, playerId, card, ability }) {
     card.counters = (card.counters || 0) + (ability.amount || 1);
     log(game, `${game.players[playerId].name}: 「${card.name}」カウンター +${ability.amount || 1}`);
+  },
+  addCounterOnFirstAttack({ game, playerId, card, ability }) {
+    if (card.hasAttackedEver) return;
+    card.hasAttackedEver = true;
+    card.counters = (card.counters || 0) + (ability.amount || 1);
+    log(game, `${game.players[playerId].name}: 「${card.name}」初攻撃カウンター +${ability.amount || 1}`);
   },
   addCounterIfTagDestroyed({ game, playerId, card, ability, source }) {
     const destroyed = source?.target;
@@ -2951,6 +2958,11 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onPlay", effect: "discardForDraw", cond: { tag: "純人間" } });
     abilities.push({ trigger: "onPlay", effect: "grantCounterArmor", armorValue: 2 });
   }
+  if (card.id === "card_1782192967652") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onAttack", effect: "addCounterOnFirstAttack", amount: 1 });
+    // 隣接2体[純人間]で+2/±0は refreshContinuousEffects で処理
+  }
 
   return abilities;
 }
@@ -4603,6 +4615,13 @@ function refreshContinuousEffects(game = state) {
       }
       if (unit.id === "card_1753716897980") {
         applyConditionalBuff(unit, "angronaOpponentTurn", game.activePlayer === opponentOf(pid), { atk: 3, hp: 0 });
+      }
+      if (unit.id === "card_1782192967652") {
+        const adjacentPureHumans = adjacentCells(unit.row, unit.col).filter(([row, col]) => {
+          const adjacent = game.board[row]?.[col];
+          return adjacent?.owner === pid && (adjacent.tags || []).includes("純人間");
+        }).length;
+        applyConditionalBuff(unit, "108thBattalionBuff", adjacentPureHumans >= 2, { atk: 2, hp: 0 });
       }
     }
   }
