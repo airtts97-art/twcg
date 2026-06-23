@@ -179,6 +179,9 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1755671320457", // 【正体不明】怪獣
   "card_1757041693503", // 愚世の怪異
   "card_1761808048476", // 幾龍の怪異
+  "knowledgeFairy",    // 知識妖精
+  "lifeFairy",         // 生命妖精
+  "mischievousFairy",  // 悪戯妖精
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
