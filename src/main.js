@@ -2166,7 +2166,10 @@ function parseDeckmakerKeywordValue(raw = "") {
 }
 
 function parseDeckmakerKeywords(card) {
-  const text = `${card.description || ""}\n${(card.keywords || []).join(" ")}`;
+  // Only scan the leading [keyword] block of description to avoid picking up
+  // keywords mentioned inside conditional ability text (e.g. "これは[機動]を得る")
+  const descKeywordBlock = (card.description || "").match(/^(?:\s*\[[^\]]+\])+/)?.[0] || "";
+  const text = `${descKeywordBlock}\n${(card.keywords || []).join(" ")}`;
   const NUM = String.raw`[①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾0-9０-９]*`;
   const numRe = (label) => new RegExp(`${label}${NUM}`, "g");
   const patterns = [
