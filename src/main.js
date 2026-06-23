@@ -194,6 +194,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782500000000",  // 北東軍第65歩兵大隊
   "card_1782510000000",  // 第122戦車大隊
   "card_1782520000000",  // 北東軍総司令部
+  "card_1782530000000",  // 北東軍第37歩兵小隊
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -6169,6 +6170,14 @@ function attackWithSelectedUnit(target) {
     const coreArmor = defender.core.armor || 0;
     const coreDmg = Math.max(0, unit.atk - coreArmor);
     defender.core.hp -= coreDmg;
+    if (coreDmg > 0) {
+      for (const ability of (unit.abilities || [])) {
+        if (ability.trigger === "onDamageDealt") {
+          state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" } });
+        }
+      }
+      processEffectQueue(state);
+    }
     afterAttack(unit);
     log(state, `${player.name}: 「${unit.name}」がコアに${coreDmg}ダメージ${coreArmor > 0 ? `（装甲${coreArmor}軽減）` : ""}`);
     checkWinner(state);

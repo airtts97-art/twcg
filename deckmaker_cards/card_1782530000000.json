@@ -1,0 +1,20 @@
+{
+  "id": "card_1782530000000",
+  "name": "北東軍第37歩兵小隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["アトラス北東軍", "純人間", "獣", "龍", "歩兵"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1, "human": 1, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "act": { "gold": 0, "human": 0, "nature": 1, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 2,
+  "defense": 3,
+  "description": "[警戒]\n与ダメージ時：自を得る",
+  "flavorText": "小隊規模でも侮るべきではない。相手を舐めた物から額に弾丸を貫うことになる。",
+  "imageUrl": "assets/cards/card_1782530000000.jpeg"
+}
