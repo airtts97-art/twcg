@@ -435,8 +435,7 @@ const abilityEffects = {
     const target = pool[0];
     const idx = structs.indexOf(target);
     const [removed] = structs.splice(idx, 1);
-    game.players[opponent].dump.push(removed);
-    notifyDumpChanged(game, opponent);
+    game.players[opponent].structDeck.push(removed);
     log(game, `${game.players[playerId].name}: 「${removed.name}」を破壊`);
   },
   summonSelfFromDump({ game, playerId, card }) {
