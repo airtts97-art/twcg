@@ -197,6 +197,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782530000000",  // 北東軍第37歩兵小隊
   "card_1782540000000",  // 第11歩兵大隊
   "card_1782204551547",  // 第76森人狙撃分隊
+  "card_1782205873100",  // シルバーゴーレム
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
