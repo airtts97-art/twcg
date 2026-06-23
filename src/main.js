@@ -6233,6 +6233,7 @@ function canAttackUnit(attacker, defender) {
 
 function isGuardedFrom(attacker, defender) {
   if (hasKeyword(attacker, "arc") || hasKeyword(attacker, "flying")) return false;
+  if (hasKeyword(defender, "guard")) return false; // 守護ユニット自身は守護で守られない
   for (const delta of [-1, 1]) {
     const guardian = state.board[defender.row]?.[defender.col + delta];
     if (!guardian || guardian.owner !== defender.owner || !hasKeyword(guardian, "guard")) continue;
