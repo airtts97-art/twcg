@@ -7990,7 +7990,7 @@ function drawCore(playerId, x, y, w, h) {
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`LP`, x + w - 16 - ctx.measureText(`${player.core.hp}`).width - 26, y + h - 10);
 
-  if (playerId !== state.activePlayer) addHit(x, y, w, h, () => attackWithSelectedUnit({ kind: "core" }));
+  if (playerId !== state.activePlayer && selectedUnit()) addHit(x, y, w, h, () => attackWithSelectedUnit({ kind: "core" }));
 }
 
 function handleCellClick(row, col) {
@@ -8270,7 +8270,7 @@ function drawLPDisplay(playerId, x, y, w, h) {
   ctx.fillRect(x + 5, barY, barW * ratio, 5);
   ctx.shadowBlur = 0; ctx.restore();
   // Make core clickable
-  if (playerId !== state.activePlayer) addHit(x, y, w, h, () => attackWithSelectedUnit({ kind: "core" }));
+  if (playerId !== state.activePlayer && selectedUnit()) addHit(x, y, w, h, () => attackWithSelectedUnit({ kind: "core" }));
 }
 
 function drawStructBar(playerId, x, y, w, h) {
