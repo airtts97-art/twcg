@@ -4439,7 +4439,9 @@ function cardImageSource(card) {
 function getCardImage(card) {
   const src = cardImageSource(card);
   if (!src) return null;
-  if (cardImageCache.has(src)) return cardImageCache.get(src);
+  const cached = cardImageCache.get(src);
+  // 失敗したエントリはキャッシュしない（サーバー起動前にロードして失敗した場合にリトライできるよう）
+  if (cached && !cached.failed) return cached;
   const image = new Image();
   const entry = { image, loaded: false, failed: false };
   image.onload = () => {
@@ -4448,7 +4450,8 @@ function getCardImage(card) {
   };
   image.onerror = () => {
     entry.failed = true;
-    render();
+    // 失敗時はキャッシュから削除して次回リトライ可能にする
+    cardImageCache.delete(src);
   };
   image.src = src;
   cardImageCache.set(src, entry);
