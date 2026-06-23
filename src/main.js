@@ -9046,8 +9046,10 @@ function drawCardTooltip(card, mx, my) {
   }
   const kwLabels = keywordLabels(card);
   if (kwLabels.length) lines.push({ text: kwLabels.join(" / "), font: "600 11px 'Yu Gothic UI', sans-serif", color: "#70b0e0" });
-  const descText = card.text || "";
-  if (descText) lines.push({ text: descText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "rgba(180,200,240,0.8)", wrap: true });
+  const abilText = abilityText(card);
+  if (abilText) lines.push({ text: abilText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "#a0e0b8", wrap: true });
+  const descText = card.flavor || card.text || "";
+  if (descText) lines.push({ text: descText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "rgba(180,200,240,0.6)", wrap: true });
 
   // compute tooltip height
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
