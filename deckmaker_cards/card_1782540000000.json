@@ -1,0 +1,20 @@
+{
+  "id": "card_1782540000000",
+  "name": "第11歩兵大隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["グラダブ連邦共和国", "純人類", "獣", "龍", "歩兵"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 1, "human": 3, "nature": 1, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "act": { "gold": 0, "human": 0, "nature": 1, "mineral": 0, "fuel": 1, "electric": 0, "magic": 0 },
+    "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 3,
+  "defense": 10,
+  "description": "[貫通①][警戒]",
+  "flavorText": "\"我ら連邦の歩兵、1歩を進み1歩も退かず\"",
+  "imageUrl": "assets/cards/card_1782540000000.jpeg"
+}
