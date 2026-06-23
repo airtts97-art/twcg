@@ -6124,7 +6124,10 @@ function isGuardedFrom(attacker, defender) {
   if (hasKeyword(attacker, "arc") || hasKeyword(attacker, "flying")) return false;
   for (const delta of [-1, 1]) {
     const guardian = state.board[defender.row]?.[defender.col + delta];
-    if (guardian?.owner === defender.owner && hasKeyword(guardian, "guard")) return true;
+    if (!guardian || guardian.owner !== defender.owner || !hasKeyword(guardian, "guard")) continue;
+    // 守護ユニットが航空を持ち、攻撃者がそこへ攻撃できない場合はガード無効
+    if (hasKeyword(guardian, "flying") && !hasKeyword(attacker, "flying") && !hasKeyword(attacker, "antiAir") && attacker.atk <= keywordValue(guardian, "flying")) continue;
+    return true;
   }
   return false;
 }
