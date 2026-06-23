@@ -1953,9 +1953,13 @@ cardCatalog.main.disruptionEngineer = {
   actCost: {},
   atk: 1,
   hp: 3,
-  text: "いかに強力な魔法であってもその概念を適切に乱せばその脅威は別の場所にそれる。\nこのユニットに隣接する味方ユニットは[効果保護①]を得る。",
+  maxHp: 3,
+  text: "出撃時：このカードに撹乱カウンターを３つ載せる\n隣接するユニットが効果によって破壊・除外される場合、代わりに撹乱カウンターを取り除くことができる",
   keywords: [],
-  abilities: [{ trigger: "onSummon", effect: "grantEffectProtectToAdjacent", value: 1 }],
+  abilities: [
+    { trigger: "onSummon", effect: "addCounters", amount: 3 },
+    { effect: "adjacentCounterShield" },
+  ],
 };
 
 cardCatalog.main.turbulentRepatriation = {
@@ -2854,6 +2858,12 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1761808048476") {
     abilities.length = 0;
     abilities.push({ trigger: "onTurnStart", effect: "payResourceOrCoreDamage", resource: "people", amount: 7, damage: 7 });
+  }
+
+  if (card.id === "disruptionEngineer") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "addCounters", amount: 3 });
+    abilities.push({ effect: "adjacentCounterShield" });
   }
 
   return abilities;
@@ -5903,6 +5913,19 @@ function cleanupDestroyed(unit, killer = null) {
     unit.currentHp = Math.max(1, unit.currentHp || 1);
     log(state, `「${unit.name}」は破壊不能で場に残った`);
     return;
+  }
+  // 隣接する撹乱カウンターシールド（効果による破壊のみ適用）
+  if (!killer) {
+    for (const dc of [-1, 1]) {
+      const shield = state.board[unit.row]?.[unit.col + dc];
+      if (shield && shield.owner === unit.owner && (shield.counters || 0) > 0 &&
+          (shield.abilities || []).some((a) => a.effect === "adjacentCounterShield")) {
+        shield.counters -= 1;
+        unit.currentHp = Math.max(1, unit.currentHp || 1);
+        log(state, `「${shield.name}」撹乱カウンター消費: 「${unit.name}」の破壊を防いだ`);
+        return;
+      }
+    }
   }
   unit.destroyed = true;
   triggerAbilities(state, unit.owner, unit, "onDestroy");
