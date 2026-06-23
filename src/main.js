@@ -8456,6 +8456,11 @@ function drawBoardActionButtons() {
     return row >= 0 && row < ROWS && col >= 0 && col < COLS && !state.board[row]?.[col];
   }
 
+  function rowHasEnemy(row) {
+    const enemyId = opponentOf(unit.owner);
+    return state.board[row]?.some((u) => u?.owner === enemyId);
+  }
+
   function colHasEnemy(col) {
     const enemyId = opponentOf(unit.owner);
     return state.board.some((r) => r[col]?.owner === enemyId);
@@ -8463,7 +8468,7 @@ function drawBoardActionButtons() {
 
   function dirBtn(label, row, col, logLabel, action, canBase) {
     const isDiag = col !== unit.col;
-    const valid = canBase && cellOpen(row, col) && !(isDiag && colHasEnemy(col));
+    const valid = canBase && cellOpen(row, col) && !rowHasEnemy(row) && !(isDiag && colHasEnemy(col));
     return {
       label,
       fn: valid ? () => relocateUnit(unit, row, col, logLabel, action) : null,
