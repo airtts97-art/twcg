@@ -179,9 +179,10 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1755671320457", // 【正体不明】怪獣
   "card_1757041693503", // 愚世の怪異
   "card_1761808048476", // 幾龍の怪異
-  "knowledgeFairy",    // 知識妖精
-  "lifeFairy",         // 生命妖精
-  "mischievousFairy",  // 悪戯妖精
+  "knowledgeFairy",      // 知識妖精
+  "lifeFairy",           // 生命妖精
+  "mischievousFairy",    // 悪戯妖精
+  "card_1782310000000",  // 幾代勇者
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -1360,6 +1361,31 @@ const abilityEffects = {
     log(game, `${card.name}: redirects ${lost} damage to opponent core`);
     checkWinner(game);
   },
+  surviveDamageAndOptionalBuff({ game, playerId, card, ability }) {
+    // 被ダメージ時：この処理中は破壊されない
+    if ((card.currentHp || 0) <= 0) {
+      card.currentHp = 1;
+      log(game, `${game.players[playerId].name}: 「${card.name}」は被ダメージで破壊されない`);
+    }
+    // 魔を支払うことで +1/+2 の修正（任意）
+    const resource = ability.resource || "magic";
+    const amount = ability.amount || 1;
+    const player = game.players[playerId];
+    if ((player.resources[resource] || 0) >= amount) {
+      game.pendingChoice = {
+        type: "payForBuff",
+        playerId,
+        cardName: card.name,
+        unitRow: card.row,
+        unitCol: card.col,
+        resource,
+        amount,
+        atkBuff: ability.atkBuff || 1,
+        hpBuff: ability.hpBuff || 2,
+      };
+      return "pending";
+    }
+  },
 };
 
 function findFirstEmptyColInRow(game, row) {
@@ -2352,6 +2378,16 @@ function parseDeckmakerAbilities(card, localType) {
       const amount = parseDeckmakerKeywordValue(match[1]) || 1;
       abilities.push({ trigger: "onDamageDealt", effect: "gainResource", resource, amount });
     }
+  }
+
+  // 被ダメージ時：破壊されず + 資源支払いで+N/+M
+  const takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊されず[^。\n]*?([金人自鉱燃電魔])を支払うことで[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/\+?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
+  if (takeDamageSurviveBuff) {
+    const resMap = { 金: "funds", 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic" };
+    const resource = resMap[takeDamageSurviveBuff[1]] || "magic";
+    const atkBuff = parseDeckmakerKeywordValue(takeDamageSurviveBuff[2]) || 1;
+    const hpBuff = parseDeckmakerKeywordValue(takeDamageSurviveBuff[3]) || 2;
+    abilities.push({ trigger: "onDamageReceived", effect: "surviveDamageAndOptionalBuff", resource, amount: 1, atkBuff, hpBuff });
   }
 
   // [降臨]: treat as onSummon trigger + descentEffect
@@ -4773,6 +4809,34 @@ function resolvePayOrDamage(payChoice) {
   completeAbilitySource(state, qi);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function resolvePayForBuff(pay) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "payForBuff") return false;
+  const player = state.players[pending.playerId];
+  if (pay) {
+    if ((player.resources[pending.resource] || 0) < pending.amount) {
+      state.message = "資源が不足しています。";
+      return false;
+    }
+    addResources(player, pending.resource, -pending.amount);
+    const unit = state.board[pending.unitRow]?.[pending.unitCol];
+    if (unit) {
+      unit.atk = (unit.atk || 0) + (pending.atkBuff || 0);
+      unit.currentHp = (unit.currentHp || 0) + (pending.hpBuff || 0);
+      unit.maxHp = (unit.maxHp || unit.hp || 0) + (pending.hpBuff || 0);
+      log(state, `${player.name}: 「${unit.name}」+${pending.atkBuff}/+${pending.hpBuff}の修正`);
+    }
+  } else {
+    log(state, `${player.name}: 「${pending.cardName}」バフをスキップ`);
+  }
+  state.pendingChoice = null;
+  state.selected = null;
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
   return true;
 }
 
@@ -7905,6 +7969,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "lifeCounterPayment") drawLifeCounterPaymentPanel(pending);
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
+  else if (pending.type === "payForBuff") drawPayForBuffPanel(pending);
 }
 
 function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
@@ -8044,6 +8109,32 @@ function drawPayOrDamagePanel(pending) {
   if (isController) {
     drawButton(x + 28, y + h - 58, 240, 36, `${resLabel}${pending.amount}を支払う`, () => { resolvePayOrDamage(true); render(); }, null, { accent: "p1" });
     drawButton(x + 290, y + h - 58, 220, 36, `コアに${pending.damage}ダメージ`, () => { resolvePayOrDamage(false); render(); });
+  }
+}
+
+function drawPayForBuffPanel(pending) {
+  const x = 420, y = 300, w = 600, h = 200;
+  drawChoicePanelBase(x, y, w, h, "rgba(60,120,200,0.7)", "#4080ff");
+  ctx.fillStyle = "#b0d8ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」被ダメージ時効果`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(180,210,255,0.9)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  const resLabel = RESOURCE_LABELS[pending.resource] || pending.resource;
+  ctx.fillText(
+    `${resLabel}を${pending.amount}支払うことで、+${pending.atkBuff}/+${pending.hpBuff}の修正を得ます。`,
+    x + 28, y + 64, w - 56
+  );
+  const player = state.players[pending.playerId];
+  const curRes = player.resources[pending.resource] || 0;
+  ctx.fillStyle = "rgba(160,200,255,0.7)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`現在の${resLabel}: ${curRes}`, x + 28, y + 90);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  if (isController) {
+    const canPay = curRes >= pending.amount;
+    drawButton(x + 28, y + h - 52, 260, 36, `${resLabel}${pending.amount}を支払い強化`, canPay ? () => resolvePayForBuff(true) : null, null, canPay ? { accent: "p1" } : { accent: "dim" });
+    drawButton(x + 310, y + h - 52, 180, 36, "スキップ", () => resolvePayForBuff(false));
   }
 }
 
