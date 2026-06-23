@@ -183,6 +183,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "lifeFairy",           // 生命妖精
   "mischievousFairy",    // 悪戯妖精
   "card_1782310000000",  // 幾代勇者
+  "card_1782320000000",  // 勇者の名誉
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -1361,6 +1362,26 @@ const abilityEffects = {
     log(game, `${card.name}: redirects ${lost} damage to opponent core`);
     checkWinner(game);
   },
+  revealTagsForResources({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const tagGroups = (ability.tagGroups || ["純人間", "獣", "龍"]).map((tag) => ({
+      tag,
+      cards: player.hand.filter((c) => (c.tags || []).includes(tag)),
+    }));
+    // 必須：[勇者]を見せる（ログのみ、手札に存在は play 時チェック済み）
+    const heroCard = player.hand.find((c) => (c.tags || []).includes(ability.requireTagInHand || "勇者"));
+    if (heroCard) log(game, `${player.name}: 「${heroCard.name}」を相手に見せた`);
+    game.pendingChoice = {
+      type: "revealTagsForResources",
+      playerId,
+      cardName: card.name,
+      tagGroups,
+      resourcePer: ability.resourcePer || 3,
+      resources: ability.resources || ["people", "funds"],
+      selected: {},
+    };
+    return "pending";
+  },
   surviveDamageAndOptionalBuff({ game, playerId, card, ability }) {
     // 被ダメージ時：この処理中は破壊されない
     if ((card.currentHp || 0) <= 0) {
@@ -2378,6 +2399,20 @@ function parseDeckmakerAbilities(card, localType) {
       const amount = parseDeckmakerKeywordValue(match[1]) || 1;
       abilities.push({ trigger: "onDamageDealt", effect: "gainResource", resource, amount });
     }
+  }
+
+  // 手札の[勇者]を見せて発動 + タグカードを見せて人・金×N
+  const revealHeroMatch = text.match(/手札の\[([^\]]+)\]ユニットを相手に見せて発動/);
+  const revealTagGainMatch = text.match(/手札から(.+?)カードをそれぞれ、1枚まで.*?見せてもよい.*?枚数×([0-9０-９①②③④⑤⑥⑦⑧⑨⑩]*)だけ([人金自鉱燃電魔]+)と([人金自鉱燃電魔]+)を得る/);
+  if (revealHeroMatch && revealTagGainMatch) {
+    const requireTag = revealHeroMatch[1];
+    const tagStr = revealTagGainMatch[1];
+    const tagGroups = tagStr.match(/\[([^\]]+)\]/g)?.map((t) => t.slice(1, -1)) || [];
+    const per = parseDeckmakerKeywordValue(revealTagGainMatch[2]) || 3;
+    const resMap = { 人: "people", 金: "funds", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic" };
+    const res1 = resMap[revealTagGainMatch[3]] || "people";
+    const res2 = resMap[revealTagGainMatch[4]] || "funds";
+    abilities.push({ trigger: baseTrigger, effect: "revealTagsForResources", requireTagInHand: requireTag, tagGroups, resourcePer: per, resources: [res1, res2] });
   }
 
   // 被ダメージ時：破壊されず + 資源支払いで+N/+M
@@ -4840,6 +4875,31 @@ function resolvePayForBuff(pay) {
   return true;
 }
 
+function resolveRevealTagsForResources(selectedByTag) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "revealTagsForResources") return false;
+  const player = state.players[pending.playerId];
+  const count = Object.values(selectedByTag).filter((v) => v != null).length;
+  const amount = count * (pending.resourcePer || 3);
+  if (amount > 0) {
+    for (const resource of (pending.resources || ["people", "funds"])) {
+      addResources(player, resource, amount);
+    }
+    const names = Object.entries(selectedByTag)
+      .filter(([, i]) => i != null)
+      .map(([tag, i]) => pending.tagGroups.find((g) => g.tag === tag)?.cards[i]?.name || tag);
+    log(state, `${player.name}: 「${pending.cardName}」見せたカード: ${names.join("、")} → 人+${amount} 金+${amount}`);
+  } else {
+    log(state, `${player.name}: 「${pending.cardName}」カードを見せず`);
+  }
+  state.pendingChoice = null;
+  state.selected = null;
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function resolveReviveFromDump(index) {
   const pending = state.pendingChoice;
   if (pending?.type !== "reviveFromDump") return false;
@@ -5495,6 +5555,11 @@ function playTactFromHand(handIndex) {
       if (!hasValidAbilityTarget(state, fakeItem)) {
         return fail(`${card.name}: 対象がいないため使用できません。`);
       }
+    }
+    if (ability.trigger === "onPlay" && ability.requireTagInHand) {
+      const tag = ability.requireTagInHand;
+      const hasTag = player.hand.some((c) => c !== card && (c.tags || []).includes(tag));
+      if (!hasTag) return fail(`${card.name}: 手札に[${tag}]ユニットが必要です。`);
     }
   }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
@@ -7970,6 +8035,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
   else if (pending.type === "payForBuff") drawPayForBuffPanel(pending);
+  else if (pending.type === "revealTagsForResources") drawRevealTagsForResourcesPanel(pending);
 }
 
 function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
@@ -8109,6 +8175,56 @@ function drawPayOrDamagePanel(pending) {
   if (isController) {
     drawButton(x + 28, y + h - 58, 240, 36, `${resLabel}${pending.amount}を支払う`, () => { resolvePayOrDamage(true); render(); }, null, { accent: "p1" });
     drawButton(x + 290, y + h - 58, 220, 36, `コアに${pending.damage}ダメージ`, () => { resolvePayOrDamage(false); render(); });
+  }
+}
+
+function drawRevealTagsForResourcesPanel(pending) {
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const sel = pending.selected || {};
+  const tagGroups = pending.tagGroups || [];
+  const cardW = 80, cardH = 112, gap = 8;
+  const groupW = Math.max(cardW + 20, 110);
+  const pw = Math.max(500, tagGroups.length * (groupW + gap) + 60);
+  const ph = 320;
+  const px = (W - pw) / 2, py = (H - ph) / 2;
+  drawChoicePanelBase(px, py, pw, ph, "rgba(180,150,40,0.7)", "#e0c030");
+  ctx.fillStyle = "#fff8c0";
+  ctx.font = "700 17px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」— タグを公開して資源を得る`, px + 20, py + 30);
+  ctx.fillStyle = "rgba(240,220,160,0.85)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  const count = Object.values(sel).filter((v) => v != null).length;
+  const gain = count * (pending.resourcePer || 3);
+  ctx.fillText(`各タグのカードを1枚まで選択して公開。公開枚数×${pending.resourcePer || 3}の人・金を得る。（現在${count}枚 → 人+${gain} 金+${gain}）`, px + 20, py + 52, pw - 40);
+  let gx = px + 20;
+  const cardsY = py + 70;
+  for (const group of tagGroups) {
+    ctx.fillStyle = "#e8d870";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`[${group.tag}]`, gx, cardsY - 4);
+    if (group.cards.length === 0) {
+      ctx.fillStyle = "rgba(180,160,80,0.5)";
+      ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+      ctx.fillText("なし", gx + 4, cardsY + 20);
+    } else {
+      group.cards.slice(0, 3).forEach((card, i) => {
+        const cx = gx + i * (cardW + 4);
+        const isSelected = sel[group.tag] === i;
+        if (isController) {
+          addHit(cx, cardsY, cardW, cardH, () => {
+            if (sel[group.tag] === i) delete pending.selected[group.tag];
+            else pending.selected[group.tag] = i;
+            render();
+          });
+        }
+        drawCard(cx, cardsY, cardW, cardH, card, { selected: isSelected, small: true });
+      });
+    }
+    gx += groupW + gap;
+  }
+  if (isController) {
+    drawButton(px + pw - 250, py + ph - 48, 110, 34, "確定", () => resolveRevealTagsForResources({ ...sel }), null, { accent: "p1" });
+    drawButton(px + pw - 130, py + ph - 48, 110, 34, "何も見せない", () => resolveRevealTagsForResources({}));
   }
 }
 
