@@ -1,0 +1,19 @@
+{
+  "id": "card_1782182910548",
+  "name": "血統整理委員会",
+  "type": "タクト",
+  "rarity": "通常",
+  "world": "ヘルメネアの大地",
+  "tags": ["政策", "組織", "工作", "掌握", "唯字論"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 3, "human": 3, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "act": {}, "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 0,
+  "defense": 0,
+  "description": "レストし、手札を１枚捨てる：１枚ドローする。それが[純人間]カードなら、さらに１枚ドローする\n自分の唯字論カウンターが載ったユニットは[装甲②]を得る",
+  "flavorText": "血統整理委員会は王政へ紛れ込んだ亜人を始末する名目でシルヴァ突進王が結集したが、\nその運用は専ら「不穏分子はヒトではない」という論理によって行われていた。",
+  "imageUrl": "/assets/cards/card_1782182910548.jpeg"
+}

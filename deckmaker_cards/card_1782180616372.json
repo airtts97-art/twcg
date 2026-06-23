@@ -1,0 +1,20 @@
+{
+  "id": "card_1782180616372",
+  "name": "唯字の騎士",
+  "type": "ユニット",
+  "rarity": "伝説",
+  "world": "ヘルメネアの大地",
+  "tags": ["リ・サンティウ連合王国", "純人間", "歩兵", "騎士", "唯字論"],
+  "roles": [],
+  "costs": {
+    "play": { "gold": 4, "human": 4, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 4 },
+    "act": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+    "choice": [], "choiceAct": []
+  },
+  "generates": { "gold": 0, "human": 0, "nature": 0, "mineral": 0, "fuel": 0, "electric": 0, "magic": 0 },
+  "attack": 3,
+  "defense": 5,
+  "description": "[機動][連撃④]\n味方の[純人間]ユニットが破壊された時：これに唯字論カウンターが①個載る\n唯字論カウンターを⑤個取り除く：+5/+5の修正を得る\nこのユニットが破壊される代わりに、\n唯字論カウンターを②個取り除くことができる",
+  "flavorText": "アレはもはや人ではない。\n「忠誠心」と「ナショナリズム」が人間の形をしているだけだ。",
+  "imageUrl": "/assets/cards/card_1782180616372.jpeg"
+}

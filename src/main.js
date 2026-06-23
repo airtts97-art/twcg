@@ -184,6 +184,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "mischievousFairy",    // 悪戯妖精
   "card_1782310000000",  // 幾代勇者
   "card_1782320000000",  // 勇者の名誉
+  "card_1782180616372",  // 唯字の騎士
+  "card_1782182910548",  // 血統整理委員会
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -525,6 +527,30 @@ const abilityEffects = {
   addCounters({ game, playerId, card, ability }) {
     card.counters = (card.counters || 0) + (ability.amount || 1);
     log(game, `${game.players[playerId].name}: 「${card.name}」カウンター +${ability.amount || 1}`);
+  },
+  addCounterIfTagDestroyed({ game, playerId, card, ability, source }) {
+    const destroyed = source?.target;
+    if (!destroyed) return;
+    const tag = ability.tag || "純人間";
+    if (!(destroyed.tags || []).includes(tag)) return;
+    card.counters = (card.counters || 0) + (ability.amount || 1);
+    log(game, `${game.players[playerId].name}: 「${card.name}」唯字論カウンター +${ability.amount || 1}（${tag}破壊）`);
+  },
+  discardForDraw({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    if (!player.hand.length) return;
+    game.pendingChoice = {
+      type: "discardForDraw",
+      playerId,
+      cardName: card.name,
+      pureHumanTag: ability.pureHumanTag || "純人間",
+    };
+    return "pending";
+  },
+  grantCounterArmor({ game, playerId, card, ability }) {
+    if (!game.globalEffects) game.globalEffects = [];
+    game.globalEffects.push({ type: "counterArmor", playerId, armorValue: ability.armorValue || 2 });
+    log(game, `${game.players[playerId].name}: 「${card.name}」カウンター持ちユニットに装甲${ability.armorValue || 2}付与`);
   },
   healSelfAndRemoveCounter({ game, playerId, card, ability }) {
     if ((card.counters || 0) > 0) card.counters -= 1;
@@ -1953,13 +1979,9 @@ cardCatalog.main.disruptionEngineer = {
   actCost: {},
   atk: 1,
   hp: 3,
-  maxHp: 3,
-  text: "出撃時：このカードに撹乱カウンターを３つ載せる\n隣接するユニットが効果によって破壊・除外される場合、代わりに撹乱カウンターを取り除くことができる",
+  text: "このユニットに隣接する味方ユニットは[効果保護①]を得る。",
   keywords: [],
-  abilities: [
-    { trigger: "onSummon", effect: "addCounters", amount: 3 },
-    { effect: "adjacentCounterShield" },
-  ],
+  abilities: [{ trigger: "onSummon", effect: "grantEffectProtectToAdjacent", value: 1 }],
 };
 
 cardCatalog.main.turbulentRepatriation = {
@@ -2860,10 +2882,17 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onTurnStart", effect: "payResourceOrCoreDamage", resource: "people", amount: 7, damage: 7 });
   }
 
-  if (card.id === "disruptionEngineer") {
+  if (card.id === "card_1782180616372") {
     abilities.length = 0;
-    abilities.push({ trigger: "onSummon", effect: "addCounters", amount: 3 });
-    abilities.push({ effect: "adjacentCounterShield" });
+    abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "addCounterIfTagDestroyed", tag: "純人間", amount: 1 });
+    abilities.push({ trigger: "onActivate", effect: "spendCountersForBuff", costCounters: 5, atkBuff: 5, hpBuff: 5, noRest: true });
+    abilities.push({ effect: "selfCounterDeathShield", cost: 2 });
+  }
+
+  if (card.id === "card_1782182910548") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "discardForDraw", pureHumanTag: "純人間" });
+    abilities.push({ trigger: "onPlay", effect: "grantCounterArmor", armorValue: 2 });
   }
 
   return abilities;
@@ -4910,6 +4939,28 @@ function resolveRevealTagsForResources(selectedByTag) {
   return true;
 }
 
+function resolveDiscardForDraw(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "discardForDraw") return false;
+  const player = state.players[pending.playerId];
+  if (index < 0 || index >= player.hand.length) return false;
+  const discarded = player.hand.splice(index, 1)[0];
+  player.dump.push(discarded);
+  log(state, `${player.name}: 「${discarded.name}」を捨てた`);
+  drawCards(state, pending.playerId, 1);
+  const drawn = player.hand[player.hand.length - 1];
+  if (drawn && (drawn.tags || []).includes(pending.pureHumanTag || "純人間")) {
+    drawCards(state, pending.playerId, 1);
+    log(state, `${player.name}: [純人間]を引いたのでもう1枚ドロー`);
+  }
+  state.pendingChoice = null;
+  state.selected = null;
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function resolveReviveFromDump(index) {
   const pending = state.pendingChoice;
   if (pending?.type !== "reviveFromDump") return false;
@@ -5755,6 +5806,19 @@ function activateSelectedUnit() {
     render();
     return true;
   }
+  if (ability.costCounters) {
+    const counterCost = ability.costCounters;
+    if ((unit.counters || 0) < counterCost) return fail(`カウンターが不足しています（必要: ${counterCost}）。`);
+    unit.counters -= counterCost;
+    unit.atk = (unit.atk || 0) + (ability.atkBuff || 0);
+    unit.currentHp = (unit.currentHp || 0) + (ability.hpBuff || 0);
+    unit.maxHp = (unit.maxHp || unit.hp || 0) + (ability.hpBuff || 0);
+    if (!ability.noRest) unit.rested = true;
+    log(state, `${player.name}: 「${unit.name}」カウンター${counterCost}消費 → +${ability.atkBuff || 0}/+${ability.hpBuff || 0}`);
+    syncOnlineAction("activateUnit", state.activePlayer);
+    render();
+    return true;
+  }
   const cost = ability.activationCost || {};
   if (!pay(player, cost)) return fail("起動コストが不足しています。");
   if (!ability.noRest) unit.rested = true;
@@ -5871,7 +5935,16 @@ function isGuardedFrom(attacker, defender) {
 
 function calculateAttackDamage(attacker, defender) {
   const ignoresArmor = hasKeyword(attacker, "charge");
-  const armor = ignoresArmor ? 0 : Math.max(0, keywordValue(defender, "armor") - keywordValue(attacker, "pierce"));
+  let armorVal = keywordValue(defender, "armor");
+  if (!ignoresArmor) {
+    const counterArmorGE = (state.globalEffects || []).find(
+      (e) => e.type === "counterArmor" && e.playerId === defender.owner
+    );
+    if (counterArmorGE && (defender.counters || 0) > 0) {
+      armorVal = Math.max(armorVal, counterArmorGE.armorValue || 2);
+    }
+  }
+  const armor = ignoresArmor ? 0 : Math.max(0, armorVal - keywordValue(attacker, "pierce"));
   return Math.max(0, attacker.atk - armor);
 }
 
@@ -5914,22 +5987,25 @@ function cleanupDestroyed(unit, killer = null) {
     log(state, `「${unit.name}」は破壊不能で場に残った`);
     return;
   }
-  // 隣接する撹乱カウンターシールド（効果による破壊のみ適用）
-  if (!killer) {
-    for (const dc of [-1, 1]) {
-      const shield = state.board[unit.row]?.[unit.col + dc];
-      if (shield && shield.owner === unit.owner && (shield.counters || 0) > 0 &&
-          (shield.abilities || []).some((a) => a.effect === "adjacentCounterShield")) {
-        shield.counters -= 1;
-        unit.currentHp = Math.max(1, unit.currentHp || 1);
-        log(state, `「${shield.name}」撹乱カウンター消費: 「${unit.name}」の破壊を防いだ`);
-        return;
-      }
-    }
+  // 自身のカウンターによる破壊防止（唯字の騎士など）
+  const selfShieldAbility = (unit.abilities || []).find((a) => a.effect === "selfCounterDeathShield");
+  if (selfShieldAbility && (unit.counters || 0) >= (selfShieldAbility.cost || 2)) {
+    unit.counters -= (selfShieldAbility.cost || 2);
+    unit.currentHp = Math.max(1, unit.currentHp || 1);
+    log(state, `「${unit.name}」唯字論カウンター${selfShieldAbility.cost || 2}消費: 破壊を防いだ`);
+    return;
   }
   unit.destroyed = true;
   triggerAbilities(state, unit.owner, unit, "onDestroy");
   triggerAbilities(state, unit.owner, state.players[unit.owner].core, "onFriendlyUnitDestroyed", { target: unit });
+  for (let r = 0; r < state.board.length; r++) {
+    for (let c = 0; c < (state.board[r] || []).length; c++) {
+      const ally = state.board[r]?.[c];
+      if (ally && ally.owner === unit.owner) {
+        triggerAbilities(state, unit.owner, ally, "onFriendlyUnitDestroyed", { target: unit });
+      }
+    }
+  }
   state.board[unit.row][unit.col] = null;
   // [降臨] returnToHandOnDestroy: owner gets card back to hand instead of dump
   const returnEffect = (state.globalEffects || []).find(
@@ -8059,6 +8135,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
   else if (pending.type === "payForBuff") drawPayForBuffPanel(pending);
   else if (pending.type === "revealTagsForResources") drawRevealTagsForResourcesPanel(pending);
+  else if (pending.type === "discardForDraw") drawDiscardForDrawPanel(pending);
 }
 
 function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
@@ -8248,6 +8325,39 @@ function drawRevealTagsForResourcesPanel(pending) {
   if (isController) {
     drawButton(px + pw - 250, py + ph - 48, 110, 34, "確定", () => resolveRevealTagsForResources({ ...sel }), null, { accent: "p1" });
     drawButton(px + pw - 130, py + ph - 48, 110, 34, "何も見せない", () => resolveRevealTagsForResources({}));
+  }
+}
+
+function drawDiscardForDrawPanel(pending) {
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const player = state.players[pending.playerId];
+  const hand = player.hand;
+  const cardW = 80, cardH = 112, gap = 8;
+  const cols = Math.min(hand.length, 8);
+  const pw = Math.max(400, cols * (cardW + gap) + 40);
+  const ph = 270;
+  const px = (W - pw) / 2, py = (H - ph) / 2;
+  const sel = pending.selectedIdx;
+  drawChoicePanelBase(px, py, pw, ph, "rgba(80,40,140,0.7)", "#9060e0");
+  ctx.fillStyle = "#e8d0ff";
+  ctx.font = "700 17px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」— 捨てるカードを1枚選んでください`, px + 20, py + 30);
+  ctx.fillStyle = "rgba(200,170,255,0.8)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("捨てた後1枚ドロー。[純人間]ならさらに1枚ドロー。", px + 20, py + 52);
+  const cardsY = py + 68;
+  hand.forEach((card, i) => {
+    const cx = px + 20 + i * (cardW + gap);
+    if (isController) {
+      addHit(cx, cardsY, cardW, cardH, () => {
+        pending.selectedIdx = (pending.selectedIdx === i) ? undefined : i;
+        render();
+      });
+    }
+    drawCard(cx, cardsY, cardW, cardH, card, { selected: sel === i, small: true });
+  });
+  if (isController && sel !== undefined) {
+    drawButton(px + pw / 2 - 60, py + ph - 48, 120, 34, "捨てる", () => resolveDiscardForDraw(sel), null, { accent: "p1" });
   }
 }
 
