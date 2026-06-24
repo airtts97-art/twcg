@@ -9204,8 +9204,11 @@ function drawPayForBuffPanel(pending) {
   ctx.fillStyle = "rgba(180,220,255,0.8)";
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`現在の${resLabel}: ${curRes}`, x + 28, y + 100);
-  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
-  console.log(`drawPayForBuffPanel: isController=${isController}, canControl=${canControlActivePlayer()}, playerId=${pending.playerId}, controlled=${controlledPlayerId()}`);
+  // ボタンを表示する条件：このプレイヤーを操作しているユーザーか
+  // （相手のターン中に自分が被ダメージを受けた場合、activePlayer ≠ pending.playerId なため、
+  //  canControlActivePlayer() は false になる。そのため、単純に playerId チェックのみ）
+  const isController = pending.playerId === controlledPlayerId();
+  console.log(`drawPayForBuffPanel: isController=${isController}, playerId=${pending.playerId}, controlled=${controlledPlayerId()}`);
   if (isController) {
     const canPay = curRes >= pending.amount;
     console.log(`drawPayForBuffPanel buttons: canPay=${canPay}, curRes=${curRes}, amount=${pending.amount}`);
