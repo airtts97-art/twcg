@@ -2313,6 +2313,20 @@ function loadBundledDeckData() {
       console.warn("loadBundledDeckData: error processing card", deckmakerCard?.id, e);
     }
   }
+  // キーワードが未設定のカードを修正
+  ensureAllCardKeywords();
+}
+
+function ensureAllCardKeywords() {
+  for (const group of ["main", "structs"]) {
+    for (const card of Object.values(cardCatalog[group] || {})) {
+      if (!card?.description) continue;
+      // keywordsが設定されていない、または空の場合は自動生成
+      if (!card.keywords || card.keywords.length === 0) {
+        card.keywords = parseDeckmakerKeywords(card);
+      }
+    }
+  }
 }
 
 function persistCustomCards(groups) {
