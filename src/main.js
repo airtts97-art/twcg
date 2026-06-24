@@ -3627,7 +3627,8 @@ async function signInWithGoogle() {
         });
         googleInitialized = true;
       }
-      console.log("Showing Google prompt...");
+      console.log("Trying Google One Tap prompt...");
+      let promptShown = false;
       window.google.accounts.id.prompt((notification) => {
         console.log("Google prompt notification:", {
           isNotDisplayed: notification.isNotDisplayed(),
@@ -3635,12 +3636,21 @@ async function signInWithGoogle() {
           isDismissedMoment: notification.isDismissedMoment(),
           isDisplayMoment: notification.isDisplayMoment(),
         });
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          console.warn("One Tap not displayed - showing fallback message");
-          app.auth.message = "Googleログイン画面を表示できません。ブラウザのキャッシュをクリアして再度試してください。";
-          render();
+        if (notification.isDisplayMoment()) {
+          promptShown = true;
+          console.log("One Tap displayed successfully");
+        } else {
+          console.warn("One Tap not displayed - will render button instead");
         }
       });
+
+      // One Tap表示状態を確認してから、ボタン表示に切り替え
+      setTimeout(() => {
+        if (!promptShown) {
+          console.log("Falling back to Google Sign-In button");
+          showGoogleSignInButton();
+        }
+      }, 500);
       return;
     } catch (error) {
       console.error("Google Sign-In error:", error);
@@ -3664,6 +3674,61 @@ async function signInWithGoogle() {
     message: "Googleログインにはサーバー環境変数 GOOGLE_CLIENT_ID の設定が必要です。",
   };
   render();
+}
+
+function showGoogleSignInButton() {
+  if (!window.google?.accounts?.id) return;
+
+  // HTMLキャンバスの上にボタンコンテナを配置
+  let container = document.getElementById("google-signin-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "google-signin-container";
+    container.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 9999;
+      background: rgba(10, 20, 50, 0.95);
+      padding: 30px;
+      border-radius: 12px;
+      border: 2px solid rgba(40, 80, 200, 0.6);
+      text-align: center;
+      font-family: 'Yu Gothic UI', sans-serif;
+      box-shadow: 0 0 20px rgba(32, 96, 255, 0.5);
+    `;
+    document.body.appendChild(container);
+  }
+
+  // メッセージを表示
+  container.innerHTML = `
+    <div style="color: #c0d8ff; font-size: 18px; font-weight: 700; margin-bottom: 20px;">
+      Googleでログイン
+    </div>
+    <div id="google-button-wrapper"></div>
+  `;
+
+  try {
+    window.google.accounts.id.renderButton(
+      document.getElementById("google-button-wrapper"),
+      {
+        type: "standard",
+        size: "large",
+        theme: "outline",
+        text: "signin_with",
+      }
+    );
+    console.log("Google Sign-In button rendered successfully");
+  } catch (error) {
+    console.error("Failed to render Google button:", error);
+    container.innerHTML = `
+      <div style="color: #ff6060; font-size: 14px;">
+        Googleボタンの表示に失敗しました。<br>
+        ブラウザのコンソールでエラーを確認してください。
+      </div>
+    `;
+  }
 }
 
 function renderGoogleSignInButton() {
