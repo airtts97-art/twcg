@@ -1575,9 +1575,9 @@ const abilityEffects = {
     const resource = ability.resource || "magic";
     const amount = ability.amount || 1;
     const player = game.players[playerId];
-    console.log(`surviveDamageAndOptionalBuff: card=${card.name}, resource=${resource}, amount=${amount}, curRes=${player.resources[resource] || 0}`);
+    console.log(`surviveDamageAndOptionalBuff: card=${card.name}, resource=${resource}, amount=${amount}, curRes=${player.resources[resource] || 0}, ability=${JSON.stringify(ability)}`);
     if ((player.resources[resource] || 0) >= amount) {
-      game.pendingChoice = {
+      const pendingChoice = {
         type: "payForBuff",
         playerId,
         cardName: card.name,
@@ -1588,10 +1588,13 @@ const abilityEffects = {
         atkBuff: ability.atkBuff || 1,
         hpBuff: ability.hpBuff || 2,
       };
-      console.log(`Setting pendingChoice:`, game.pendingChoice);
+      game.pendingChoice = pendingChoice;
+      console.log(`Setting pendingChoice:`, pendingChoice);
+      console.log(`game.pendingChoice after set:`, game.pendingChoice);
       return "pending";
     } else {
       console.log(`Resource insufficient for buff: need ${amount} ${resource}, have ${player.resources[resource] || 0}`);
+      return;
     }
   },
 };
