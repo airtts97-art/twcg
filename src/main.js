@@ -438,6 +438,30 @@ const abilityEffects = {
     game.players[opponent].structDeck.push(removed);
     log(game, `${game.players[playerId].name}: 「${removed.name}」を破壊`);
   },
+  destroyEnemyStructs({ game, playerId, card, ability }) {
+    const opponent = opponentOf(playerId);
+    const structs = game.players[opponent].structs;
+    const fuelCost = ability.fuelCost || 1;
+    const amount = ability.amount || 2;
+    if ((game.players[playerId].resources.fuel || 0) < fuelCost) {
+      log(game, `${game.players[playerId].name}: 燃料が不足しているため「${card.name}」を使えない`);
+      return;
+    }
+    if (!structs.length) return;
+    addResources(game.players[playerId], "fuel", -fuelCost);
+    const destroyed = [];
+    for (let i = 0; i < amount && structs.length > 0; i++) {
+      const maxTaunt = Math.max(...structs.map((s) => keywordValue(s, "structTaunt")));
+      const pool = maxTaunt > 0 ? structs.filter((s) => keywordValue(s, "structTaunt") >= maxTaunt) : structs;
+      const target = pool[0];
+      const idx = structs.indexOf(target);
+      const [removed] = structs.splice(idx, 1);
+      game.players[opponent].structDeck.push(removed);
+      destroyed.push(removed.name);
+    }
+    const names = destroyed.join("、");
+    log(game, `${game.players[playerId].name}: 「${card.name}」燃${fuelCost}支払い → 相手のストラクト「${names}」を破壊`);
+  },
   summonSelfFromDump({ game, playerId, card }) {
     const player = game.players[playerId];
     const dumpIdx = player.dump.findLastIndex((c) => c.id === card.id);
@@ -10279,6 +10303,7 @@ function abilityText(card) {
         restTargetNoUnrest: "相手ユニットをレスト（次ターン解除不可）",
         produceResourceCostHP: `ライフ${ability.hpCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         produceResourceCostHuman: `人${ability.humanCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
+        destroyEnemyStructs: `燃${ability.fuelCost}支払い → 相手のストラクト${ability.amount}枚破壊`,
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })
