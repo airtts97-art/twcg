@@ -139,7 +139,7 @@
   ],
   "google107943001969772816811": [
     {
-      "id": "deckmaker-mqqktd66",
+      "id": "deckmaker-mqrfcp09",
       "name": "ユニフォール　勇者デッキ",
       "deck": {
         "core": "card_1782450000000",
@@ -188,10 +188,10 @@
           "card_1753660970113",
           "card_1753660970113",
           "card_1753660970113",
-          "mischievousFairy",
-          "mischievousFairy",
-          "lifeFairy",
-          "lifeFairy"
+          "fieldOrder",
+          "fieldOrder",
+          "fieldOrder",
+          "fieldOrder"
         ],
         "struct": [
           "card_1753682701261",
@@ -210,13 +210,11 @@
           "magicWell",
           "card_1753683243290",
           "card_1753683243290",
-          "card_1753682701261",
-          "card_1753682701261",
-          "card_1753682701261",
-          "card_1753682701261"
+          "card_1753682800882",
+          "card_1753682800882"
         ]
       },
-      "updatedAt": "2026-06-23T13:23:37.572Z"
+      "updatedAt": "2026-06-24T01:58:52.728Z"
     },
     {
       "id": "deck-mqnn3agi",
