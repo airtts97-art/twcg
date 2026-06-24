@@ -32,7 +32,7 @@ const SORT_OPTIONS = [
 ];
 let googleClientId = "";
 let googleSignInEnabled = false;
-const DEFAULT_PUBLIC_SERVER_BASE = "https://discussing-motivated-personal-forwarding.trycloudflare.com";
+const DEFAULT_PUBLIC_SERVER_BASE = "https://favourite-responsible-cargo-liabilities.trycloudflare.com";
 const DEFAULT_PUBLIC_WS_URL = `${DEFAULT_PUBLIC_SERVER_BASE.replace(/^https:/, "wss:")}/ws`;
 const ONLINE_WS_URL = (() => {
   const params = new URLSearchParams(location.search);
@@ -442,25 +442,24 @@ const abilityEffects = {
     const opponent = opponentOf(playerId);
     const structs = game.players[opponent].structs;
     const fuelCost = ability.fuelCost || 1;
-    const amount = ability.amount || 2;
+    const amount = ability.amount || 1;
     if ((game.players[playerId].resources.fuel || 0) < fuelCost) {
       log(game, `${game.players[playerId].name}: 燃料が不足しているため「${card.name}」を使えない`);
       return;
     }
-    if (!structs.length) return;
-    addResources(game.players[playerId], "fuel", -fuelCost);
-    const destroyed = [];
-    for (let i = 0; i < amount && structs.length > 0; i++) {
-      const maxTaunt = Math.max(...structs.map((s) => keywordValue(s, "structTaunt")));
-      const pool = maxTaunt > 0 ? structs.filter((s) => keywordValue(s, "structTaunt") >= maxTaunt) : structs;
-      const target = pool[0];
-      const idx = structs.indexOf(target);
-      const [removed] = structs.splice(idx, 1);
-      game.players[opponent].structDeck.push(removed);
-      destroyed.push(removed.name);
+    if (!structs.length) {
+      log(game, `${game.players[playerId].name}: 相手のストラクトがないため「${card.name}」を使えない`);
+      return;
     }
-    const names = destroyed.join("、");
-    log(game, `${game.players[playerId].name}: 「${card.name}」燃${fuelCost}支払い → 相手のストラクト「${names}」を破壊`);
+    if (!game.pendingStructPhase) return;
+    game.pendingStructPhase.pendingEnemyStructChoice = {
+      fuelCost,
+      amount,
+      remaining: amount,
+      cardName: card.name,
+    };
+    game.message = `${card.name}: 破壊する相手ストラクトを選択してください。`;
+    return "pending";
   },
   summonSelfFromDump({ game, playerId, card }) {
     const player = game.players[playerId];
@@ -1136,6 +1135,7 @@ const abilityEffects = {
       type: "chooseProduceResource",
       options: ability.options || [],
       cardName: card.name,
+      multiActivate: Boolean(ability.multiActivate),
     };
     return "pending";
   },
@@ -5133,6 +5133,7 @@ function processEffectQueue(game) {
   if (game.pendingTarget) return;
   if (game.pendingChoice) return;
   if (game.pendingStructPhase?.pendingResourceChoice) return;
+  if (game.pendingStructPhase?.pendingEnemyStructChoice) return;
   while (game.effectQueue.length) {
     const item = game.effectQueue.shift();
     const effect = abilityEffects[item.ability.effect];
@@ -5401,16 +5402,14 @@ function resolveDeployHeroCell(row, col) {
   addResources(player, "funds", -goldNeeded);
   const heroCard = player.hand[opt.handIdx];
   player.hand.splice(opt.handIdx, 1);
-  // 出撃させたプレイヤーが現在のアクティブプレイヤー（自分）なら、相手のターン終了時に戻す
-  // 出撃させたプレイヤーが非アクティブプレイヤー（相手）なら、アクティブプレイヤーのターン終了時に戻す
-  const returnToPlayer = state.activePlayer === pending.playerId ? opponentOf(pending.playerId) : pending.playerId;
+  // 次の自分のフェーズ終わりに、出撃元プレイヤーの手札へ戻す
   const unit = { ...cloneCard(heroCard), instanceId: nextInstanceId++, owner: pending.playerId,
     row, col, maxHp: heroCard.hp, currentHp: heroCard.hp, rested: false,
     attacksThisTurn: 0, mobileMoveUsed: false, counters: 0,
-    returnAtPlayer: returnToPlayer, returnAtTurn: state.turn + 1 };
+    handOwnerId: pending.playerId, returnAtPlayer: pending.playerId, returnAtTurn: state.turn + 1 };
   state.board[row][col] = unit;
   triggerAbilities(state, pending.playerId, unit, "onSummon");
-  log(state, `${player.name}: 「${unit.name}」を金${goldNeeded}で出撃（${state.players[returnToPlayer].name}のターン終了時に手札へ戻る）`);
+  log(state, `${player.name}: 「${unit.name}」を金${goldNeeded}で出撃（次の${player.name}のフェーズ終わりに手札へ戻る）`);
   state.pendingChoice = null;
   state.selected = null;
   processEffectQueue(state);
@@ -6001,6 +6000,7 @@ function activateStructInPhase(index) {
   const pending = state.pendingStructPhase;
   if (!pending) return false;
   if (pending.pendingResourceChoice) return false;
+  if (pending.pendingEnemyStructChoice) return false;
   const player = state.players[pending.playerId];
   const struct = player.structs[index];
   if (!struct) return false;
@@ -6010,7 +6010,7 @@ function activateStructInPhase(index) {
   if (!hasMultiActivate && pending.activatedIndexes.includes(index)) return false;
 
   if (!canAffordStructActivation(struct, player)) return false;
-  if (!pending.activatedIndexes.includes(index)) {
+  if (!hasMultiActivate && !pending.activatedIndexes.includes(index)) {
     pending.activatedIndexes.push(index);
   }
   triggerAbilities(state, pending.playerId, struct, "onStructurePhase");
@@ -6025,6 +6025,7 @@ function endStructPhase() {
   const pending = state.pendingStructPhase;
   if (!pending) return false;
   if (pending.pendingResourceChoice) return false;
+  if (pending.pendingEnemyStructChoice) return false;
   const player = state.players[pending.playerId];
   const gained = resourceDelta(pending.resourcesBefore, player.resources);
   const drawn = Math.max(0, player.hand.length - pending.handBefore);
@@ -6044,6 +6045,27 @@ function endStructPhase() {
   syncOnlineAction("structPhaseEnd");
   render();
   return true;
+}
+
+function resolveEnemyStructChoice(enemyIndex) {
+  if (!canControlActivePlayer()) return;
+  const pending = state.pendingStructPhase;
+  const choice = pending?.pendingEnemyStructChoice;
+  if (!choice) return;
+  const opponent = opponentOf(pending.playerId);
+  const structs = state.players[opponent].structs;
+  if (enemyIndex < 0 || enemyIndex >= structs.length) return;
+  const player = state.players[pending.playerId];
+  if ((player.resources.fuel || 0) < choice.fuelCost) return;
+  addResources(player, "fuel", -choice.fuelCost);
+  const [removed] = structs.splice(enemyIndex, 1);
+  state.players[opponent].structDeck.push(removed);
+  log(state, `${player.name}: 「${choice.cardName}」燃${choice.fuelCost}支払い → 相手の「${removed.name}」を破壊`);
+  choice.remaining -= 1;
+  pending.pendingEnemyStructChoice = choice.remaining > 0 ? choice : null;
+  if (!pending.pendingEnemyStructChoice) processEffectQueue(state);
+  syncOnlineAction("enemyStructChoice");
+  render();
 }
 
 function resolveMarketChoice(resource) {
@@ -6099,8 +6121,9 @@ function endTurn() {
       const u = state.board[r]?.[c];
       if (u && u.returnAtPlayer === endingPlayer && state.turn >= u.returnAtTurn) {
         state.board[r][c] = null;
-        state.players[u.owner].hand.push(stripRuntime(u));
-        log(state, `「${u.name}」→ ${state.players[u.owner].name}の手札に戻る（天撃効果）`);
+        const handOwnerId = u.handOwnerId || u.owner;
+        state.players[handOwnerId].hand.push(stripRuntime(u));
+        log(state, `「${u.name}」→ ${state.players[handOwnerId].name}の手札に戻る（天撃効果）`);
       }
     }
   }
@@ -6467,9 +6490,11 @@ function attackWithSelectedUnit(target) {
 
   if (target.kind === "core") {
     if (!canAttackCore(unit)) return fail("コアへ直接攻撃できる位置ではありません。");
+    const defenderId = target.playerId || opponentOf(unit.owner);
+    if (defenderId === unit.owner) return fail("自分のコアは攻撃できません。");
     if (!payAttackCosts(player, unit)) return fail("アクトコストが不足しています。");
     triggerAttackAbilities(unit);
-    const defender = state.players[opponentOf(unit.owner)];
+    const defender = state.players[defenderId];
     const coreArmor = defender.core.armor || 0;
     const coreDmg = Math.max(0, unit.atk - coreArmor);
     defender.core.hp -= coreDmg;
@@ -6574,10 +6599,9 @@ function isGuardedFrom(attacker, defender) {
   return false;
 }
 
-function calculateAttackDamage(attacker, defender) {
-  const ignoresArmor = hasKeyword(attacker, "charge");
-  let armorVal = keywordValue(defender, "armor");
-  if (!ignoresArmor) {
+function defenderArmorValue(defender, attacker) {
+  let armorVal = Math.max(keywordValue(defender, "armor"), Number(defender.armor) || 0);
+  if (!hasKeyword(attacker, "charge")) {
     const counterArmorGE = (state.globalEffects || []).find(
       (e) => e.type === "counterArmor" && e.playerId === defender.owner
     );
@@ -6585,6 +6609,12 @@ function calculateAttackDamage(attacker, defender) {
       armorVal = Math.max(armorVal, counterArmorGE.armorValue || 2);
     }
   }
+  return armorVal;
+}
+
+function calculateAttackDamage(attacker, defender) {
+  const ignoresArmor = hasKeyword(attacker, "charge");
+  const armorVal = defenderArmorValue(defender, attacker);
   const armor = ignoresArmor ? 0 : Math.max(0, armorVal - keywordValue(attacker, "pierce"));
   return Math.max(0, attacker.atk - armor);
 }
@@ -6646,7 +6676,14 @@ function cleanupAllDestroyed(killer = null) {
 
 function canAttackCore(unit) {
   const player = state.players[unit.owner];
-  return player.side === "bottom" ? unit.row < player.directRow : unit.row > player.directRow;
+  return player.forward < 0 ? unit.row <= player.directRow : unit.row >= player.directRow;
+}
+
+function canTargetCore(attacker, corePlayerId) {
+  if (!attacker || attacker.owner !== state.activePlayer) return false;
+  if (corePlayerId === attacker.owner) return false;
+  if (attacker.rested || hasKeyword(attacker, "noAttack")) return false;
+  return canAttackCore(attacker);
 }
 
 function cleanupDestroyed(unit, killer = null) {
@@ -7825,8 +7862,9 @@ function drawCoreInBoardCell(cx, cy, cW, cH, playerId) {
   ctx.fillRect(cx + 4, barY, barW * ratio, 4);
 
   addCardHover(cx, cy, cW, cH, coreCard);
-  if (playerId !== state.activePlayer && selectedUnit()) {
-    addHit(cx, cy, cW, cH, () => attackWithSelectedUnit({ kind: "core" }));
+  const attacker = selectedUnit();
+  if (canTargetCore(attacker, playerId)) {
+    addHit(cx, cy, cW, cH, () => attackWithSelectedUnit({ kind: "core", playerId }));
   } else {
     addHit(cx, cy, cW, cH, () => { state.message = `${player.name} Core HP: ${hp}/${maxHp}`; });
   }
@@ -9493,6 +9531,10 @@ function canAffordStructActivation(struct, player) {
         (opt) => (player.resources[opt.resource] || 0) >= opt.amount
       );
       if (!canAffordAny) return false;
+    } else if (ab.effect === "destroyEnemyStructs") {
+      if ((player.resources.fuel || 0) < (ab.fuelCost || 1)) return false;
+      const opponent = opponentOf(player.id);
+      if (!state.players[opponent].structs.length) return false;
     } else {
       for (const [res, amt] of Object.entries(ab.cost || {})) {
         if ((player.resources[res] || 0) < amt) return false;
@@ -9530,7 +9572,8 @@ function drawStructPhaseOverlay() {
   const headerH = 72;
   const btnH = 28;
   const cardRowH = cardH + 4 + 13 + 6 + btnH + 6; // card+abilityText+btn
-  const choiceH = pending.pendingResourceChoice ? 72 : 0;
+  const enemyChoice = pending.pendingEnemyStructChoice;
+  const choiceH = pending.pendingResourceChoice ? 72 : enemyChoice ? 120 : 0;
   const footerH = 56;
   const w = Math.max(660, contentW + 80);
   const h = headerH + cardRowH + choiceH + footerH;
@@ -9580,8 +9623,10 @@ function drawStructPhaseOverlay() {
   }
 
   const choice = pending.pendingResourceChoice;
+  const waitingChoice = choice || enemyChoice;
   visibleStructs.forEach(({ s: struct, origIdx }, i) => {
-    const activated = pending.activatedIndexes.includes(origIdx);
+    const hasMultiActivate = (struct.abilities || []).some((a) => a.multiActivate);
+    const activated = !hasMultiActivate && pending.activatedIndexes.includes(origIdx);
     const affordable = canAffordStructActivation(struct, player);
     const cx = cardsAreaX + i * (cardW + cardGap);
     const cy = cardsAreaY;
@@ -9612,9 +9657,9 @@ function drawStructPhaseOverlay() {
     // 発動ボタン
     const hpAbility = (struct.abilities || []).find((a) => a.trigger === "onStructurePhaseHP");
     const btnY = cy + cardH + 22;
-    if (isController && !activated) {
-      if (affordable && !choice) {
-        drawButton(cx, btnY, cardW, btnH, "発動", () => activateStructInPhase(origIdx));
+    if (isController && (!activated || hasMultiActivate)) {
+      if (affordable && !waitingChoice) {
+        drawButton(cx, btnY, cardW, btnH, hasMultiActivate ? "再発動" : "発動", () => activateStructInPhase(origIdx));
       } else {
         drawButton(cx, btnY, cardW, btnH, affordable ? "選択中..." : "発動不可", null, null, { accent: "dim" });
       }
@@ -9662,8 +9707,33 @@ function drawStructPhaseOverlay() {
     }
   }
 
+  if (enemyChoice) {
+    const opponent = state.players[opponentOf(pending.playerId)];
+    const enemyStructs = opponent.structs;
+    const choiceY = y + h - footerH - choiceH + 6;
+    roundRect(x + 14, choiceY, w - 28, 108, 6, "rgba(28,8,8,0.92)", "rgba(180,60,60,0.7)", 1.5);
+    ctx.fillStyle = "#f0a0a0";
+    ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${enemyChoice.cardName}: 破壊する相手ストラクトを選択（燃${enemyChoice.fuelCost}）`, x + 26, choiceY + 20);
+    const pickW = 88;
+    const pickH = Math.round(pickW / CARD_ASPECT);
+    let px = x + 26;
+    enemyStructs.forEach((enemyStruct, enemyIdx) => {
+      drawCard(px, choiceY + 30, pickW, pickH, enemyStruct, { noHover: !isController, small: true, artOnly: true });
+      if (isController && (player.resources.fuel || 0) >= enemyChoice.fuelCost) {
+        addHit(px, choiceY + 30, pickW, pickH, () => resolveEnemyStructChoice(enemyIdx));
+      }
+      px += pickW + 10;
+    });
+    if (!enemyStructs.length) {
+      ctx.fillStyle = "rgba(220,180,180,0.8)";
+      ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+      ctx.fillText("相手のストラクトがありません", x + 26, choiceY + 58);
+    }
+  }
+
   if (isController) {
-    const endDisabled = !!choice;
+    const endDisabled = !!waitingChoice;
     drawButton(
       x + w - 216, y + h - 44, 196, 34,
       "ストラクトフェーズ終了",
