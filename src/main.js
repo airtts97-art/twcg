@@ -2445,13 +2445,16 @@ function parseDeckmakerKeywordValue(raw = "") {
 
 function parseDeckmakerKeywords(card) {
   // Scan both the leading [keyword] block and ability text in description
-  // Leading block: [装甲②][機動] etc.
-  // Ability text: 被ダメージ時：[衝撃]を得る など
+  // Leading block: [装甲②][機動] etc. — these are unconditional
+  // Ability text: 被ダメージ時：[衝撃]を得る など — these are conditional and should NOT be added as unconditional keywords
   const descKeywordBlock = (card.description || "").match(/^(?:\s*\[[^\]]+\])+/)?.[0] || "";
-  const desc = card.description || "";
-  // Also scan any [keyword] that appears after trigger text like "被ダメージ時："
-  const descAbilityKeywords = desc.replace(/^(?:\s*\[[^\]]+\])+/, "").match(/\[([^\]]+)\]/g)?.join(" ") || "";
-  const text = `${descKeywordBlock}\n${descAbilityKeywords}\n${(card.keywords || []).join(" ")}`;
+
+  // IMPORTANT: Do NOT scan [keywords] from ability text (trigger:effect descriptions)
+  // These are CONDITIONAL and would incorrectly add them as unconditional base keywords
+  // Example: "墓地から出たこのユニットは[機動]を得る" should NOT add mobile to base keywords
+  // because the mobile keyword is only active when summoned from graveyard
+
+  const text = `${descKeywordBlock}\n${(card.keywords || []).join(" ")}`;
   const NUM = String.raw`[①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾0-9０-９]*`;
   const numRe = (label) => new RegExp(`${label}${NUM}`, "g");
   const patterns = [
