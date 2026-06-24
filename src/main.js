@@ -1575,6 +1575,7 @@ const abilityEffects = {
     const resource = ability.resource || "magic";
     const amount = ability.amount || 1;
     const player = game.players[playerId];
+    console.log(`surviveDamageAndOptionalBuff: card=${card.name}, resource=${resource}, amount=${amount}, curRes=${player.resources[resource] || 0}`);
     if ((player.resources[resource] || 0) >= amount) {
       game.pendingChoice = {
         type: "payForBuff",
@@ -1587,7 +1588,10 @@ const abilityEffects = {
         atkBuff: ability.atkBuff || 1,
         hpBuff: ability.hpBuff || 2,
       };
+      console.log(`Setting pendingChoice:`, game.pendingChoice);
       return "pending";
+    } else {
+      console.log(`Resource insufficient for buff: need ${amount} ${resource}, have ${player.resources[resource] || 0}`);
     }
   },
 };
@@ -9141,6 +9145,7 @@ function drawCoreStructStartDiscardPanel(pending) {
 }
 
 function drawPayForBuffPanel(pending) {
+  console.log(`drawPayForBuffPanel called:`, pending);
   const x = 420, y = 300, w = 600, h = 200;
   drawChoicePanelBase(x, y, w, h, "rgba(60,120,200,0.7)", "#4080ff");
   ctx.fillStyle = "#b0d8ff";
@@ -9159,10 +9164,13 @@ function drawPayForBuffPanel(pending) {
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`現在の${resLabel}: ${curRes}`, x + 28, y + 90);
   const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  console.log(`drawPayForBuffPanel: isController=${isController}, canControl=${canControlActivePlayer()}, playerId=${pending.playerId}, controlled=${controlledPlayerId()}`);
   if (isController) {
     const canPay = curRes >= pending.amount;
     drawButton(x + 28, y + h - 52, 260, 36, `${resLabel}${pending.amount}を支払い強化`, canPay ? () => resolvePayForBuff(true) : null, null, canPay ? { accent: "p1" } : { accent: "dim" });
     drawButton(x + 310, y + h - 52, 180, 36, "スキップ", () => resolvePayForBuff(false));
+  } else {
+    console.log(`Controller check failed: cannot draw buttons`);
   }
 }
 
