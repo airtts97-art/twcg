@@ -2224,7 +2224,12 @@ function applyCoreDefaults(core) {
   core.deckMin = Number(core.deckMin) || Number(fallback.deckMin) || 40;
   core.deckMax = Number(core.deckMax) || Number(fallback.deckMax) || 60;
   core.startResources = normalizeResourceObject(hasResourceValue(core.startResources) ? core.startResources : fallback.startResources || {});
-  core.income = normalizeResourceObject(hasResourceValue(core.income) ? core.income : fallback.income || {});
+  // \u738b\u57ce\u30ce\u30fc\u30d9\u30eb\u30b0\uff08\u52b9\u679c\u7121\u3057\uff09\u306e\u5834\u5408\u306f income \u3092\u7a7a\u306b\u3059\u308b
+  if (core.name === "\u738b\u57ce\u30ce\u30fc\u30d9\u30eb\u30b0" && core.description === "(\u52b9\u679c\u7121\u3057)") {
+    core.income = {};
+  } else {
+    core.income = normalizeResourceObject(hasResourceValue(core.income) ? core.income : fallback.income || {});
+  }
   core.specialRequirements = Array.isArray(core.specialRequirements) ? core.specialRequirements : [];
   core.flavor = core.flavor || core.text || fallback.flavor || "";
   return core;
