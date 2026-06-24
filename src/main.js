@@ -3630,24 +3630,31 @@ async function signInWithGoogle() {
       console.log("Trying Google One Tap prompt...");
       let promptShown = false;
       window.google.accounts.id.prompt((notification) => {
-        console.log("Google prompt notification:", {
+        const status = {
           isNotDisplayed: notification.isNotDisplayed(),
           isSkippedMoment: notification.isSkippedMoment(),
           isDismissedMoment: notification.isDismissedMoment(),
           isDisplayMoment: notification.isDisplayMoment(),
-        });
-        if (notification.isDisplayMoment()) {
+        };
+        console.log("Google prompt notification:", status);
+
+        // 実際に表示されたかどうかを判定
+        const actuallyDisplayed = !status.isNotDisplayed && status.isDisplayMoment;
+        if (actuallyDisplayed) {
           promptShown = true;
-          console.log("One Tap displayed successfully");
+          console.log("✓ One Tap displayed successfully");
         } else {
-          console.warn("One Tap not displayed - will render button instead");
+          console.warn("✗ One Tap not displayed:", {
+            reason: status.isNotDisplayed ? "isNotDisplayed" : "other",
+            willShowButton: true,
+          });
         }
       });
 
       // One Tap表示状態を確認してから、ボタン表示に切り替え
       setTimeout(() => {
         if (!promptShown) {
-          console.log("Falling back to Google Sign-In button");
+          console.log("Falling back to Google Sign-In button (showing in 500ms)");
           showGoogleSignInButton();
         }
       }, 500);
