@@ -3005,6 +3005,17 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onStructurePhaseHP", effect: "produceResourceCostHP", resource: "people", amount: 2, hpCost: 3 });
   }
 
+  // 長距離砲撃陣: structure phase で燃料を支払って相手ストラクトを破壊
+  if (card.id === "card_1782227993620") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "destroyEnemyStructs",
+      fuelCost: 2,
+      amount: 1,
+    });
+  }
+
   if (card.id === "card_1755655390809") {
     abilities.length = 0;
     abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
@@ -6075,14 +6086,14 @@ function endTurn() {
   if (state.winner) return false;
   const endingPlayer = state.activePlayer;
   const shouldSyncOnline = app.screen === "game" && app.match.status === "online" && !applyingRemoteState;
-  // 天撃効果: 次の自分のターン終了時に手札へ返却
+  // 天撃効果: 指定ターン終了時に持ち主の手札へ返却
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const u = state.board[r]?.[c];
       if (u && u.returnAtPlayer === endingPlayer && state.turn >= u.returnAtTurn) {
         state.board[r][c] = null;
-        state.players[endingPlayer].hand.push(stripRuntime(u));
-        log(state, `「${u.name}」→ 手札に戻る（天撃効果）`);
+        state.players[u.owner].hand.push(stripRuntime(u));
+        log(state, `「${u.name}」→ ${state.players[u.owner].name}の手札に戻る（天撃効果）`);
       }
     }
   }
