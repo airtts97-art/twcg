@@ -5355,13 +5355,16 @@ function resolveDeployHeroCell(row, col) {
   addResources(player, "funds", -goldNeeded);
   const heroCard = player.hand[opt.handIdx];
   player.hand.splice(opt.handIdx, 1);
+  // 出撃させたプレイヤーが現在のアクティブプレイヤー（自分）なら、相手のターン終了時に戻す
+  // 出撃させたプレイヤーが非アクティブプレイヤー（相手）なら、アクティブプレイヤーのターン終了時に戻す
+  const returnToPlayer = state.activePlayer === pending.playerId ? opponentOf(pending.playerId) : pending.playerId;
   const unit = { ...cloneCard(heroCard), instanceId: nextInstanceId++, owner: pending.playerId,
     row, col, maxHp: heroCard.hp, currentHp: heroCard.hp, rested: false,
     attacksThisTurn: 0, mobileMoveUsed: false, counters: 0,
-    returnAtPlayer: pending.playerId, returnAtTurn: state.turn + 1 };
+    returnAtPlayer: returnToPlayer, returnAtTurn: state.turn + 1 };
   state.board[row][col] = unit;
   triggerAbilities(state, pending.playerId, unit, "onSummon");
-  log(state, `${player.name}: 「${unit.name}」を金${goldNeeded}で出撃（次の自分のターン終了時に手札へ戻る）`);
+  log(state, `${player.name}: 「${unit.name}」を金${goldNeeded}で出撃（${state.players[returnToPlayer].name}のターン終了時に手札へ戻る）`);
   state.pendingChoice = null;
   state.selected = null;
   processEffectQueue(state);
