@@ -6088,6 +6088,7 @@ function relocateUnit(unit, toRow, toCol, actionLabel, onlineAction) {
   if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
   if (state.pendingChoice || state.pendingTarget) return false;
   if (toRow < 0 || toRow >= ROWS || toCol < 0 || toCol >= COLS) return fail("移動先が無効です。");
+  if (!isUnitFieldCell(toRow, toCol)) return fail("その行には配置できません。");
   const opponentSummonRow = state.players[state.activePlayer === "p1" ? "p2" : "p1"].summonRow;
   if (toRow === opponentSummonRow) return fail("相手のサモンフィールドに進軍できません。");
   if (state.board[toRow][toCol]) return fail("移動先のマスが埋まっています。");
