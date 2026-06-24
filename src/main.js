@@ -2955,12 +2955,13 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
-  // マイサータ貿易港: 金③を支払う→リソース選択
+  // マイサータ貿易港: 金③を支払う→リソース選択（金がある限り複数回実行可能）
   if (card.id === "card_1782226154092") {
     abilities.length = 0;
     abilities.push({
       trigger: "onStructurePhase",
       effect: "chooseProduceResource",
+      multiActivate: true,  // 複数回激活を許可
       options: [
         { id: "nature", label: "自③", cost: { funds: 3 }, produces: { nature: 3 } },
         { id: "mineral", label: "鉱③", cost: { funds: 3 }, produces: { mineral: 3 } },
@@ -6000,12 +6001,18 @@ function activateStructInPhase(index) {
   const pending = state.pendingStructPhase;
   if (!pending) return false;
   if (pending.pendingResourceChoice) return false;
-  if (pending.activatedIndexes.includes(index)) return false;
   const player = state.players[pending.playerId];
   const struct = player.structs[index];
   if (!struct) return false;
+
+  // マイサータなど複数激活が許可されているストラクト以外は、1度激活したら再度激活不可
+  const hasMultiActivate = (struct.abilities || []).some((a) => a.multiActivate);
+  if (!hasMultiActivate && pending.activatedIndexes.includes(index)) return false;
+
   if (!canAffordStructActivation(struct, player)) return false;
-  pending.activatedIndexes.push(index);
+  if (!pending.activatedIndexes.includes(index)) {
+    pending.activatedIndexes.push(index);
+  }
   triggerAbilities(state, pending.playerId, struct, "onStructurePhase");
   syncOnlineAction("structActivate");
   render();
