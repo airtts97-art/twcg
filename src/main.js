@@ -1110,8 +1110,16 @@ const abilityEffects = {
   grantDestroyGain({ game, playerId, ability, target }) {
     if (!target || target.owner !== playerId) return;
     if (!target.abilities) target.abilities = [];
-    target.abilities.push({ trigger: "onDestroy", effect: "gainResource", resource: ability.resource, amount: ability.amount });
-    log(game, `${game.players[playerId].name}: 「${target.name}」に保険（破壊時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}）`);
+    // 保険金効果は「次のターンの始めまで」という期間制限がある
+    // playerId のターンが終わるまで有効
+    target.abilities.push({
+      trigger: "onDestroy",
+      effect: "gainResource",
+      resource: ability.resource,
+      amount: ability.amount,
+      untilPlayerTurnEnd: playerId
+    });
+    log(game, `${game.players[playerId].name}: 「${target.name}」に保険（破壊時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}、${game.players[playerId].name}のターン終了まで）`);
   },
   chooseExchange({ game, card, ability }) {
     if (!game.pendingStructPhase) return;
@@ -6081,6 +6089,10 @@ function endTurn() {
   }
   for (const unit of unitsOwnedBy(endingPlayer)) {
     if (unit.indestructibleUntilTurnEnd === endingPlayer) delete unit.indestructibleUntilTurnEnd;
+    // ターン終了時に期間切れの一時的ability（保険金など）を削除
+    if (unit.abilities) {
+      unit.abilities = unit.abilities.filter((a) => a.untilPlayerTurnEnd !== endingPlayer);
+    }
   }
   for (const effect of (state.globalEffects || []).filter((e) => e.type === "restoreKaijuLocks" && e.untilPlayerTurnEnd === endingPlayer)) {
     const unit = unitsOwnedBy(effect.playerId).find((candidate) => candidate.instanceId === effect.instanceId);
