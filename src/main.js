@@ -777,7 +777,10 @@ const abilityEffects = {
   destroyFriendlyUnitDraw({ game, playerId, target, ability }) {
     if (!target || target.owner !== playerId) return;
     target.currentHp = 0;
-    cleanupDestroyed(target);
+    // onDestroy トリガーは処理終了後に一括実行するため、ここでは destroyed フラグのみ立てる
+    if (!target.destroyed && !target.indestructibleUntilTurnEnd) {
+      target.destroyed = true;
+    }
     drawCards(game, playerId, ability.amount || 1);
   },
   controlEnemyUnitToSummonRow({ game, playerId, target }) {
@@ -6525,12 +6528,41 @@ function applyCleave(attacker, defender) {
 }
 
 function cleanupAllDestroyed(killer = null) {
+  // 1. HP <= 0 のユニットをすべて集める
+  const unitsToDestroy = [];
   for (let row = 0; row < ROWS; row += 1) {
     for (let col = 0; col < COLS; col += 1) {
       const unit = state.board[row][col];
-      if (unit?.currentHp <= 0) cleanupDestroyed(unit, killer);
+      if (unit?.currentHp <= 0 && !unit.destroyed) {
+        unitsToDestroy.push(unit);
+      }
     }
   }
+
+  // 2. 破壊不能判定と破壊防止を先に処理
+  for (const unit of unitsToDestroy) {
+    if (unit.indestructibleUntilTurnEnd) {
+      unit.currentHp = Math.max(1, unit.currentHp || 1);
+      unit.destroyed = false;
+    } else {
+      const selfShieldAbility = (unit.abilities || []).find((a) => a.effect === "selfCounterDeathShield");
+      if (selfShieldAbility && (unit.counters || 0) >= (selfShieldAbility.cost || 2)) {
+        unit.counters -= (selfShieldAbility.cost || 2);
+        unit.currentHp = Math.max(1, unit.currentHp || 1);
+        unit.destroyed = false;
+      } else {
+        unit.destroyed = true;
+      }
+    }
+  }
+
+  // 3. 破壊が確定したユニットの onDestroy トリガーを実行
+  for (const unit of unitsToDestroy) {
+    if (unit.destroyed) {
+      finalizePendingDestruction(unit, killer);
+    }
+  }
+
   refreshContinuousEffects(state);
 }
 
@@ -6556,6 +6588,11 @@ function cleanupDestroyed(unit, killer = null) {
     return;
   }
   unit.destroyed = true;
+  finalizePendingDestruction(unit, killer);
+}
+
+function finalizePendingDestruction(unit, killer = null) {
+  if (!unit || !unit.destroyed) return;
   triggerAbilities(state, unit.owner, unit, "onDestroy");
   triggerAbilities(state, unit.owner, state.players[unit.owner].core, "onFriendlyUnitDestroyed", { target: unit });
   for (let r = 0; r < state.board.length; r++) {
