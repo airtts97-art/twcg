@@ -5848,9 +5848,17 @@ function completeAbilitySource(game, item) {
   const player = game.players[item.playerId];
   const index = player.tactZone.findIndex((c) => c.instanceId === item.card.instanceId);
   if (index >= 0) {
-    const [card] = player.tactZone.splice(index, 1);
-    player.dump.push(card);
-    notifyDumpChanged(game, item.playerId);
+    const card = player.tactZone[index];
+    // 永続tactカード（description に「永続」や「５回目」など複数回の能力がある場合）は削除しない
+    const isPermanent = (card.description || "").includes("回目") ||
+                        (card.description || "").includes("永続") ||
+                        (card.description || "").includes("まで") ||
+                        (card.abilities || []).some(a => a.isPermanent);
+    if (!isPermanent) {
+      const [removed] = player.tactZone.splice(index, 1);
+      player.dump.push(removed);
+      notifyDumpChanged(game, item.playerId);
+    }
   }
 }
 
