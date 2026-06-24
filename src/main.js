@@ -8939,8 +8939,9 @@ function drawMysticCapturePanel(pending) {
 function drawRevealPickPanel(pending) {
   const cards = pending.revealed || [];
   const colW = 200, colH = 80, cols = Math.min(cards.length, 3);
+  const rows = Math.ceil(cards.length / cols);
   const panelW = Math.max(500, cols * (colW + 16) + 56);
-  const panelH = 300;
+  const panelH = Math.max(350, rows * (colH + 16) + 140);
   const x = Math.round((W - panelW) / 2);
   const y = Math.round((H - panelH) / 2);
   drawChoicePanelBase(x, y, panelW, panelH, "rgba(40,120,200,0.7)", "#2060ff");
@@ -8954,8 +8955,10 @@ function drawRevealPickPanel(pending) {
   }
   const isController = canControlActivePlayer() && state.pendingChoice?.playerId === controlledPlayerId();
   cards.forEach((card, i) => {
-    const cx = x + 28 + i * (colW + 16);
-    const cy = y + 72;
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    const cx = x + 28 + col * (colW + 16);
+    const cy = y + 72 + row * (colH + 16);
     const pickable = !pending.tagFilter || (card.tags || []).includes(pending.tagFilter);
     const fill = pickable ? "rgba(20,50,100,0.8)" : "rgba(30,20,40,0.6)";
     const border = pickable ? "rgba(60,140,220,0.8)" : "rgba(80,60,100,0.4)";
