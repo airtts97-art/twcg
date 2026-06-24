@@ -2646,13 +2646,19 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: baseTrigger, effect: "revealTagsForResources", cond: heroCond, tagGroups, resourcePer: per, resources: [res1, res2] });
   }
 
-  // 被ダメージ時：破壊されず + 資源支払いで+N/+M
-  const takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊されず[^。\n]*?([金人自鉱燃電魔])を支払うことで[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/\+?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
+  // 被ダメージ時：破壊されず + 資源支払いで+N/+M または +N/M
+  let takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊されず[^。\n]*?([金人自鉱燃電魔])を支払うことで[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/\+?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
+  if (!takeDamageSurviveBuff) {
+    // フォールバック：より柔軟なパターンを試す（+N/M形式にも対応）
+    takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊されず[^。\n]*?([金人自鉱燃電魔])を支払[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/(\+)?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
+  }
   if (takeDamageSurviveBuff) {
     const resMap = { 金: "funds", 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic" };
     const resource = resMap[takeDamageSurviveBuff[1]] || "magic";
     const atkBuff = parseDeckmakerKeywordValue(takeDamageSurviveBuff[2]) || 1;
-    const hpBuff = parseDeckmakerKeywordValue(takeDamageSurviveBuff[3]) || 2;
+    // フォールバック時は[3]がoptional +、[4]がHP値。通常時は[3]がHP値
+    const hpIndex = takeDamageSurviveBuff[4] !== undefined ? 4 : 3;
+    const hpBuff = parseDeckmakerKeywordValue(takeDamageSurviveBuff[hpIndex]) || 2;
     abilities.push({ trigger: "onDamageReceived", effect: "surviveDamageAndOptionalBuff", resource, amount: 1, atkBuff, hpBuff });
   }
 
