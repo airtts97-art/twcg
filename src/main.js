@@ -3615,29 +3615,47 @@ function loadGoogleClientScript() {
 async function signInWithGoogle() {
   if (googleSignInEnabled && googleClientId) {
     try {
+      console.log("Starting Google Sign-In...");
       await loadGoogleClientScript();
+      console.log("Google script loaded, window.google:", !!window.google);
       if (!window.google?.accounts?.id) throw new Error("Google client unavailable.");
       if (!googleInitialized) {
+        console.log("Initializing Google with client_id:", googleClientId);
         window.google.accounts.id.initialize({
           client_id: googleClientId,
           callback: handleGoogleCredential,
         });
         googleInitialized = true;
       }
-      window.google.accounts.id.prompt();
+      console.log("Showing Google prompt...");
+      window.google.accounts.id.prompt((notification) => {
+        console.log("Google prompt notification:", {
+          isNotDisplayed: notification.isNotDisplayed(),
+          isSkippedMoment: notification.isSkippedMoment(),
+          isDismissedMoment: notification.isDismissedMoment(),
+          isDisplayMoment: notification.isDisplayMoment(),
+        });
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          console.warn("One Tap not displayed - showing fallback message");
+          app.auth.message = "Googleログイン画面を表示できません。ブラウザのキャッシュをクリアして再度試してください。";
+          render();
+        }
+      });
       return;
-    } catch {
+    } catch (error) {
+      console.error("Google Sign-In error:", error);
       app.auth = {
         provider: null,
         signedIn: false,
         name: "未ログイン",
         email: null,
-        message: "Googleログイン準備に失敗しました。",
+        message: `Googleログイン準備に失敗しました: ${error.message}`,
       };
       render();
       return;
     }
   }
+  console.warn("Google Sign-In not enabled. googleSignInEnabled:", googleSignInEnabled, "googleClientId:", !!googleClientId);
   app.auth = {
     provider: null,
     signedIn: false,
@@ -3646,6 +3664,23 @@ async function signInWithGoogle() {
     message: "Googleログインにはサーバー環境変数 GOOGLE_CLIENT_ID の設定が必要です。",
   };
   render();
+}
+
+function renderGoogleSignInButton() {
+  const container = document.getElementById("google-signin-button");
+  if (container && window.google?.accounts?.id) {
+    try {
+      window.google.accounts.id.renderButton(container, {
+        type: "standard",
+        size: "large",
+        theme: "outline",
+        text: "signin_with",
+      });
+      console.log("Google sign-in button rendered");
+    } catch (error) {
+      console.error("Failed to render Google button:", error);
+    }
+  }
 }
 
 async function handleGoogleCredential(response) {
