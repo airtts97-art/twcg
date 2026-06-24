@@ -3738,6 +3738,14 @@ function showGoogleSignInButton() {
   }
 }
 
+function removeGoogleSignInButton() {
+  const container = document.getElementById("google-signin-container");
+  if (container) {
+    container.remove();
+    console.log("Google Sign-In button removed");
+  }
+}
+
 function renderGoogleSignInButton() {
   const container = document.getElementById("google-signin-button");
   if (container && window.google?.accounts?.id) {
@@ -3765,6 +3773,8 @@ async function handleGoogleCredential(response) {
     }
     app.auth = verified.user;
     app.screen = "home";
+    // ログイン完了後、Googleボタンコンテナを削除
+    removeGoogleSignInButton();
     await syncDecksFromServer();
   } catch {
     app.auth = { ...app.auth, message: "Googleログイン検証に失敗しました。" };
