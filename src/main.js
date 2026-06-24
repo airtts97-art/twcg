@@ -9164,12 +9164,12 @@ function drawCoreStructStartDiscardPanel(pending) {
 
 function drawPayForBuffPanel(pending) {
   console.log(`drawPayForBuffPanel called:`, pending);
-  const x = 420, y = 300, w = 600, h = 200;
-  drawChoicePanelBase(x, y, w, h, "rgba(60,120,200,0.7)", "#4080ff");
-  ctx.fillStyle = "#b0d8ff";
+  const x = 420, y = 300, w = 600, h = 260;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,80,140,0.85)", "#5090ff");
+  ctx.fillStyle = "#e0f0ff";
   ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`「${pending.cardName}」被ダメージ時効果`, x + 28, y + 36);
-  ctx.fillStyle = "rgba(180,210,255,0.9)";
+  ctx.fillStyle = "rgba(200,230,255,0.95)";
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   const resLabel = RESOURCE_LABELS[pending.resource] || pending.resource;
   ctx.fillText(
@@ -9178,15 +9178,16 @@ function drawPayForBuffPanel(pending) {
   );
   const player = state.players[pending.playerId];
   const curRes = player.resources[pending.resource] || 0;
-  ctx.fillStyle = "rgba(160,200,255,0.7)";
+  ctx.fillStyle = "rgba(180,220,255,0.8)";
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`現在の${resLabel}: ${curRes}`, x + 28, y + 90);
+  ctx.fillText(`現在の${resLabel}: ${curRes}`, x + 28, y + 100);
   const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
   console.log(`drawPayForBuffPanel: isController=${isController}, canControl=${canControlActivePlayer()}, playerId=${pending.playerId}, controlled=${controlledPlayerId()}`);
   if (isController) {
     const canPay = curRes >= pending.amount;
-    drawButton(x + 28, y + h - 52, 260, 36, `${resLabel}${pending.amount}を支払い強化`, canPay ? () => resolvePayForBuff(true) : null, null, canPay ? { accent: "p1" } : { accent: "dim" });
-    drawButton(x + 310, y + h - 52, 180, 36, "スキップ", () => resolvePayForBuff(false));
+    console.log(`drawPayForBuffPanel buttons: canPay=${canPay}, curRes=${curRes}, amount=${pending.amount}`);
+    drawButton(x + 20, y + h - 52, 270, 38, `${resLabel}${pending.amount}を支払い強化`, canPay ? () => resolvePayForBuff(true) : null, null, canPay ? { accent: "p1" } : { accent: "dim" });
+    drawButton(x + 310, y + h - 52, 270, 38, "スキップ", () => resolvePayForBuff(false));
   } else {
     console.log(`Controller check failed: cannot draw buttons`);
   }
