@@ -8380,7 +8380,10 @@ function drawHand() {
     addHit(cx, cy, cardW, cardH, () => {
       if (!requireActivePlayerControl()) return;
       state.selected = { kind: "hand", playerId: player.id, index: i, confirmed: false };
-      state.message = `${card.name}: カード確認後に使用できます。`;
+      // 自分の手札の場合のみメッセージを表示（相手の見ているカードを隠すため）
+      if (player.id === viewerPlayerId()) {
+        state.message = `${card.name}: カード確認後に使用できます。`;
+      }
     });
   });
 }
