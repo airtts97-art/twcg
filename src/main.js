@@ -1574,36 +1574,39 @@ const abilityEffects = {
     return "pending";
   },
   surviveDamageAndOptionalBuff({ game, playerId, card, ability }) {
-    // 被ダメージ時：この処理中は破壊されない
-    if ((card.currentHp || 0) <= 0) {
-      card.currentHp = 1;
-      log(game, `${game.players[playerId].name}: 「${card.name}」は被ダメージで破壊されない`);
-    }
-    // 魔を支払うことで +1/+2 の修正（任意）
+    // 被ダメージ時：資源を支払える場合のみ発動
     const resource = ability.resource || "magic";
     const amount = ability.amount || 1;
     const player = game.players[playerId];
     console.log(`surviveDamageAndOptionalBuff: card=${card.name}, resource=${resource}, amount=${amount}, curRes=${player.resources[resource] || 0}, ability=${JSON.stringify(ability)}`);
-    if ((player.resources[resource] || 0) >= amount) {
-      const pendingChoice = {
-        type: "payForBuff",
-        playerId,
-        cardName: card.name,
-        unitRow: card.row,
-        unitCol: card.col,
-        resource,
-        amount,
-        atkBuff: ability.atkBuff || 1,
-        hpBuff: ability.hpBuff || 2,
-      };
-      game.pendingChoice = pendingChoice;
-      console.log(`Setting pendingChoice:`, pendingChoice);
-      console.log(`game.pendingChoice after set:`, game.pendingChoice);
-      return "pending";
-    } else {
+
+    // 資源が不足していれば、この処理中も破壊される（食いしばり発動しない）
+    if ((player.resources[resource] || 0) < amount) {
       console.log(`Resource insufficient for buff: need ${amount} ${resource}, have ${player.resources[resource] || 0}`);
       return;
     }
+
+    // 資源が十分：食いしばり発動 + 修正選択UI表示
+    if ((card.currentHp || 0) <= 0) {
+      card.currentHp = 1;
+      log(game, `${game.players[playerId].name}: 「${card.name}」は被ダメージで破壊されない（${resource}${amount}を支払う予定）`);
+    }
+
+    const pendingChoice = {
+      type: "payForBuff",
+      playerId,
+      cardName: card.name,
+      unitRow: card.row,
+      unitCol: card.col,
+      resource,
+      amount,
+      atkBuff: ability.atkBuff || 1,
+      hpBuff: ability.hpBuff || 2,
+    };
+    game.pendingChoice = pendingChoice;
+    console.log(`Setting pendingChoice:`, pendingChoice);
+    console.log(`game.pendingChoice after set:`, game.pendingChoice);
+    return "pending";
   },
 };
 
