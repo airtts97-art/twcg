@@ -10144,9 +10144,10 @@ function drawCardTooltip(card, mx, my) {
   const kwLabels = keywordLabels(card);
   if (kwLabels.length) lines.push({ text: kwLabels.join(" / "), font: "600 11px 'Yu Gothic UI', sans-serif", color: "#70b0e0" });
   const abilText = abilityText(card);
-  if (abilText) lines.push({ text: abilText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "#a0e0b8", wrap: true });
-  const descText = card.flavor || card.text || "";
-  if (descText) lines.push({ text: descText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "rgba(180,200,240,0.6)", wrap: true });
+  if (abilText) lines.push({ text: abilText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "#a0e0b8", wrap: true, maxLines: 4 });
+  // 原文テキスト（description）を表示
+  const descText = card.description || card.text || card.flavor || "";
+  if (descText) lines.push({ text: descText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "rgba(200,220,255,0.8)", wrap: true, maxLines: 12 });
 
   // compute tooltip height
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
@@ -10158,12 +10159,13 @@ function drawCardTooltip(card, mx, my) {
       const words = l.text;
       let row = "";
       let lineCount = 0;
+      const maxLines = l.maxLines || 8;
       for (const ch of words) {
         const next = row + ch;
         if (ctx.measureText(next).width > TW - PAD * 2) {
           lineCount++;
           row = ch;
-          if (lineCount >= 8) break;
+          if (lineCount >= maxLines) break;
         } else {
           row = next;
         }
@@ -10199,7 +10201,8 @@ function drawCardTooltip(card, mx, my) {
     ctx.font = l.font;
     ctx.fillStyle = l.color;
     if (l.wrap) {
-      cy = drawWrappedText(l.text, tx + PAD, cy + 2, TW - PAD * 2, LINE, 8);
+      const maxLines = l.maxLines || 8;
+      cy = drawWrappedText(l.text, tx + PAD, cy + 2, TW - PAD * 2, LINE, maxLines);
     } else {
       ctx.fillText(l.text, tx + PAD, cy + 14, TW - PAD * 2);
       cy += LINE;
