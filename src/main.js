@@ -1333,6 +1333,18 @@ const abilityEffects = {
     log(game, `${player.name}: 「${card.name}」ライフ${hpCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`);
     checkWinner(game);
   },
+  produceResourceCostHuman({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const humanCost = ability.humanCost || 1;
+    if ((player.resources.human || 0) < humanCost) {
+      log(game, `${player.name}: 人資源が不足しているため「${card.name}」を使えない`);
+      return;
+    }
+    addResources(player, "human", -humanCost);
+    card.rested = true;
+    addResources(player, ability.resource, ability.amount || 1);
+    log(game, `${player.name}: 「${card.name}」人${humanCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`);
+  },
   deployNamedFromDecks({ game, playerId, card, ability }) {
     const player = game.players[playerId];
     const max = ability.maxTotal || 3;
@@ -10266,6 +10278,7 @@ function abilityText(card) {
         reviveUnitFromDump: `墓地からコスト${ability.maxCost}以下のユニットを蘇生`,
         restTargetNoUnrest: "相手ユニットをレスト（次ターン解除不可）",
         produceResourceCostHP: `ライフ${ability.hpCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
+        produceResourceCostHuman: `人${ability.humanCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })
