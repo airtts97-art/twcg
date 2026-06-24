@@ -9066,6 +9066,8 @@ function drawDeployHeroFromAttackPanel(pending) {
     ctx.textAlign = "left";
   });
   if (isController) {
+    const hasSelected = pending.selectedHeroIdx != null;
+    drawButton(px + 20, py + ph - 48, 110, 34, "決定", hasSelected ? () => resolveDeployHeroChooseHero(pending.selectedHeroIdx) : null, null, hasSelected ? { accent: "p1" } : { accent: "dim" });
     drawButton(px + pw - 130, py + ph - 48, 110, 34, "スキップ", () => {
       state.pendingChoice = null;
       state.selected = null;
