@@ -387,6 +387,37 @@ let structPhaseScroll = 0;
 let enemyStructChoiceScroll = 0;
 // --- End zone viewer ---
 
+function matchesDeckSearchFilter(deckCard, filter) {
+  if (filter.cardType && deckCard.type !== filter.cardType) return false;
+  if (!filter.tag) return true;
+  if ((deckCard.tags || []).includes(filter.tag)) return true;
+  if (filter.tag === "降臨" && deckCard.type === "unit" && requiresTactSummon(deckCard)) return true;
+  const text = deckCard.text || deckCard.description || "";
+  if (text) {
+    const escaped = filter.tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\[${escaped}\\]`).test(text)) return true;
+  }
+  return keywordLabels(deckCard).some((label) => label === filter.tag || label.includes(filter.tag));
+}
+
+function buildSearchDeckPickCandidates(player, filters) {
+  return player.mainDeck
+    .map((deckCard, deckIndex) => ({ card: deckCard, deckIndex }))
+    .filter(({ card }) => (filters || []).some((filter) => matchesDeckSearchFilter(card, filter)));
+}
+
+function pickCardFromPlayerDeck(player, entry) {
+  if (!entry) return null;
+  const card = entry.card || entry;
+  let deckIdx = typeof entry.deckIndex === "number" ? entry.deckIndex : player.mainDeck.indexOf(card);
+  if (deckIdx >= 0 && deckIdx < player.mainDeck.length && player.mainDeck[deckIdx] === card) {
+    return player.mainDeck.splice(deckIdx, 1)[0];
+  }
+  deckIdx = player.mainDeck.findIndex((c) => c.id === card.id);
+  if (deckIdx < 0) return null;
+  return player.mainDeck.splice(deckIdx, 1)[0];
+}
+
 const abilityEffects = {
   produceResource({ game, playerId, ability }) {
     addResources(game.players[playerId], ability.resource, ability.amount);
@@ -1069,20 +1100,14 @@ const abilityEffects = {
   searchDeckPick({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
     const filters = ability.filters || [];
-    const matchesDeckSearchFilter = (deckCard) => filters.some((filter) => {
-      if (filter.cardType && deckCard.type !== filter.cardType) return false;
-      if (filter.tag && !(deckCard.tags || []).includes(filter.tag)) return false;
-      return true;
-    });
-    const candidates = player.mainDeck.filter((deckCard) => matchesDeckSearchFilter(deckCard));
+    const candidates = buildSearchDeckPickCandidates(player, filters);
     if (!candidates.length) {
       log(game, `${player.name}: 条件に合うカードがデッキにありません`);
       return;
     }
     if (candidates.length === 1) {
-      const deckIdx = player.mainDeck.indexOf(candidates[0]);
-      if (deckIdx < 0) return;
-      const [picked] = player.mainDeck.splice(deckIdx, 1);
+      const picked = pickCardFromPlayerDeck(player, candidates[0]);
+      if (!picked) return;
       player.hand.push(picked);
       log(game, `${player.name}: 「${picked.name}」を手札に加えた`);
       return;
@@ -1091,6 +1116,7 @@ const abilityEffects = {
       type: "searchDeckPick",
       playerId,
       candidates,
+      selectedIndex: undefined,
       queueItem: { playerId, card, ability, source },
     };
     game.selected = { kind: "choice", choice: "searchDeckPick" };
@@ -5865,14 +5891,13 @@ function resolveSearchDeckPick(cardIndex) {
   if (pending?.type !== "searchDeckPick") return false;
   if (!canControlChoicePlayer(pending.playerId)) return false;
   const player = state.players[pending.playerId];
-  const card = pending.candidates[cardIndex];
-  if (!card) return false;
-  const deckIdx = player.mainDeck.indexOf(card);
-  if (deckIdx < 0) {
+  const entry = pending.candidates[cardIndex];
+  if (!entry) return false;
+  const picked = pickCardFromPlayerDeck(player, entry.card ? entry : { card: entry });
+  if (!picked) {
     state.message = "そのカードはもうデッキにありません。";
     return false;
   }
-  const [picked] = player.mainDeck.splice(deckIdx, 1);
   player.hand.push(picked);
   const qi = pending.queueItem;
   state.pendingChoice = null;
@@ -10469,33 +10494,59 @@ function drawMysticCapturePanel(pending) {
 }
 
 function drawSearchDeckPickPanel(pending) {
-  const cards = pending.candidates || [];
-  const colW = 200, colH = 80, cols = Math.min(cards.length, 3);
-  const rows = Math.ceil(cards.length / cols);
+  const entries = pending.candidates || [];
+  const colW = 200, colH = 80, cols = Math.min(entries.length, 3);
+  const rows = Math.ceil(entries.length / cols);
   const panelW = Math.max(500, cols * (colW + 16) + 56);
-  const panelH = Math.max(350, rows * (colH + 16) + 120);
+  const panelH = Math.max(390, rows * (colH + 16) + 160);
   const x = Math.round((W - panelW) / 2);
   const y = Math.round((H - panelH) / 2);
+  const sel = pending.selectedIndex;
   drawChoicePanelBase(x, y, panelW, panelH, "rgba(120,80,180,0.7)", "#8040ff");
   ctx.fillStyle = "#d0b8ff";
   ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
   ctx.fillText("デッキ検索：1枚選んで手札に", x + 24, y + 36);
+  ctx.fillStyle = "rgba(180,160,220,0.75)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("[儀式]タクト / [降臨]ユニット", x + 24, y + 56);
   const isController = canControlChoicePlayer(pending.playerId);
-  cards.forEach((card, i) => {
+  entries.forEach((entry, i) => {
+    const card = entry.card || entry;
     const row = Math.floor(i / cols);
     const col = i % cols;
     const cx = x + 28 + col * (colW + 16);
     const cy = y + 72 + row * (colH + 16);
-    roundRect(cx, cy, colW, colH, 6, "rgba(30,20,50,0.8)", "rgba(140,100,220,0.8)", 2);
+    const selected = sel === i;
+    const fill = selected ? "rgba(50,30,90,0.95)" : "rgba(30,20,50,0.8)";
+    const border = selected ? "rgba(255,216,74,0.95)" : "rgba(140,100,220,0.8)";
+    roundRect(cx, cy, colW, colH, 6, fill, border, selected ? 3 : 2);
     ctx.fillStyle = "#e8d8ff";
     ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
     ctx.fillText(card.name, cx + 8, cy + 22, colW - 16);
     ctx.fillStyle = "rgba(180,160,220,0.7)";
     ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(card.type + (card.tags?.length ? "  " + card.tags.slice(0, 2).join("/") : ""), cx + 8, cy + 40, colW - 16);
+    const tagHint = requiresTactSummon(card) ? "降臨" : (card.tags?.slice(0, 2).join("/") || "");
+    ctx.fillText(card.type + (tagHint ? `  ${tagHint}` : ""), cx + 8, cy + 40, colW - 16);
     ctx.fillText(formatCost(card.cost || {}), cx + 8, cy + 56, colW - 16);
-    if (isController) addHit(cx, cy, colW, colH, () => { resolveSearchDeckPick(i); render(); });
+    if (isController) {
+      addHit(cx, cy, colW, colH, () => {
+        pending.selectedIndex = pending.selectedIndex === i ? undefined : i;
+        render();
+      });
+    }
   });
+  if (isController && sel !== undefined) {
+    drawButton(
+      x + panelW / 2 - 100,
+      y + panelH - 56,
+      200,
+      38,
+      "手札に加える",
+      () => { resolveSearchDeckPick(sel); render(); },
+      null,
+      { accent: "p1" },
+    );
+  }
 }
 
 function drawRevealPickPanel(pending) {
