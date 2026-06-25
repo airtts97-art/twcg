@@ -1,4 +1,5 @@
 import { getHardcodedTextBaseline, hasHardcodedTextChanged, isHardcodedCard } from "./card_hardcoded_registry.js";
+import { isImplementedCard } from "./card_implemented_registry.js";
 
 const KNOWN_KEYWORD_LABELS = [
   "装甲", "貫通", "衝撃", "帯電", "機動", "連撃", "航空", "対空", "曲射", "伝説",
@@ -30,6 +31,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "payDestroyUpToEnemyCards", "registerDumpLifeGain", "enterRestedLocked", "unrestSelf",
   "summonTagFromDumpAndRest", "summonHandUnitToOpponent", "kaijuAwaken", "damageOwnCore",
   "redirectDamageToOther", "revealTagsForResources", "surviveDamageAndOptionalBuff",
+  "vsTagAtkBonus", "spendCountersForBuff", "selfCounterDeathShield",
 ]);
 
 const STRUCT_PRODUCTION_EFFECTS = new Set([
@@ -113,6 +115,13 @@ export function applyCardCompatibility(card) {
   if (card.fixture) {
     card.compatibilityIssues = [];
     card.processable = true;
+    return card;
+  }
+
+  if (isImplementedCard(card.id)) {
+    card.compatibilityIssues = [];
+    card.processable = true;
+    card.implementationVerified = true;
     return card;
   }
 
