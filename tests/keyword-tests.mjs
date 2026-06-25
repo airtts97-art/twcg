@@ -106,6 +106,16 @@ const results = await page.evaluate(() => {
   out.push(snapshot("self_destruct_splash"));
 
   reset();
+  api.testing.placeUnit("militia", "p1", 2, 1, { rested: false });
+  api.testing.placeUnit("disruptionEngineer", "p2", 1, 0, { rested: true });
+  api.testing.placeUnit("militia", "p2", 1, 1, { rested: true });
+  api.testing.placeUnit("bombDrone", "p2", 1, 2, { rested: true });
+  api.testing.placeUnit("militia", "p2", 1, 3, { rested: true });
+  api.testing.selectUnit(2, 1);
+  api.testing.attack({ kind: "unit", row: 1, col: 2 });
+  out.push(snapshot("self_destruct_blocked_by_effect_protect"));
+
+  reset();
   api.testing.addHandCard("p1", "raidBike");
   api.testing.summonFromHand(0, 2, 3);
   out.push(snapshot("raid_summons_to_second_row"));
@@ -683,6 +693,10 @@ assert(byName.arc_and_cleave.board[1][2].hp === 3, "cleave should damage right a
 assert(byName.self_destruct_splash.board[1][1] === null, "destroyed bomb drone should leave board");
 assert(byName.self_destruct_splash.board[1][0].hp === 2, "self-destruct should damage left adjacent unit");
 assert(byName.self_destruct_splash.board[1][2].hp === 2, "self-destruct should damage right adjacent unit");
+
+assert(byName.self_destruct_blocked_by_effect_protect.board[1][2] === null, "bomb drone should be destroyed");
+assert(byName.self_destruct_blocked_by_effect_protect.board[1][1].hp === 4, "effect-protected adjacent unit should ignore self-destruct");
+assert(byName.self_destruct_blocked_by_effect_protect.board[1][3].hp === 2, "unprotected adjacent unit should still take self-destruct damage");
 
 assert(byName.raid_summons_to_second_row.board[2][3]?.name === "奇襲バイク", "raid should allow second-row summon");
 assert(byName.raid_summons_to_second_row.cardReveal?.card?.name === "奇襲バイク", "summoned cards should create a card reveal payload");

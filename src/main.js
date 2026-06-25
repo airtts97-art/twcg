@@ -105,7 +105,7 @@ const KEYWORD_DEFINITIONS = {
   cleave: { label: "巨撃", description: "Also damages units horizontally adjacent to the attack target." },
   oneDamage: { label: "一傷防御", description: "Can only receive 1 damage per hit from any source." },
   structTaunt: { label: "構造挑発", description: "Opponents must target structs with the highest struct taunt value first. This struct gains effect protection equal to its taunt value." },
-  effectProtect: { label: "効果保護", description: "Cannot be affected by card effects unless the source has effect penetration >= this value." },
+  effectProtect: { label: "効果保護", description: "カード効果の影響を受けない（効果攻撃を含む。通常攻撃・曲射などの戦闘ダメージは対象外）。[効果貫通]がこの値以上のカードのみ影響できる。" },
   effectPenetrate: { label: "効果貫通", description: "Bypasses effect protection up to this value." },
 };
 const PLAYERS = {
@@ -896,7 +896,7 @@ const abilityEffects = {
   },
   damageRestedTarget({ game, target, ability, card }) {
     if (!target || !target.rested) return;
-    const result = dealDamageToUnit(game, target, ability.amount || 2, { source: card }, { cleanup: true });
+    const result = dealDamageToUnit(game, target, ability.amount || 2, { source: card }, { cleanup: true, effectAttack: true });
     if (result.pending) return "pending";
   },
   exileTargetNonNeutralNonUnifall({ game, target }) {
@@ -1107,7 +1107,7 @@ const abilityEffects = {
   },
   damageTargetUnit({ game, target, ability, card, source }) {
     if (!target) return;
-    const result = dealDamageToUnit(game, target, ability.amount, { source: card || source }, { cleanup: true });
+    const result = dealDamageToUnit(game, target, ability.amount, { source: card || source }, { cleanup: true, effectAttack: true });
     log(game, `${target.name}: ${result.damage}ダメージ`);
     if (result.pending) return "pending";
   },
@@ -1470,7 +1470,7 @@ const abilityEffects = {
   goldGolemStrike({ game, playerId, card, target }) {
     if (!target || target.owner === playerId) return;
     const damage = calculateAttackDamage(card, target);
-    const result = dealDamageToUnit(game, target, damage, { source: card }, { cleanup: true, killer: card });
+    const result = dealDamageToUnit(game, target, damage, { source: card }, { cleanup: true, killer: card, effectAttack: true });
     log(game, `${game.players[playerId].name}: ${card.name} special strike ${target.name} ${result.damage}`);
     if (result.pending) return "pending";
   },
@@ -1568,7 +1568,7 @@ const abilityEffects = {
     card.currentHp += lost;
     const other = [...unitsOwnedBy(playerId), ...unitsOwnedBy(opponentOf(playerId))].find((unit) => unit.instanceId !== card.instanceId);
     if (other) {
-      const result = dealDamageToUnit(game, other, lost, { source: card }, { cleanup: false });
+      const result = dealDamageToUnit(game, other, lost, { source: card }, { cleanup: false, effectAttack: true });
       log(game, `${card.name}: redirects ${lost} damage to ${other.name}`);
       card.redirectingDamage = false;
       if (result.pending) return "pending";
@@ -3353,6 +3353,9 @@ function fromDeckmakerCard(card) {
   if (localType === "unit") {
     base.atk = Number(card.attack) || 0;
     base.hp = Number(card.defense) || 1;
+    if (/\[降臨\]/.test(base.text || "") || card.id === "card_1753662603276") {
+      base.summonOnlyViaTact = true;
+    }
     if (card.id === "card_1753611167885") {
       base.requiredStructId = "card_1753660736818";
       base.requiredStructName = "\u8986\u6ca1\u306e\u5927\u66b4\u8d70";
@@ -6306,6 +6309,17 @@ function effectProtectLevel(game, unit) {
   return level;
 }
 
+function effectPenetrateLevel(sourceCard) {
+  return keywordValue(sourceCard, "effectPenetrate");
+}
+
+function canAffectUnitByEffect(game, target, sourceCard) {
+  if (!target) return false;
+  const protection = effectProtectLevel(game, target);
+  if (protection <= 0) return true;
+  return effectPenetrateLevel(sourceCard) >= protection;
+}
+
 function structTauntLevel(struct) {
   return keywordValue(struct, "structTaunt");
 }
@@ -6400,11 +6414,7 @@ function isValidAbilityTarget(item, target) {
   if (!["enemyUnit", "friendlyUnit", "anyUnit"].includes(item.ability.target)) return false;
   // 効果保護チェック（敵ユニットを対象にする場合）
   if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
-    const protection = effectProtectLevel(state, target);
-    if (protection > 0) {
-      const penetration = keywordValue(item.card, "effectPenetrate");
-      if (penetration < protection) return false;
-    }
+    if (!canAffectUnitByEffect(state, target, item.card)) return false;
   }
   return true;
 }
@@ -6855,6 +6865,14 @@ function canMeetUnitStructRequirement(player, card) {
   });
 }
 
+function requiresTactSummon(card) {
+  if (!card || card.type !== "unit") return false;
+  if (card.summonOnlyViaTact) return true;
+  const text = card.text || card.description || "";
+  if (/\[降臨\]/.test(text)) return true;
+  return (card.abilities || []).some((a) => a.trigger === "onSummon" && a.effect === "descentEffect");
+}
+
 function findRequiredSacrificeUnit(playerId, card) {
   if (!card?.requiredSacrificeName) return null;
   return unitsOwnedBy(playerId).find((unit) => unit.name === card.requiredSacrificeName);
@@ -6875,6 +6893,7 @@ function placeUnitFromHand(handIndex, row, col) {
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
   if (!card || card.type !== "unit") return fail("ユニットカードを選択してください。");
+  if (requiresTactSummon(card)) return fail(`「${card.name}」は指令カードからのみ出撃できます。`);
   if (isPlayBlockedBySadGirl(state.activePlayer, card)) return fail("This card is blocked by Unknown Sad Girl.");
   if (!canMeetUnitStructRequirement(player, card)) return fail(`${card.requiredStructName || "\u5fc5\u8981\u30b9\u30c8\u30e9\u30af\u30c8"} \u304c\u306a\u3044\u305f\u3081\u51fa\u6483\u3067\u304d\u307e\u305b\u3093\u3002`);
   if (card.requiredSacrificeName && !findRequiredSacrificeUnit(state.activePlayer, card)) return fail(`${card.requiredSacrificeName} がないため出撃できません。`);
@@ -7409,7 +7428,12 @@ function capUnitDamage(target, amount) {
 }
 
 function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
-  if (!target || rawAmount <= 0) return { damage: 0, pending: false };
+  if (!target || rawAmount <= 0) return { damage: 0, pending: false, blocked: false };
+  const sourceCard = source?.source;
+  if (options.effectAttack && sourceCard && !canAffectUnitByEffect(game, target, sourceCard)) {
+    log(game, `「${target.name}」は効果保護により効果ダメージを受けない`);
+    return { damage: 0, pending: false, blocked: true };
+  }
   const attacker = source?.source;
   if (
     target.id === "card_1782225519182"
@@ -7433,7 +7457,7 @@ function runDamageAllEnemiesAndPushBack(game, playerId, ability, card, startInde
   for (let i = startIndex; i < units.length; i += 1) {
     const unit = units[i];
     if (!unit || unit.currentHp <= 0) continue;
-    const result = dealDamageToUnit(game, unit, ability.amount || 3, { source: card }, { cleanup: false });
+    const result = dealDamageToUnit(game, unit, ability.amount || 3, { source: card }, { cleanup: false, effectAttack: true });
     if (result.pending) {
       game.pendingDamageBatch = { kind: "damageAllEnemiesAndPushBack", playerId, ability, card, startIndex: i + 1, pushed };
       return "pending";
@@ -7639,7 +7663,7 @@ function finalizePendingDestruction(unit, killer = null, game) {
   if (blast) {
     for (const [adjRow, adjCol] of adjacentCells(row, col)) {
       const adjacent = g.board[adjRow]?.[adjCol];
-      if (adjacent) dealDamageToUnit(g, adjacent, blast, { source: unit }, { cleanup: false });
+      if (adjacent) dealDamageToUnit(g, adjacent, blast, { source: unit }, { cleanup: false, effectAttack: true });
     }
     cleanupAllDestroyed(null, g);
   }
@@ -7759,6 +7783,7 @@ function useSelectedPlayableCard() {
   if (card.type === "wild") return playWildFromHand(selected.index);
   if (card.type === "grand") return playGrandFromHand(selected.index);
   if (card.type === "unit") {
+    if (requiresTactSummon(card)) return fail(`「${card.name}」は指令カードからのみ出撃できます。`);
     state.selected = { ...selected, confirmed: true };
     state.message = `${card.name}: 配置するサモンフィールドを選択してください。`;
     return true;
@@ -10852,18 +10877,26 @@ function drawHandConfirmOverlay() {
     drawWrappedText(text, x + 212, nextY, w - 228, 18, 8);
   }
 
-  const useLabel = card.type === "unit" ? "使う: 配置先選択" : card.type === "struct" ? "使う: 建設" : "使う";
+  const tactOnlySummon = card.type === "unit" && requiresTactSummon(card);
+  const useLabel = tactOnlySummon
+    ? "指令からのみ出撃"
+    : card.type === "unit"
+      ? "使う: 配置先選択"
+      : card.type === "struct"
+        ? "使う: 建設"
+        : "使う";
   const missingTarget = (card.abilities || []).some((a) => {
     if (a.trigger !== "onPlay" || !a.target) return false;
     return !hasValidAbilityTarget(state, { ability: a, playerId: viewerPlayerId(), card });
   });
+  const cannotUse = missingTarget || tactOnlySummon;
   drawButton(x + w - 316, y + h - 58, 154, 38, "戻る", () => {
     state.selected = null;
     state.message = "カード選択を解除しました。";
   });
   drawButton(x + w - 146, y + h - 58, 120, 38, useLabel,
-    missingTarget ? null : useSelectedPlayableCard, null,
-    missingTarget ? { accent: "dim" } : { accent: "p1" });
+    cannotUse ? null : useSelectedPlayableCard, null,
+    cannotUse ? { accent: "dim" } : { accent: "p1" });
 }
 
 function drawFieldCardDetailOverlay() {
