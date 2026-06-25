@@ -5745,10 +5745,8 @@ function resolveDeployHeroCell(row, col) {
   if (pending?.type !== "deployHeroFromAttack" || pending.step !== "chooseCell") return false;
   const isEligible = (pending.adjCells || []).some((c) => c.row === row && c.col === col);
   if (!isEligible) { state.message = "そのマスには出撃できません。"; render(); return false; }
-  if (!canSummonUnitTo(pending.playerId, row, col, pending.sourceCol)) {
-    state.message = rowHasEnemyUnit(pending.playerId, row)
-      ? "敵ユニットが存在する横列には配置できません。"
-      : "敵ユニットが存在する縦列には配置できません。";
+  if (!canSummonUnitTo(pending.playerId, row)) {
+    state.message = "敵ユニットが存在する横列には配置できません。";
     render();
     return false;
   }
@@ -5828,10 +5826,8 @@ function resolveSummonToken(row, col) {
     state.message = "そのマスは空いていません。";
     return false;
   }
-  if (!canSummonUnitTo(pending.playerId, row, col)) {
-    state.message = rowHasEnemyUnit(pending.playerId, row)
-      ? "敵ユニットが存在する横列には配置できません。"
-      : "敵ユニットが存在する縦列には配置できません。";
+  if (!canSummonUnitTo(pending.playerId, row)) {
+    state.message = "敵ユニットが存在する横列には配置できません。";
     return false;
   }
   const player = state.players[pending.playerId];
@@ -6751,27 +6747,13 @@ function rowHasEnemyUnit(playerId, row) {
   return state.board[row]?.some((unit) => unit?.owner === enemyId);
 }
 
-function columnHasEnemy(playerId, col) {
-  if (col < 0 || col >= COLS) return false;
-  const enemyId = opponentOf(playerId);
-  return state.board.some((boardRow) => boardRow[col]?.owner === enemyId);
-}
-
-function isDiagonalColumnMove(fromCol, toCol) {
-  return fromCol !== toCol;
-}
-
-function canMoveUnitTo(unit, toRow, toCol) {
+function canMoveUnitTo(unit, toRow) {
   if (!unit) return false;
-  if (rowHasEnemyUnit(unit.owner, toRow)) return false;
-  if (isDiagonalColumnMove(unit.col, toCol) && columnHasEnemy(unit.owner, toCol)) return false;
-  return true;
+  return !rowHasEnemyUnit(unit.owner, toRow);
 }
 
-function canSummonUnitTo(playerId, row, col, referenceCol = BOARD_CORE_COL) {
-  if (rowHasEnemyUnit(playerId, row)) return false;
-  if (isDiagonalColumnMove(referenceCol, col) && columnHasEnemy(playerId, col)) return false;
-  return true;
+function canSummonUnitTo(playerId, row) {
+  return !rowHasEnemyUnit(playerId, row);
 }
 
 function canMeetUnitStructRequirement(player, card) {
@@ -6807,9 +6789,8 @@ function placeUnitFromHand(handIndex, row, col) {
   if (card.requiredSacrificeName && !findRequiredSacrificeUnit(state.activePlayer, card)) return fail(`${card.requiredSacrificeName} がないため出撃できません。`);
   if (!canSummonToRow(card, player, row)) return fail("この行には配置できません。");
   if (state.board[row][col]) return fail("このマスには既にユニットがあります。");
-  if (!canSummonUnitTo(state.activePlayer, row, col)) {
-    if (rowHasEnemyUnit(state.activePlayer, row)) return fail("敵ユニットが存在する横列には配置できません。");
-    return fail("敵ユニットが存在する縦列には配置できません。");
+  if (!canSummonUnitTo(state.activePlayer, row)) {
+    return fail("敵ユニットが存在する横列には配置できません。");
   }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
 
@@ -6995,9 +6976,8 @@ function relocateUnit(unit, toRow, toCol, actionLabel, onlineAction) {
   if (toRow < 0 || toRow >= ROWS || toCol < 0 || toCol >= COLS) return fail("移動先が無効です。");
   if (!isUnitFieldCell(toRow, toCol)) return fail("その行には配置できません。");
   if (state.board[toRow][toCol]) return fail("移動先のマスが埋まっています。");
-  if (!canMoveUnitTo(unit, toRow, toCol)) {
-    if (rowHasEnemyUnit(unit.owner, toRow)) return fail("敵ユニットが存在する横列には移動できません。");
-    return fail("敵ユニットが存在する縦列には斜め移動できません。");
+  if (!canMoveUnitTo(unit, toRow)) {
+    return fail("敵ユニットが存在する横列には移動できません。");
   }
   if (!payForCard(player, unit.actCost, unit)) return fail("アクトコストが不足しています。");
   const fromRow = unit.row;
@@ -7029,12 +7009,11 @@ function moveSelectedUnit() {
   if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
   const toRow = unit.row + player.forward;
   if (toRow < 0 || toRow >= ROWS) return fail("これ以上前進できません。");
-  const colBlocked = (c) => isDiagonalColumnMove(unit.col, c) && columnHasEnemy(unit.owner, c);
   const candidateCols = [unit.col, unit.col - 1, unit.col + 1].filter((c) => c >= 0 && c < COLS);
-  const destCol = candidateCols.find((c) => !state.board[toRow][c] && !colBlocked(c));
+  const destCol = candidateCols.find((c) => !state.board[toRow][c]);
   if (destCol == null) {
     if (rowHasEnemyUnit(unit.owner, toRow)) return fail("敵ユニットが存在する横列には前進できません。");
-    return fail("前方のマスが埋まっているか、縦列に敵がいます。");
+    return fail("前方のマスが埋まっています。");
   }
   return relocateUnit(unit, toRow, destCol, "前進", "moveUnit");
 }
@@ -7050,12 +7029,11 @@ function retreatSelectedUnit() {
   if (unit.noRetreatUntilOpponentTurnEnd) return fail("This unit cannot retreat now.");
   const toRow = unit.row - player.forward;
   if (toRow < 0 || toRow >= ROWS) return fail("これ以上後退できません。");
-  const colBlocked = (c) => isDiagonalColumnMove(unit.col, c) && columnHasEnemy(unit.owner, c);
   const candidateCols = [unit.col, unit.col - 1, unit.col + 1].filter((c) => c >= 0 && c < COLS);
-  const destCol = candidateCols.find((c) => !state.board[toRow][c] && !colBlocked(c));
+  const destCol = candidateCols.find((c) => !state.board[toRow][c]);
   if (destCol == null) {
     if (rowHasEnemyUnit(unit.owner, toRow)) return fail("敵ユニットが存在する横列には後退できません。");
-    return fail("後方のマスが埋まっているか、縦列に敵がいます。");
+    return fail("後方のマスが埋まっています。");
   }
   return relocateUnit(unit, toRow, destCol, "後退", "retreatUnit");
 }
@@ -9194,10 +9172,10 @@ function handleCellClick(row, col) {
       const forwardRow = unitCard.row + player.forward;
       const retreatRow = unitCard.row - player.forward;
       const colDiff = Math.abs(col - unitCard.col);
-      if (colDiff <= 1 && row === forwardRow && canMoveUnitTo(unitCard, row, col)) {
+      if (colDiff <= 1 && row === forwardRow && canMoveUnitTo(unitCard, row)) {
         return relocateUnit(unitCard, row, col, "前進", "moveUnit");
       }
-      if (colDiff <= 1 && row === retreatRow && canMoveUnitTo(unitCard, row, col)) {
+      if (colDiff <= 1 && row === retreatRow && canMoveUnitTo(unitCard, row)) {
         return relocateUnit(unitCard, row, col, "後退", "retreatUnit");
       }
     }
@@ -9587,13 +9565,8 @@ function drawBoardActionButtons() {
     return rowHasEnemyUnit(unit.owner, row);
   }
 
-  function colHasEnemy(col) {
-    return columnHasEnemy(unit.owner, col);
-  }
-
   function dirBtn(label, row, col, logLabel, action, canBase) {
-    const isDiag = isDiagonalColumnMove(unit.col, col);
-    const valid = canBase && cellOpen(row, col) && !rowHasEnemy(row) && !(isDiag && colHasEnemy(col));
+    const valid = canBase && cellOpen(row, col) && !rowHasEnemy(row);
     return {
       label,
       fn: valid ? () => relocateUnit(unit, row, col, logLabel, action) : null,
