@@ -4799,6 +4799,7 @@ function createGame(
     drawCards(game, playerId, game.players[playerId].core.initialHand || 4, false);
   }
   log(game, "ゲーム開始");
+  startTurn(game, "p1", { skipDraw: true });
   return game;
 }
 
@@ -5585,9 +5586,11 @@ function resolvePayOrDamage(payChoice) {
     checkWinner(state);
   }
   const qi = pending.queueItem;
+  const afterResolve = pending._afterResolve;
   state.pendingChoice = null;
   state.selected = null;
   completeAbilitySource(state, qi);
+  handleTurnStartAfterResolve(afterResolve);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   return true;
@@ -5737,9 +5740,7 @@ function resolveCoreStructStartDiscard(handIndex) {
   const afterResolve = pending._afterResolve;
   state.pendingChoice = null;
   state.selected = null;
-  if (afterResolve?.type === "continueStructPhase") {
-    finishStartTurn(state, afterResolve.playerId, afterResolve.resourcesBefore, afterResolve.handBefore);
-  }
+  handleTurnStartAfterResolve(afterResolve);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -5812,9 +5813,7 @@ function resolveCoreStructStartDecline() {
   const afterResolve = pending._afterResolve;
   state.pendingChoice = null;
   state.selected = null;
-  if (afterResolve?.type === "continueStructPhase") {
-    finishStartTurn(state, afterResolve.playerId, afterResolve.resourcesBefore, afterResolve.handBefore);
-  }
+  handleTurnStartAfterResolve(afterResolve);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -6276,9 +6275,10 @@ function completeAbilitySource(game, item) {
   }
 }
 
-function startTurn(game, playerId) {
+function startTurn(game, playerId, options = {}) {
   game.activePlayer = playerId;
   game.phase = "structure";
+  game.turnStartSummary = null;
   const player = game.players[playerId];
   const resourcesBefore = { ...player.resources };
   const handBefore = player.hand.length;
@@ -6298,7 +6298,7 @@ function startTurn(game, playerId) {
   }
   for (const [key, amount] of Object.entries(player.core.income || {})) addResources(player, key, amount);
   refreshContinuousEffects(game);
-  drawCards(game, playerId, player.core.draw);
+  if (!options.skipDraw) drawCards(game, playerId, player.core.draw);
   // onTurnStart: trigger for all owned units (destroySelf, payOrDamage, gainShockOrAlert, etc.)
   const turnStartUnits = unitsOwnedBy(playerId);
   for (const unit of turnStartUnits) {
@@ -6313,7 +6313,15 @@ function startTurn(game, playerId) {
       triggerAbilities(game, playerId, tact, "onTurnStart");
     }
   }
-  // Core onStructurePhaseStart ability (e.g. 六端星の第一王城)
+  if (game.pendingChoice) {
+    game.pendingChoice._afterResolve = { type: "resumeStructurePhaseStart", playerId, resourcesBefore, handBefore };
+    return;
+  }
+  resumeStructurePhaseStart(game, { playerId, resourcesBefore, handBefore });
+}
+
+function resumeStructurePhaseStart(game, { playerId, resourcesBefore, handBefore }) {
+  const player = game.players[playerId];
   if ((player.core.abilities || []).some((a) => a.trigger === "onStructurePhaseStart")) {
     triggerAbilities(game, playerId, player.core, "onStructurePhaseStart");
     if (game.pendingChoice) {
@@ -6322,6 +6330,15 @@ function startTurn(game, playerId) {
     }
   }
   finishStartTurn(game, playerId, resourcesBefore, handBefore);
+}
+
+function handleTurnStartAfterResolve(afterResolve) {
+  if (!afterResolve) return;
+  if (afterResolve.type === "resumeStructurePhaseStart") {
+    resumeStructurePhaseStart(state, afterResolve);
+  } else if (afterResolve.type === "continueStructPhase") {
+    finishStartTurn(state, afterResolve.playerId, afterResolve.resourcesBefore, afterResolve.handBefore);
+  }
 }
 
 function structPhaseActivatables(player) {
