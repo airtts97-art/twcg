@@ -4817,7 +4817,7 @@ function createGame(
     pendingAttackContinuation: null,
     pendingDamageBatch: null,
     pendingStructPhase: null,
-    turnStartResume: null,
+    turnStartSequence: null,
     cardReveal: null,
     cardRevealSeq: 0,
     turnStartSummary: null,
@@ -5374,7 +5374,7 @@ function processEffectQueue(game) {
   } finally {
     game._effectQueueDepth -= 1;
     if (game._effectQueueDepth === 0) {
-      maybeResumeTurnStart(game);
+      advanceTurnStartSequence(game);
     }
   }
 }
@@ -6316,6 +6316,7 @@ function startTurn(game, playerId, options = {}) {
   game.activePlayer = playerId;
   game.phase = "structure";
   game.turnStartSummary = null;
+  game.pendingStructPhase = null;
   const player = game.players[playerId];
   const resourcesBefore = { ...player.resources };
   const handBefore = player.hand.length;
@@ -6336,7 +6337,7 @@ function startTurn(game, playerId, options = {}) {
   for (const [key, amount] of Object.entries(player.core.income || {})) addResources(player, key, amount);
   refreshContinuousEffects(game);
   if (!options.skipDraw) drawCards(game, playerId, player.core.draw);
-  game.turnStartResume = null;
+  game.turnStartSequence = { playerId, resourcesBefore, handBefore, phase: "onTurnStart" };
   // onTurnStart: 全ユニット・タクトの能力をキューに積んでから一括処理
   const turnStartUnits = unitsOwnedBy(playerId, game);
   for (const unit of turnStartUnits) {
@@ -6355,36 +6356,38 @@ function startTurn(game, playerId, options = {}) {
     }
   }
   processEffectQueue(game);
-  if (game.pendingChoice) {
-    game.turnStartResume = { playerId, resourcesBefore, handBefore, step: "afterOnTurnStart" };
+  advanceTurnStartSequence(game);
+}
+
+function advanceTurnStartSequence(game) {
+  const seq = game.turnStartSequence;
+  if (!seq || game.pendingChoice || game.pendingTarget) return;
+
+  if (seq.phase === "onTurnStart") {
+    if (game.effectQueue.length) return;
+    seq.phase = "onStructurePhaseStart";
+    const player = game.players[seq.playerId];
+    for (const ability of player.core.abilities || []) {
+      if (ability.trigger === "onStructurePhaseStart") {
+        game.effectQueue.push({ playerId: seq.playerId, card: player.core, ability, source: {} });
+      }
+    }
+    if (game.effectQueue.length) {
+      processEffectQueue(game);
+      if (game.pendingChoice || game.pendingTarget) return;
+    }
+    seq.phase = "structPhase";
+    finishStartTurn(game, seq.playerId, seq.resourcesBefore, seq.handBefore);
+    game.turnStartSequence = null;
     return;
   }
-  resumeStructurePhaseStart(game, { playerId, resourcesBefore, handBefore });
-}
 
-function maybeResumeTurnStart(game) {
-  const resume = game.turnStartResume;
-  if (!resume || game.pendingChoice || game.pendingTarget) return;
-  if (resume.step === "afterOnTurnStart") {
-    game.turnStartResume = null;
-    resumeStructurePhaseStart(game, resume);
-  } else if (resume.step === "afterStructurePhaseStart") {
-    finishStartTurn(game, resume.playerId, resume.resourcesBefore, resume.handBefore);
-    game.turnStartResume = null;
+  if (seq.phase === "onStructurePhaseStart") {
+    if (game.effectQueue.length) return;
+    seq.phase = "structPhase";
+    finishStartTurn(game, seq.playerId, seq.resourcesBefore, seq.handBefore);
+    game.turnStartSequence = null;
   }
-}
-
-function resumeStructurePhaseStart(game, { playerId, resourcesBefore, handBefore }) {
-  const player = game.players[playerId];
-  if ((player.core.abilities || []).some((a) => a.trigger === "onStructurePhaseStart")) {
-    triggerAbilities(game, playerId, player.core, "onStructurePhaseStart");
-    if (game.pendingChoice) {
-      game.turnStartResume = { playerId, resourcesBefore, handBefore, step: "afterStructurePhaseStart" };
-      return;
-    }
-  }
-  finishStartTurn(game, playerId, resourcesBefore, handBefore);
-  game.turnStartResume = null;
 }
 
 function structPhaseActivatables(player) {
