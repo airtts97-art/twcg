@@ -127,6 +127,8 @@ const DEFAULT_MAIN_DECK_IDS = [
   "grandMandate",
 ];
 const DEFAULT_STRUCT_DECK_IDS = ["town", "grove", "mine", "refinery", "powerPlant", "magicWell"];
+const BUNDLED_PRODUCTION_STRUCT_IDS = new Set(DEFAULT_STRUCT_DECK_IDS);
+const STRUCT_PHASE_TRIGGERS = ["onStructurePhase", "onStructurePhaseHP"];
 const SAVED_DECK_KEY = "twcg.savedDeck.v1";
 const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
 const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
@@ -2328,7 +2330,12 @@ function loadBundledDeckData() {
       // Bundled cards usually don't overwrite user-customized versions already in catalog.
       // Core cards are refreshed from Deckmaker source so corrected initialResources
       // migrate even when an older imported copy is still stored in localStorage.
-      if (!cardCatalog[group][card.id] || FORCE_BUNDLED_CARD_IDS.has(card.id) || (group === "cores" && deckmakerCard.initialResources)) {
+      if (
+        !cardCatalog[group][card.id]
+        || FORCE_BUNDLED_CARD_IDS.has(card.id)
+        || (group === "structs" && BUNDLED_PRODUCTION_STRUCT_IDS.has(card.id))
+        || (group === "cores" && deckmakerCard.initialResources)
+      ) {
         cardCatalog[group][card.id] = card;
       }
     } catch (e) {
@@ -2512,6 +2519,31 @@ function parseDeckmakerAbilities(card, localType) {
     } else {
       for (const [resource, amount] of Object.entries(generates)) {
         abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource, amount });
+      }
+    }
+    if (!abilities.some((a) => STRUCT_PHASE_TRIGGERS.includes(a.trigger))) {
+      const phaseText = String(card.description || "");
+      const phaseMatch = phaseText.match(/ストラクチャーフェーズ[：:]([^\n。]+)/);
+      const sourceText = phaseMatch ? phaseMatch[1] : phaseText;
+      const structPhaseGains = [
+        [/金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
+        [/人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
+        [/自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
+        [/鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
+        [/燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
+        [/電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
+        [/魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+      ];
+      for (const [pattern, resource] of structPhaseGains) {
+        const match = sourceText.match(pattern);
+        if (match) {
+          abilities.push({
+            trigger: "onStructurePhase",
+            effect: "produceResource",
+            resource,
+            amount: parseDeckmakerKeywordValue(match[1]) || 1,
+          });
+        }
       }
     }
   }
@@ -6324,6 +6356,8 @@ function startTurn(game, playerId, options = {}) {
   delete game.firstDrawFiredFor[playerId];
   for (const struct of (player.structs || [])) {
     struct.hpActivatedThisTurn = false;
+    struct.rested = false;
+    ensureStructPhaseAbilities(struct);
   }
   for (const unit of unitsOwnedBy(playerId, game)) {
     if ((unit.lockedRestTurns || 0) > 0) {
@@ -6390,14 +6424,35 @@ function advanceTurnStartSequence(game) {
   }
 }
 
+function catalogCardFor(card) {
+  if (!card?.id) return null;
+  return cardCatalog.structs[card.id] || cardCatalog.main[card.id] || cardCatalog.cores[card.id] || null;
+}
+
+function cardHasStructPhaseActivation(card) {
+  return (card?.abilities || []).some((a) => STRUCT_PHASE_TRIGGERS.includes(a.trigger));
+}
+
+function ensureStructPhaseAbilities(card) {
+  if (!card?.id || cardHasStructPhaseActivation(card)) return card;
+  const catalogCard = catalogCardFor(card);
+  if (!catalogCard?.abilities?.length) return card;
+  const missing = catalogCard.abilities.filter((a) => STRUCT_PHASE_TRIGGERS.includes(a.trigger));
+  if (!missing.length) return card;
+  card.abilities = [...(card.abilities || []), ...cloneCard({ abilities: missing }).abilities];
+  return card;
+}
+
 function structPhaseActivatables(player) {
   const items = [];
   (player.structs || []).forEach((card, index) => {
-    if ((card.abilities || []).some((a) => a.trigger === "onStructurePhase")) {
+    ensureStructPhaseAbilities(card);
+    if (cardHasStructPhaseActivation(card)) {
       items.push({ kind: "struct", index, card });
     }
   });
   (player.tactZone || []).forEach((card, index) => {
+    ensureStructPhaseAbilities(card);
     if ((card.abilities || []).some((a) => a.trigger === "onStructurePhase")) {
       items.push({ kind: "tact", index, card });
     }
@@ -6915,6 +6970,7 @@ function playStruct(index) {
   if (!card) return;
   if (!payForCard(player, card.cost, card)) return fail("施設のプレイコストが不足しています。");
   revealCardUse(state.activePlayer, card, "build");
+  ensureStructPhaseAbilities(card);
   player.structs.push(card);
   player.structDeck.splice(index, 1);
   state.selected = null;
@@ -10472,8 +10528,8 @@ function drawStructPhaseOverlay() {
     }
 
     // 効果テキスト
-    const abText = (struct.abilities || [])
-      .filter((a) => a.trigger === "onStructurePhase")
+    const phaseAbilities = (struct.abilities || []).filter((a) => STRUCT_PHASE_TRIGGERS.includes(a.trigger));
+    const abText = phaseAbilities
       .map((a) => abilityText({ abilities: [a] }))
       .join(" / ");
     ctx.fillStyle = activated ? "#60c890" : affordable ? "#a0d8b8" : "#a07070";
@@ -10484,14 +10540,15 @@ function drawStructPhaseOverlay() {
 
     // 発動ボタン
     const hpAbility = (struct.abilities || []).find((a) => a.trigger === "onStructurePhaseHP");
+    const hasRestActivate = (struct.abilities || []).some((a) => a.trigger === "onStructurePhase");
     const btnY = cy + cardH + 22;
     if (isController && (!activated || hasMultiActivate)) {
-      if (affordable && !waitingChoice) {
+      if (hasRestActivate && affordable && !waitingChoice) {
         const activate = kind === "struct"
           ? () => activateStructInPhase(index)
           : () => activateTactInPhase(index);
         drawButton(cx, btnY, cardW, btnH, hasMultiActivate ? "再発動" : "発動", activate);
-      } else {
+      } else if (hasRestActivate) {
         drawButton(cx, btnY, cardW, btnH, affordable ? "選択中..." : "発動不可", null, null, { accent: "dim" });
       }
     } else if (activated) {
