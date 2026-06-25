@@ -218,6 +218,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782330659181",  // ÜSPz.76V Aust. A
   "card_1782229353995",  // 長距離砲撃陣
   "card_1782600000000",  // 戦時国債
+  "card_1782610000000",  // 金準備を押収
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -407,6 +408,12 @@ const abilityEffects = {
       game,
       `${game.players[playerId].name}: 「${card.name}」→ コアに期限カウンター+2・国債カウンター+10、金+6`,
     );
+  },
+  addCoreTermCounter({ game, playerId, card, ability }) {
+    const core = game.players[playerId].core;
+    const amount = ability.amount || 1;
+    core.termCounter = (core.termCounter || 0) + amount;
+    log(game, `${game.players[playerId].name}: 「${card.name}」→ コアに期限カウンター+${amount}`);
   },
   dumpWarBondReturn({ game, playerId, card, ability, source }) {
     game.pendingChoice = {
@@ -3497,6 +3504,12 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782600000000") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "warTimeBondPlay" });
+  }
+
+  if (card.id === "card_1782610000000") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onDestroyEnemyUnit", effect: "addCoreTermCounter", amount: 1 });
+    abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource: "funds", amount: 1 });
   }
 
   if (card.id === "card_1782315551233" && !abilities.some((a) => a.effect === "drawCards")) {
@@ -8122,6 +8135,9 @@ function finalizePendingDestruction(unit, killer = null, game) {
   const enemyId = opponentOf(unit.owner);
   for (const struct of g.players[enemyId].structs) {
     triggerAbilities(g, enemyId, struct, "onDestroyEnemyUnit", { target: unit });
+  }
+  for (const tact of g.players[enemyId].tactZone || []) {
+    triggerAbilities(g, enemyId, tact, "onDestroyEnemyUnit", { target: unit });
   }
   if (killer && killer.owner === enemyId) {
     triggerAbilities(g, enemyId, killer, "onDestroyEnemyUnit", { target: unit });

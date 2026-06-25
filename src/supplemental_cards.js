@@ -329,4 +329,27 @@ export default [
     rarity: "通常",
     imageUrl: "assets/cards/card_1782600000000.jpeg",
   },
+  {
+    id: "card_1782610000000",
+    name: "金準備を押収",
+    type: "タクト",
+    world: "ユニフォール",
+    description:
+      "永続タクト\n敵ユニットを撃破時：自分のコアカードに期限カウンターを+1し、金+1を得る。",
+    flavorText:
+      "前線で倒れた敵の懐から、戦費の足しにする。金庫の鍵は、勝者が握る。",
+    tags: ["経済", "戦争", "占領"],
+    costs: {
+      play: { gold: 1, human: 1, nature: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+      act: {},
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { gold: 0, human: 0, nature: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: "通常",
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782610000000.jpeg",
+  },
 ];

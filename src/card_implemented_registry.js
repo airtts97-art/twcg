@@ -30,6 +30,7 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782236231218", // 北東軍第11対戦車歩兵分隊
   "card_1782361783127", // GNS Sovereign
   "card_1782600000000", // 戦時国債
+  "card_1782610000000", // 金準備を押収
 ]);
 
 export function isImplementedCard(cardId) {
