@@ -3263,11 +3263,17 @@ function importDeckmakerAllData(payload) {
   persistCustomCards(groups);
 
   let importedDecks = 0;
+  const mergedMissing = { core: [], main: [], struct: [] };
   const importedSavedDecks = [];
   for (const deck of Array.isArray(payload?.decks) ? payload.decks : []) {
     const result = convertDeckmakerDeck(deck);
     if (!result.ok || !result.deck) continue;
     importedDecks += 1;
+    if (result.missing) {
+      mergedMissing.core.push(...result.missing.core);
+      mergedMissing.main.push(...result.missing.main);
+      mergedMissing.struct.push(...result.missing.struct);
+    }
     importedSavedDecks.push({
       id: `deckmaker-${Date.now().toString(36)}-${importedDecks}`,
       name: result.name,
@@ -3284,7 +3290,7 @@ function importDeckmakerAllData(payload) {
   }
   app.deckBuilder.deckScroll = 0;
   app.deckBuilder.selectedCardId = null;
-  app.deckBuilder.message = `Deckmaker全データ読込: カード${importedCards}枚 / デッキ${importedDecks}個`;
+  setDeckBuilderImportMessage(`Deckmaker全データ読込: カード${importedCards}枚 / デッキ${importedDecks}個`, mergedMissing);
   return true;
 }
 
@@ -3316,6 +3322,7 @@ function createAppState() {
       detailOpen: false,
       coreDropdownOpen: false,
       message: "カードを選んでデッキを調整できます。",
+      missingCardsLines: [],
     },
     match: {
       status: "offline",
@@ -3352,6 +3359,81 @@ function normalizeDeckData(deck) {
     main: deck.main.filter((id) => cardCatalog.main[id] && !cardCatalog.main[id].fixture),
     struct: deck.struct.filter((id) => cardCatalog.structs[id]),
   };
+}
+
+function deckmakerCardRef(value) {
+  if (value == null) return "";
+  const raw = typeof value === "string" ? value : value?.id || value?.cardId || value?.name;
+  return raw ? String(raw).trim() : "";
+}
+
+function resolveDeckmakerDeckSection(sources, type) {
+  const ids = [];
+  const missing = [];
+  if (!Array.isArray(sources)) return { ids, missing };
+  const lookup = deckmakerCardLookup(type);
+  for (const item of sources) {
+    const ref = deckmakerCardRef(item);
+    if (!ref) continue;
+    const id = lookup.byId.get(ref) || lookup.byName.get(ref);
+    if (id) ids.push(id);
+    else missing.push(ref);
+  }
+  return { ids, missing };
+}
+
+function summarizeMissingDeckmakerRefs(refs) {
+  const counts = new Map();
+  for (const ref of refs || []) {
+    counts.set(ref, (counts.get(ref) || 0) + 1);
+  }
+  return [...counts.entries()].map(([ref, count]) => (count > 1 ? `${ref}×${count}` : ref));
+}
+
+function formatMissingDeckmakerRefList(refs, maxKinds = 6) {
+  const items = summarizeMissingDeckmakerRefs(refs);
+  if (!items.length) return "";
+  if (items.length <= maxKinds) return items.join("、");
+  return `${items.slice(0, maxKinds).join("、")} 他${items.length - maxKinds}種`;
+}
+
+function buildDeckmakerMissingLines(missing) {
+  const sections = [
+    ["コア", missing?.core],
+    ["メイン", missing?.main],
+    ["施設", missing?.struct],
+  ];
+  const totalMissing = sections.reduce((sum, [, refs]) => sum + (refs?.length || 0), 0);
+  if (!totalMissing) return [];
+  const lines = [`未登録 ${totalMissing}枚（カタログに無いため除外）`];
+  for (const [label, refs] of sections) {
+    if (!refs?.length) continue;
+    lines.push(`${label}: ${formatMissingDeckmakerRefList(refs)}`);
+  }
+  return lines.slice(0, 4);
+}
+
+function setDeckBuilderImportMessage(message, missing) {
+  app.deckBuilder.message = message;
+  app.deckBuilder.missingCardsLines = buildDeckmakerMissingLines(missing);
+  if (app.deckBuilder.missingCardsLines.length) {
+    console.warn("[Deckmaker] missing cards on import:", missing);
+  }
+}
+
+function getDeckListCoreDropdownLayout() {
+  const x = 84;
+  const panelY = 216;
+  const missingLines = app.deckBuilder.missingCardsLines || [];
+  const missingBlockH = missingLines.length ? 12 + missingLines.length * 15 : 0;
+  const coreLabelY = panelY + 48 + 20 + missingBlockH;
+  const ddX = x;
+  const ddY = coreLabelY + 6;
+  const ddW = 430;
+  const ddH = 32;
+  const listHeaderY = ddY + 54;
+  const listStartY = listHeaderY + 20;
+  return { x, panelY, missingLines, coreLabelY, ddX, ddY, ddW, ddH, listHeaderY, listStartY };
 }
 
 function deckmakerCardLookup(type) {
@@ -3391,18 +3473,24 @@ function convertDeckmakerDeck(payload) {
   const coreSource = deck.coreCardId || deck.core || deck.coreId;
   const mainSource = deck.mainDeckCardIds || deck.main || deck.mainDeck || [];
   const structSource = deck.structDeckCardIds || deck.struct || deck.structDeck || [];
-  const main = Array.isArray(mainSource) ? mainSource.map((item) => resolveDeckmakerCardId(item, "main")).filter(Boolean) : [];
-  const struct = Array.isArray(structSource) ? structSource.map((item) => resolveDeckmakerCardId(item, "struct")).filter(Boolean) : [];
-  const core = resolveDeckmakerCardId(coreSource, "core") || DEFAULT_CORE_ID;
-
-  const missingMain = Array.isArray(mainSource) ? mainSource.length - main.length : 0;
-  const missingStruct = Array.isArray(structSource) ? structSource.length - struct.length : 0;
+  const mainResult = resolveDeckmakerDeckSection(mainSource, "main");
+  const structResult = resolveDeckmakerDeckSection(structSource, "struct");
+  const coreRef = deckmakerCardRef(coreSource);
+  const coreLookup = deckmakerCardLookup("core");
+  const coreId = coreRef ? (coreLookup.byId.get(coreRef) || coreLookup.byName.get(coreRef)) : null;
+  const core = coreId || DEFAULT_CORE_ID;
+  const missing = {
+    core: coreRef && !coreId ? [coreRef] : [],
+    main: mainResult.missing,
+    struct: structResult.missing,
+  };
   return {
     ok: true,
     name: deck.name || deck.deckName || "Deckmaker読込デッキ",
-    deck: normalizeDeckData({ core, main, struct }),
-    missingMain,
-    missingStruct,
+    deck: normalizeDeckData({ core, main: mainResult.ids, struct: structResult.ids }),
+    missing,
+    missingMain: missing.main.length,
+    missingStruct: missing.struct.length,
   };
 }
 
@@ -3426,9 +3514,10 @@ function importDeckmakerDeckData(payload) {
   app.savedDecks = [newEntry, ...app.savedDecks.filter((d) => d.name !== result.name)].slice(0, 8);
   persistSavedDeckLibrary();
 
-  app.deckBuilder.message =
-    `Deckmakerから "${app.deckName}" を読込・保存: メイン${app.deck.main.length}枚 / 施設${app.deck.struct.length}枚` +
-    (result.missingMain || result.missingStruct ? `（未登録: メイン${result.missingMain} / 施設${result.missingStruct}）` : "");
+  setDeckBuilderImportMessage(
+    `Deckmakerから "${app.deckName}" を読込・保存: メイン${app.deck.main.length}枚 / 施設${app.deck.struct.length}枚`,
+    result.missing
+  );
   localStorage.setItem(SAVED_DECK_KEY, JSON.stringify(currentDeckPayload()));
   return true;
 }
@@ -7774,9 +7863,9 @@ function drawDeckBuilderScreen() {
 
 function drawCoreDropdownOverlay() {
   if (!app.deckBuilder.coreDropdownOpen) return;
-  const x = 84, y = 222;
+  const layout = getDeckListCoreDropdownLayout();
+  const { x, ddX, ddY, ddW, ddH } = layout;
   const coreList = Object.values(cardCatalog.cores);
-  const ddX = x, ddY = y + 86, ddW = 430, ddH = 34;
   const itemH = 36;
   const listH = coreList.length * itemH;
   const listY = ddY + ddH + 2;
@@ -7797,6 +7886,7 @@ function drawCoreDropdownOverlay() {
 }
 
 function drawDeckListPanel(x, y) {
+  const layout = getDeckListCoreDropdownLayout();
   ctx.fillStyle = "#d0e4ff";
   ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
   ctx.fillText("デッキリスト", x, y);
@@ -7805,14 +7895,21 @@ function drawDeckListPanel(x, y) {
   ctx.fillText(`デッキ名: ${app.deckName}`, x, y + 28, 430);
   ctx.fillStyle = "#90b0d8";
   ctx.fillText(app.deckBuilder.message, x, y + 48, 430);
+  if (layout.missingLines.length) {
+    ctx.fillStyle = "#e8a090";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    layout.missingLines.forEach((line, i) => {
+      ctx.fillText(line, x, y + 66 + i * 15, 430);
+    });
+  }
 
   ctx.fillStyle = "#c0d8ff";
   ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("コア", x, y + 72);
+  ctx.fillText("コア", x, layout.coreLabelY);
 
   const coreList = Object.values(cardCatalog.cores);
   const selectedCore = cardCatalog.cores[app.deck.core] || cardCatalog.cores[DEFAULT_CORE_ID];
-  const ddX = x, ddY = y + 78, ddW = 430, ddH = 32;
+  const { ddX, ddY, ddW, ddH, listHeaderY, listStartY } = layout;
 
   // Dropdown button
   const ddBg = app.deckBuilder.coreDropdownOpen ? "rgba(60,100,200,0.5)" : "rgba(14,24,52,0.85)";
@@ -7838,14 +7935,14 @@ function drawDeckListPanel(x, y) {
 
   ctx.fillStyle = "#c0d8ff";
   ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`カード一覧 メイン ${app.deck.main.length}/${core.deckMin || 40}-${core.deckMax || 60}枚 / 施設 ${app.deck.struct.length}/20枚`, x, y + 132, 430);
-  drawButton(x + 310, y + 112, 52, 26, "上へ", () => changeDeckScroll(-3), null, { micro: true });
-  drawButton(x + 370, y + 112, 52, 26, "下へ", () => changeDeckScroll(3), null, { micro: true });
-  addWheelRegion(x, y + 162, 430, visibleRows * 34, (deltaY) => changeDeckScroll(deltaY > 0 ? 1 : -1));
+  ctx.fillText(`カード一覧 メイン ${app.deck.main.length}/${core.deckMin || 40}-${core.deckMax || 60}枚 / 施設 ${app.deck.struct.length}/20枚`, x, layout.listHeaderY, 430);
+  drawButton(x + 310, layout.listHeaderY - 20, 52, 26, "上へ", () => changeDeckScroll(-3), null, { micro: true });
+  drawButton(x + 370, layout.listHeaderY - 20, 52, 26, "下へ", () => changeDeckScroll(3), null, { micro: true });
+  addWheelRegion(x, layout.listStartY - 10, 430, visibleRows * 34, (deltaY) => changeDeckScroll(deltaY > 0 ? 1 : -1));
 
-  addWheelRegion(x, y + 152, 430, visibleRows * 32, (deltaY) => changeDeckScroll(deltaY > 0 ? 1 : -1));
+  addWheelRegion(x, layout.listStartY - 10, 430, visibleRows * 32, (deltaY) => changeDeckScroll(deltaY > 0 ? 1 : -1));
   visibleRowsData.forEach((row, i) => {
-    const rowY = y + 152 + i * 32;
+    const rowY = layout.listStartY + i * 32;
     if (row.kind === "mainHeader" || row.kind === "structHeader") {
       ctx.strokeStyle = "rgba(40,70,160,0.3)"; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x, rowY + 18); ctx.lineTo(x + 430, rowY + 18); ctx.stroke();
