@@ -1,4 +1,4 @@
-import { getHardcodedTextBaseline, isHardcodedCard } from "./card_hardcoded_registry.js";
+import { getHardcodedTextBaseline, hasHardcodedTextChanged, isHardcodedCard } from "./card_hardcoded_registry.js";
 
 const KNOWN_KEYWORD_LABELS = [
   "装甲", "貫通", "衝撃", "帯電", "機動", "連撃", "航空", "対空", "曲射", "伝説",
