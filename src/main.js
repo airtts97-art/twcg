@@ -1,7 +1,7 @@
 import deckData from "./deck_data.js";
 import supplementalCards from "./supplemental_cards.js";
 import { fetchAllFirebaseCards } from "./firebase_cards.js";
-import { applyCardCompatibility, compatibilityWarningForCard, refreshCatalogCompatibility } from "./card_compatibility.js";
+import { applyCardCompatibility, buildIncompleteCardDataPayload, compatibilityWarningForCard, refreshCatalogCompatibility } from "./card_compatibility.js";
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
@@ -3913,6 +3913,34 @@ function downloadJsonFile(payload, filename) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadTextFile(text, filename) {
+  const blob = new Blob([String(text || "")], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportIncompleteCardData() {
+  refreshCatalogCompatibility(cardCatalog);
+  const payload = buildIncompleteCardDataPayload(cardCatalog);
+  if (!payload.count) {
+    app.deckBuilder.message = "不足データのあるカードはありません。";
+    render();
+    return;
+  }
+  const stamp = payload.exportedAt.slice(0, 10);
+  downloadTextFile(payload.textReport, `twcg_incomplete_cards_${stamp}.txt`);
+  setTimeout(() => {
+    const { textReport, ...jsonPayload } = payload;
+    downloadJsonFile(jsonPayload, `twcg_incomplete_cards_${stamp}.json`);
+  }, 300);
+  app.deckBuilder.message = `不足データ ${payload.count}枚のテキストとJSONをダウンロードしました。`;
+  render();
 }
 
 function exportDeckmakerAllData() {
@@ -8434,7 +8462,8 @@ function drawDeckBuilderScreen() {
   drawButton(792, btnY, 154, 32, "Deckmaker読込", importDeckmakerDeckFile);
   drawButton(956, btnY, 154, 32, "Deckmaker出力", exportDeckmakerAllData);
   drawButton(1120, btnY, 154, 32, "画像なし出力", exportNoImageCustomCards);
-  drawButton(1284, btnY, 118, 32, "カード再同期", () => {
+  drawButton(74, btnY + 38, 150, 32, "不足データDL", exportIncompleteCardData);
+  drawButton(234, btnY + 38, 118, 32, "カード再同期", () => {
     loadFirebaseCardsIntoCatalog().then(() => render());
   });
 
@@ -8448,7 +8477,7 @@ function drawDeckBuilderScreen() {
   if (syncStatus) {
     ctx.fillStyle = app.cardSync?.status === "error" ? "#ff9090" : "rgba(140,180,240,0.75)";
     ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(syncStatus, 74, 168, 1320);
+    ctx.fillText(syncStatus, 360, btnY + 58, 1060);
   }
 
   roundRect(58, 178, 500, 646, 10, "rgba(14,22,50,0.96)", "rgba(50,90,220,0.6)", 1.5);
@@ -8709,6 +8738,7 @@ function drawDeckAnalysisPanel(x, y) {
   ctx.fillText(analysis.warnings.join(" / ") || "問題なし", x, y + 264, 286);
   ctx.fillStyle = SECTION_LABEL; ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
   ctx.fillText("処理不可カード", x, y + 286);
+  drawButton(x + 188, y + 270, 98, 22, "不足DL", exportIncompleteCardData, null, { micro: true });
   ctx.fillStyle = analysis.compatibilityWarnings.length ? "#ffb080" : "#60c080";
   ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
   const compatLines = analysis.compatibilityWarnings.length ? analysis.compatibilityWarnings : ["問題なし"];
@@ -12274,6 +12304,8 @@ const testing = {
   importDeckmakerDeckData,
   importDeckmakerAllData,
   deckmakerAllDataPayload,
+  exportIncompleteCardData,
+  buildIncompleteCardDataPayload,
   catalogCard: findCatalogCard,
   setDeckBuilderLibrary,
   changeLibraryPage,
