@@ -203,6 +203,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782307790847",  // 北東軍第33師団砲中隊
   "card_1782303856785",  // 第8装甲騎兵大隊
   "card_1782287759412",  // DTO前線指揮所
+  "card_1782311181226",  // 壊滅怪異
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
