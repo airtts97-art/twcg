@@ -3264,9 +3264,10 @@ function importDeckmakerAllData(payload) {
 
   let importedDecks = 0;
   const mergedMissing = { core: [], main: [], struct: [] };
+  const nameIndex = buildDeckmakerNameIndex(payload);
   const importedSavedDecks = [];
   for (const deck of Array.isArray(payload?.decks) ? payload.decks : []) {
-    const result = convertDeckmakerDeck(deck);
+    const result = convertDeckmakerDeck(deck, nameIndex);
     if (!result.ok || !result.deck) continue;
     importedDecks += 1;
     if (result.missing) {
@@ -3367,7 +3368,32 @@ function deckmakerCardRef(value) {
   return raw ? String(raw).trim() : "";
 }
 
-function resolveDeckmakerDeckSection(sources, type) {
+function buildDeckmakerNameIndex(payload) {
+  const byId = new Map();
+  const register = (card) => {
+    if (!card?.id || !card?.name) return;
+    byId.set(String(card.id).trim(), String(card.name).trim());
+  };
+  if (Array.isArray(payload?.cards)) payload.cards.forEach(register);
+  if (payload?.id && payload?.name) register(payload);
+  return byId;
+}
+
+function looksLikeDeckmakerCardId(ref) {
+  return /^card_[0-9]+$/i.test(ref) || /^[a-z][a-zA-Z0-9_]*$/i.test(ref);
+}
+
+function deckmakerMissingDisplayName(item, ref, nameIndex) {
+  if (typeof item === "object" && item != null && item.name) {
+    return String(item.name).trim();
+  }
+  const indexed = nameIndex?.get(ref);
+  if (indexed) return indexed;
+  if (ref && !looksLikeDeckmakerCardId(ref)) return ref;
+  return "（名前不明）";
+}
+
+function resolveDeckmakerDeckSection(sources, type, nameIndex) {
   const ids = [];
   const missing = [];
   if (!Array.isArray(sources)) return { ids, missing };
@@ -3377,7 +3403,7 @@ function resolveDeckmakerDeckSection(sources, type) {
     if (!ref) continue;
     const id = lookup.byId.get(ref) || lookup.byName.get(ref);
     if (id) ids.push(id);
-    else missing.push(ref);
+    else missing.push(deckmakerMissingDisplayName(item, ref, nameIndex));
   }
   return { ids, missing };
 }
@@ -3466,21 +3492,22 @@ function extractDeckmakerDeck(payload) {
   return null;
 }
 
-function convertDeckmakerDeck(payload) {
+function convertDeckmakerDeck(payload, nameIndex = null) {
   const deck = extractDeckmakerDeck(payload);
   if (!deck) return { ok: false, message: "DeckmakerのデッキJSONを見つけられませんでした。" };
 
+  const names = nameIndex || buildDeckmakerNameIndex(payload);
   const coreSource = deck.coreCardId || deck.core || deck.coreId;
   const mainSource = deck.mainDeckCardIds || deck.main || deck.mainDeck || [];
   const structSource = deck.structDeckCardIds || deck.struct || deck.structDeck || [];
-  const mainResult = resolveDeckmakerDeckSection(mainSource, "main");
-  const structResult = resolveDeckmakerDeckSection(structSource, "struct");
+  const mainResult = resolveDeckmakerDeckSection(mainSource, "main", names);
+  const structResult = resolveDeckmakerDeckSection(structSource, "struct", names);
   const coreRef = deckmakerCardRef(coreSource);
   const coreLookup = deckmakerCardLookup("core");
   const coreId = coreRef ? (coreLookup.byId.get(coreRef) || coreLookup.byName.get(coreRef)) : null;
   const core = coreId || DEFAULT_CORE_ID;
   const missing = {
-    core: coreRef && !coreId ? [coreRef] : [],
+    core: coreRef && !coreId ? [deckmakerMissingDisplayName(coreSource, coreRef, names)] : [],
     main: mainResult.missing,
     struct: structResult.missing,
   };
