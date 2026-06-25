@@ -245,15 +245,17 @@ const results = await page.evaluate(() => {
   api.testing.placeUnit("armoredCar", "p2", 1, 0, { rested: true });
   api.testing.selectUnit(2, 0);
   api.testing.attack({ kind: "unit", row: 1, col: 0 });
+  api.testing.resolveChargeAttack(true);
   out.push(snapshot("charge_ignores_armor_and_pays_electric"));
 
   reset();
-  api.testing.setResources("p1", { funds: 10, electric: 0 });
+  api.testing.setResources("p1", { funds: 10, electric: 10 });
   api.testing.placeUnit("chargedLancer", "p1", 2, 0, { rested: false });
   api.testing.placeUnit("armoredCar", "p2", 1, 0, { rested: true });
   api.testing.selectUnit(2, 0);
   api.testing.attack({ kind: "unit", row: 1, col: 0 });
-  out.push(snapshot("charge_payment_failure_is_atomic"));
+  api.testing.resolveChargeAttack(false);
+  out.push(snapshot("charge_normal_attack_keeps_armor"));
 
   reset();
   api.testing.placeUnit("rapidGunner", "p1", 2, 0, { rested: false });
@@ -692,6 +694,33 @@ const results = await page.evaluate(() => {
   api.testing.attack({ kind: "unit", row: 1, col: 0 });
   out.push({ name: "deckmaker_struct_destroy_gain", summary: { peopleBefore, peopleAfter: api.testing.summary().players.p1.resources.people } });
 
+  reset();
+  api.state.players.p2.mainDeck = Array.from({ length: 5 }, (_, i) => ({
+    id: `deck302-${i}`,
+    type: "unit",
+    name: i === 0 ? "王国勇者テスト" : `Filler${i}`,
+    tags: i === 0 ? ["王国勇者主義"] : [],
+    cost: {},
+    hp: 1,
+    atk: 0,
+  }));
+  api.testing.placeUnit("card_1782239599000", "p2", 1, 0, { rested: false });
+  api.testing.placeUnit("militia", "p1", 2, 0, { rested: false });
+  api.testing.selectUnit(2, 0);
+  api.testing.attack({ kind: "unit", row: 1, col: 0 });
+  const pendingReveal = api.state.pendingChoice?.type === "revealPick";
+  const attackerPendingRest = api.state.board[2][0].rested;
+  let attackerRestedAfter = false;
+  if (pendingReveal) {
+    const tagIdx = api.state.pendingChoice.revealed.findIndex((c) => (c.tags || []).includes("王国勇者主義"));
+    api.testing.resolveRevealPick(tagIdx >= 0 ? tagIdx : 0);
+    attackerRestedAfter = api.state.board[2][0].rested;
+  }
+  out.push({
+    name: "shock_battalion_attack_rests_attacker",
+    summary: { pendingReveal, attackerPendingRest, attackerRestedAfter },
+  });
+
   return out;
 });
 
@@ -793,9 +822,9 @@ assert(byName.charge_ignores_armor_and_pays_electric.board[1][0].hp === 2, "char
 assert(byName.charge_ignores_armor_and_pays_electric.players.p1.resources.funds === 9, "charge should pay normal act cost");
 assert(byName.charge_ignores_armor_and_pays_electric.players.p1.resources.electric === 9, "charge should pay extra electric cost");
 
-assert(byName.charge_payment_failure_is_atomic.board[1][0].hp === 5, "failed charge payment should not damage target");
-assert(byName.charge_payment_failure_is_atomic.board[2][0].rested === false, "failed charge payment should not rest attacker");
-assert(byName.charge_payment_failure_is_atomic.players.p1.resources.funds === 10, "failed charge payment should not spend normal act cost");
+assert(byName.charge_normal_attack_keeps_armor.board[1][0].hp === 3, "normal attack should respect armor");
+assert(byName.charge_normal_attack_keeps_armor.players.p1.resources.electric === 10, "normal attack should not spend electric");
+assert(byName.charge_normal_attack_keeps_armor.players.p1.resources.funds === 9, "normal attack should still pay act cost");
 
 assert(byName.multi_strike_rests_after_second_attack.board[2][0].rested === true, "multi-strike unit should rest after attack limit");
 assert(byName.multi_strike_rests_after_second_attack.board[2][0].attacksThisTurn === 2, "multi-strike should track both attacks");
@@ -1001,5 +1030,8 @@ assert(byName.long_range_artillery_struct_phase.fuelCost === 1, "長距離砲撃
 assert(byName.long_range_artillery_struct_phase.amount === 2, "長距離砲撃陣 destroy amount should be 2");
 assert(byName.deckmaker_mill_on_summon.millDumpAfter === byName.deckmaker_mill_on_summon.millDumpBefore + 2, "deckmaker mill ability should send 2 cards to dump on summon");
 assert(byName.deckmaker_struct_destroy_gain.peopleAfter === byName.deckmaker_struct_destroy_gain.peopleBefore + 1, "deckmaker struct should gain 1 people on enemy unit destroyed");
+assert(byName.shock_battalion_attack_rests_attacker.pendingReveal === true, "302 shock battalion should trigger reveal pick on damage");
+assert(byName.shock_battalion_attack_rests_attacker.attackerPendingRest === false, "attacker should stay active while reveal pick is pending");
+assert(byName.shock_battalion_attack_rests_attacker.attackerRestedAfter === true, "attacker should rest after resolving 302 reveal pick");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));
