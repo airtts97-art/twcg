@@ -212,6 +212,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782361783127",  // GNS Soveregin
   "card_1782225519182",  // 北東軍最高司令官
   "card_1782330659181",  // ÜSPz.76V Aust. A
+  "card_1782229353995",  // 長距離砲撃陣
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -2583,6 +2584,15 @@ function parseDeckmakerAbilities(card, localType) {
         }
       }
     }
+    const structDestroyEnemyMatch = text.match(/燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を支払[^。\n]*相手のストラクト(?:カード)?を([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚破壊/);
+    if (structDestroyEnemyMatch && !abilities.some((a) => a.effect === "destroyEnemyStructs")) {
+      abilities.push({
+        trigger: "onStructurePhase",
+        effect: "destroyEnemyStructs",
+        fuelCost: parseDeckmakerKeywordValue(structDestroyEnemyMatch[1]) || 1,
+        amount: parseDeckmakerKeywordValue(structDestroyEnemyMatch[2]) || 1,
+      });
+    }
   }
   const text = String(card.description || "");
   const baseTrigger = localType === "unit" ? "onSummon" : "onPlay";
@@ -3327,6 +3337,16 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1782315551233" && !abilities.some((a) => a.effect === "drawCards")) {
     abilities.push({ trigger: "onSummon", effect: "drawCards", amount: 2 });
+  }
+
+  if (Array.isArray(card.abilities)) {
+    for (const imported of card.abilities) {
+      if (!imported?.effect || !imported?.trigger) continue;
+      const duplicate = abilities.some(
+        (a) => a.trigger === imported.trigger && a.effect === imported.effect,
+      );
+      if (!duplicate) abilities.push({ ...imported });
+    }
   }
 
   return abilities;
@@ -5341,6 +5361,19 @@ function totalCostAmount(cost = {}) {
   return Object.values(cost).reduce((sum, amount) => sum + amount, 0);
 }
 
+function canDeployHeroWithGold(player, heroOption, goldToPay = 0) {
+  if (!heroOption) return false;
+  const pay = goldToPay || 0;
+  if ((player.resources.funds || 0) < pay) return false;
+  return (heroOption.totalCost || 0) <= pay * 2;
+}
+
+function hasDeployableHeroWithGold(heroOptions, goldToPay, availableGold) {
+  const pay = goldToPay || 0;
+  if (availableGold < pay) return false;
+  return (heroOptions || []).some((opt) => (opt.totalCost || 0) <= pay * 2);
+}
+
 function countDeckRestrictionCards(mainCards, restriction) {
   if (!restriction?.tags?.length) return 0;
   const tagSet = new Set(restriction.tags);
@@ -5808,8 +5841,8 @@ function resolveDeployHeroChooseHero(heroIdx) {
   const opt = pending.heroOptions[heroIdx];
   if (!opt) return false;
   const player = state.players[pending.playerId];
-  if ((player.resources.funds || 0) < pending.goldToPay) {
-    state.message = `金が不足しています（支払額: ${pending.goldToPay}）。`;
+  if (!canDeployHeroWithGold(player, opt, pending.goldToPay)) {
+    state.message = `金${pending.goldToPay}では「${opt.card.name}」(総コスト${opt.totalCost})は出撃できません。`;
     return false;
   }
   pending.selectedHeroIdx = heroIdx;
@@ -5835,7 +5868,10 @@ function resolveDeployHeroCell(row, col) {
   const opt = pending.heroOptions[pending.selectedHeroIdx];
   if (!opt) return false;
   const goldNeeded = pending.goldToPay;
-  if ((player.resources.funds || 0) < goldNeeded) { state.message = "金が不足しています。"; return false; }
+  if (!canDeployHeroWithGold(player, opt, goldNeeded)) {
+    state.message = `金${goldNeeded}では「${opt.card.name}」(総コスト${opt.totalCost})は出撃できません。`;
+    return false;
+  }
   addResources(player, "funds", -goldNeeded);
   const heroCard = player.hand[opt.handIdx];
   player.hand.splice(opt.handIdx, 1);
@@ -10157,12 +10193,13 @@ function drawDeployHeroFromAttackPanel(pending) {
     for (let g = 0; g <= maxGold && g <= availableGold; g++) {
       const btnX = startX + (g % 8) * (btnW + btnGap);
       const btnY = py + 80 + Math.floor(g / 8) * (btnH + btnGap);
+      const goldValid = hasDeployableHeroWithGold(pending.heroOptions, g, availableGold);
       if (isController) {
-        drawButton(btnX, btnY, btnW, btnH, `${g}`, () => {
+        drawButton(btnX, btnY, btnW, btnH, `${g}`, goldValid ? () => {
           pending.goldToPay = g;
           pending.step = "chooseHero";
           render();
-        }, null, pending.goldToPay === g ? { accent: "p1" } : {});
+        } : null, null, pending.goldToPay === g ? { accent: "p1" } : goldValid ? {} : { accent: "dim" });
       } else {
         drawButton(btnX, btnY, btnW, btnH, `${g}`, null, null, {});
       }
@@ -10213,7 +10250,7 @@ function drawDeployHeroFromAttackPanel(pending) {
   const cardsY = py + 68;
   heroOptions.forEach((opt, i) => {
     const cx = px + 20 + i * (cardW + gap);
-    const canAfford = (player.resources.funds || 0) >= opt.minGold;
+    const canAfford = canDeployHeroWithGold(player, opt, pending.goldToPay);
     const isSelected = pending.selectedHeroIdx === i;
     if (isController && canAfford) {
       addHit(cx, cardsY, cardW, cardH, () => resolveDeployHeroChooseHero(i));
@@ -10222,7 +10259,7 @@ function drawDeployHeroFromAttackPanel(pending) {
     ctx.fillStyle = canAfford ? "#ffe060" : "#888";
     ctx.font = `600 10px 'Yu Gothic UI', sans-serif`;
     ctx.textAlign = "center";
-    ctx.fillText(`金${opt.minGold}必要`, cx + cardW / 2, cardsY + cardH + 14);
+    ctx.fillText(`金${opt.minGold}必要 (支払${pending.goldToPay})`, cx + cardW / 2, cardsY + cardH + 14);
     ctx.textAlign = "left";
   });
   if (isController) {

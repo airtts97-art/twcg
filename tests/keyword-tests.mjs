@@ -422,11 +422,11 @@ const results = await page.evaluate(() => {
   api.testing.addHandCard("p1", "mysticCapture");
   api.testing.playTactFromHand(2); // costs electric 1; pendingChoice set
   api.state.players.p1.resources.electric = 0; // drain remaining electric before resolve
-  const coreHpBefore = api.state.players.p1.core.hp;
+  const captureCoreHpBefore = api.state.players.p1.core.hp;
   api.testing.toggleMysticCaptureChoice(0);
   api.testing.toggleMysticCaptureChoice(1);
   api.testing.resolveMysticCaptureChoice({ exile: true });
-  out.push({ ...snapshot("mystic_capture_cost_core_damage"), coreHpBefore, coreHpAfter: api.state.players.p1.core.hp });
+  out.push({ ...snapshot("mystic_capture_cost_core_damage"), coreHpBefore: captureCoreHpBefore, coreHpAfter: api.state.players.p1.core.hp });
 
   // electric=5 at resolve time → pays from resource, no core damage
   reset();
@@ -655,6 +655,19 @@ const results = await page.evaluate(() => {
   const moriCard = api.cardCatalog.main["test-mori"];
   const moriDrawAbility = (moriCard?.abilities || []).find((a) => a.effect === "drawCards");
   out.push({ name: "deckmaker_draw_pattern_parsed", summary: { found: !!moriDrawAbility, amount: moriDrawAbility?.amount } });
+
+  const artilleryStruct = api.testing.catalogCard("card_1782229353995");
+  const artilleryAbility = (artilleryStruct?.abilities || []).find(
+    (a) => a.effect === "destroyEnemyStructs" && a.trigger === "onStructurePhase",
+  );
+  out.push({
+    name: "long_range_artillery_struct_phase",
+    summary: {
+      found: !!artilleryAbility,
+      fuelCost: artilleryAbility?.fuelCost,
+      amount: artilleryAbility?.amount,
+    },
+  });
 
   // Verify mill effect fires on summon
   reset();
@@ -976,6 +989,9 @@ assert(byName.deckmaker_mill_ability_parsed.found === true, "deckmaker mill abil
 assert(byName.deckmaker_mill_ability_parsed.amount === 2, "deckmaker mill amount should be 2");
 assert(byName.deckmaker_draw_pattern_parsed.found === true, "deckmaker draw ability should be parsed from デッキから2枚ドロー pattern");
 assert(byName.deckmaker_draw_pattern_parsed.amount === 2, "deckmaker draw amount should be 2");
+assert(byName.long_range_artillery_struct_phase.found === true, "長距離砲撃陣 should parse struct-phase destroyEnemyStructs");
+assert(byName.long_range_artillery_struct_phase.fuelCost === 1, "長距離砲撃陣 fuel cost should be 1");
+assert(byName.long_range_artillery_struct_phase.amount === 2, "長距離砲撃陣 destroy amount should be 2");
 assert(byName.deckmaker_mill_on_summon.millDumpAfter === byName.deckmaker_mill_on_summon.millDumpBefore + 2, "deckmaker mill ability should send 2 cards to dump on summon");
 assert(byName.deckmaker_struct_destroy_gain.peopleAfter === byName.deckmaker_struct_destroy_gain.peopleBefore + 1, "deckmaker struct should gain 1 people on enemy unit destroyed");
 
