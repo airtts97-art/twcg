@@ -265,6 +265,7 @@ layout.cell = { w: layout.board.w / COLS, h: layout.board.h / ROWS };
 const ZONE_WILD_COLS  = [0, 1];  // Wild Zone
 const ZONE_STD_COLS   = [2, 3, 4]; // Standard / Core
 const ZONE_GRAND_COLS = [5, 6];  // Grand Zone
+const BOARD_CORE_COL = 6;
 
 // --- Animation system ---
 const animations = [];
@@ -425,30 +426,23 @@ const abilityEffects = {
     }
     if (found) log(game, `${player.name}: 「${card.name}」を${found}枚手札に`);
   },
-  destroyTargetStruct({ game, playerId }) {
-    const opponent = opponentOf(playerId);
-    const structs = game.players[opponent].structs;
-    if (!structs.length) return;
-    // 構造挑発: 最大値のストラクトを優先
-    const maxTaunt = Math.max(...structs.map((s) => keywordValue(s, "structTaunt")));
-    const pool = maxTaunt > 0 ? structs.filter((s) => keywordValue(s, "structTaunt") >= maxTaunt) : structs;
-    const target = pool[0];
-    const idx = structs.indexOf(target);
-    const [removed] = structs.splice(idx, 1);
-    game.players[opponent].structDeck.push(removed);
-    log(game, `${game.players[playerId].name}: 「${removed.name}」を破壊`);
+  destroyTargetStruct({ game, playerId, card, ability, source }) {
+    return offerDestroyEnemyStructChoice(game, playerId, card, ability, source, { amount: 1 });
   },
   destroyEnemyStructs({ game, playerId, card, ability }) {
     const opponent = opponentOf(playerId);
-    const structs = game.players[opponent].structs;
     const fuelCost = ability.fuelCost || 1;
     const amount = ability.amount || 1;
     if ((game.players[playerId].resources.fuel || 0) < fuelCost) {
       log(game, `${game.players[playerId].name}: 燃料が不足しているため「${card.name}」を使えない`);
       return;
     }
-    if (!structs.length) {
+    if (!game.players[opponent].structs.length) {
       log(game, `${game.players[playerId].name}: 相手のストラクトがないため「${card.name}」を使えない`);
+      return;
+    }
+    if (!getDestroyableEnemyStructEntries(game, opponent, card).length) {
+      log(game, `${game.players[playerId].name}: 効果で破壊できる相手ストラクトがない`);
       return;
     }
     if (!game.pendingStructPhase) return;
@@ -457,28 +451,13 @@ const abilityEffects = {
       amount,
       remaining: amount,
       cardName: card.name,
+      sourceCard: card,
     };
     game.message = `${card.name}: 破壊する相手ストラクトを選択してください。`;
     return "pending";
   },
-  destroyEnemyStructsOnPlay({ game, playerId, card, ability }) {
-    const opponent = opponentOf(playerId);
-    const structs = game.players[opponent].structs;
-    const amount = ability.amount || 1;
-    let destroyed = 0;
-    while (structs.length && destroyed < amount) {
-      const maxTaunt = Math.max(...structs.map((s) => keywordValue(s, "structTaunt")));
-      const pool = maxTaunt > 0 ? structs.filter((s) => keywordValue(s, "structTaunt") >= maxTaunt) : structs;
-      const target = pool[0];
-      const idx = structs.indexOf(target);
-      const [removed] = structs.splice(idx, 1);
-      game.players[opponent].structDeck.push(removed);
-      log(game, `${game.players[playerId].name}: 「${removed.name}」を破壊`);
-      destroyed += 1;
-    }
-    if (!destroyed) {
-      log(game, `${game.players[playerId].name}: 相手のストラクトがないため「${card?.name || "効果"}」は破壊しなかった`);
-    }
+  destroyEnemyStructsOnPlay({ game, playerId, card, ability, source }) {
+    return offerDestroyEnemyStructChoice(game, playerId, card, ability, source, { amount: ability.amount || 1 });
   },
   summonSelfFromDump({ game, playerId, card }) {
     const player = game.players[playerId];
@@ -588,40 +567,29 @@ const abilityEffects = {
     log(game, `${game.players[playerId].name}: 「${card.name}」初攻撃カウンター +${ability.amount || 1}`);
   },
   bigConstructionPlanPlay({ game, playerId, card }) {
-    const player = game.players[playerId];
-    const tactIndex = player.tactZone.findIndex((c) => c.instanceId === card.instanceId);
-    if (tactIndex >= 0) player.tactZone.splice(tactIndex, 1);
-    const structCard = cloneCard(card);
-    structCard.type = "struct";
-    structCard.rested = false;
-    structCard.activationCount = 0;
-    structCard.abilities = [{ trigger: "onStructurePhase", effect: "bigConstructionPlanActivate" }];
-    player.structs.push(structCard);
-    log(game, `${player.name}: 「${card.name}」を施設として配置`);
+    card.activationCount = 0;
+    card.rested = false;
+    card.abilities = [
+      { trigger: "onStructurePhase", effect: "bigConstructionPlanActivate" },
+      { trigger: "onDestroy", effect: "searchDeckMinCostToHand", minCost: 18 },
+    ];
+    log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
   },
   bigConstructionPlanActivate({ game, playerId, card }) {
     const player = game.players[playerId];
+    if (card.rested) {
+      log(game, `${player.name}: 「${card.name}」はレスト中`);
+      return;
+    }
+    card.rested = true;
     addResources(player, "funds", 3);
     addResources(player, "ore", 5);
     addResources(player, "fuel", 2);
     card.activationCount = (card.activationCount || 0) + 1;
     log(game, `${player.name}: 「${card.name}」発動${card.activationCount}回目 → 金+3、鉱+5、燃+2`);
     if (card.activationCount >= 5) {
-      const idx = player.structs.findIndex((s) => s.instanceId === card.instanceId);
-      if (idx >= 0) {
-        player.structs.splice(idx, 1);
-        player.dump.push(card);
-        notifyDumpChanged(game, playerId);
-      }
-      log(game, `${player.name}: 「${card.name}」5回発動後に自壊`);
-      const highCostIdx = player.mainDeck.findIndex((c) => totalCostAmount(c.cost || {}) >= 18);
-      if (highCostIdx >= 0) {
-        const found = player.mainDeck.splice(highCostIdx, 1)[0];
-        player.hand.push(found);
-        log(game, `${player.name}: デッキからコスト総量18以上「${found.name}」を手札に`);
-      } else {
-        log(game, `${player.name}: コスト総量18以上のカードがデッキにありません`);
-      }
+      log(game, `${player.name}: 「${card.name}」5回発動後に破壊`);
+      destroyTactFromZone(game, playerId, card);
     }
   },
   defeatIfNamedUnitDestroyed({ game, playerId, ability, source }) {
@@ -704,7 +672,7 @@ const abilityEffects = {
       { row: card.row + 1, col: card.col },
       { row: card.row, col: card.col - 1 },
       { row: card.row, col: card.col + 1 },
-    ].filter(({ row, col }) => row >= 0 && row < ROWS && col >= 0 && col < COLS && !game.board[row][col]);
+    ].filter(({ row, col }) => row >= 0 && row < ROWS && col >= 0 && col < COLS && !game.board[row][col] && canSummonUnitTo(playerId, row, col, card.col));
     if (!adjCells.length) {
       log(game, `${player.name}: 「${card.name}」隣接する空きマスなし`);
       return;
@@ -884,10 +852,10 @@ const abilityEffects = {
     }
     log(game, `${player.name}: 墓地から[${tag}] ${count}体を出した`);
   },
-  damageRestedTarget({ game, target, ability }) {
+  damageRestedTarget({ game, target, ability, card }) {
     if (!target || !target.rested) return;
-    target.currentHp -= ability.amount || 2;
-    cleanupAllDestroyed();
+    const result = dealDamageToUnit(game, target, ability.amount || 2, { source: card }, { cleanup: true });
+    if (result.pending) return "pending";
   },
   exileTargetNonNeutralNonUnifall({ game, target }) {
     if (!target) return;
@@ -947,29 +915,7 @@ const abilityEffects = {
     }
   },
   damageAllEnemiesAndPushBack({ game, playerId, ability, card }) {
-    const opponent = opponentOf(playerId);
-    const player = game.players[opponent];
-    let pushed = 0;
-    for (const unit of [...unitsOwnedBy(opponent)]) {
-      unit.currentHp -= ability.amount || 3;
-      const toRow = unit.row - player.forward;
-      if (toRow >= 0 && toRow < ROWS && !game.board[toRow][unit.col]) {
-        game.board[unit.row][unit.col] = null;
-        unit.row = toRow;
-        game.board[toRow][unit.col] = unit;
-        pushed++;
-      }
-    }
-    if (pushed > 0 && card?.id === "card_1755906183709") {
-      const targets = unitsOwnedBy(playerId).filter((unit) => unit.instanceId !== card.instanceId);
-      for (let i = 0; i < pushed && targets.length; i++) {
-        const target = targets[i % targets.length];
-        target.atk = (target.atk || 0) + 1;
-        target.maxHp = (target.maxHp || target.hp || 0) + 1;
-        target.currentHp = (target.currentHp || target.hp || 0) + 1;
-      }
-    }
-    cleanupAllDestroyed(card);
+    return runDamageAllEnemiesAndPushBack(game, playerId, ability, card, 0, 0);
   },
   reviveStructFromDump({ game, playerId, card, ability }) {
     const player = game.players[playerId];
@@ -1117,13 +1063,11 @@ const abilityEffects = {
     log(game, `${game.players[playerId].name}: 敵コアに ${ability.amount} ダメージ`);
     checkWinner(game);
   },
-  damageTargetUnit({ game, target, ability }) {
+  damageTargetUnit({ game, target, ability, card, source }) {
     if (!target) return;
-    const dmg = hasKeyword(target, "oneDamage") ? Math.min(ability.amount, 1) : ability.amount;
-    target.currentHp -= dmg;
-    triggerAbilities(game, target.owner, target, "onDamageReceived", { damage: dmg });
-    log(game, `${target.name}: ${dmg}ダメージ`);
-    cleanupAllDestroyed();
+    const result = dealDamageToUnit(game, target, ability.amount, { source: card || source }, { cleanup: true });
+    log(game, `${target.name}: ${result.damage}ダメージ`);
+    if (result.pending) return "pending";
   },
   grantDestroyGain({ game, playerId, ability, target }) {
     if (!target || target.owner !== playerId) return;
@@ -1197,6 +1141,18 @@ const abilityEffects = {
       }
     }
     if (found) log(game, `${player.name}: デッキから${ability.cardType}を${found}枚手札に`);
+  },
+  searchDeckMinCostToHand({ game, playerId, ability }) {
+    const player = game.players[playerId];
+    const minCost = ability.minCost || 18;
+    const highCostIdx = player.mainDeck.findIndex((c) => totalCostAmount(c.cost || {}) >= minCost);
+    if (highCostIdx >= 0) {
+      const found = player.mainDeck.splice(highCostIdx, 1)[0];
+      player.hand.push(found);
+      log(game, `${player.name}: デッキからコスト総量${minCost}以上「${found.name}」を手札に`);
+    } else {
+      log(game, `${player.name}: コスト総量${minCost}以上のカードがデッキにありません`);
+    }
   },
   revealTopNPick({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
@@ -1465,9 +1421,9 @@ const abilityEffects = {
   goldGolemStrike({ game, playerId, card, target }) {
     if (!target || target.owner === playerId) return;
     const damage = calculateAttackDamage(card, target);
-    target.currentHp -= damage;
-    log(game, `${game.players[playerId].name}: ${card.name} special strike ${target.name} ${damage}`);
-    cleanupAllDestroyed(card);
+    const result = dealDamageToUnit(game, target, damage, { source: card }, { cleanup: true, killer: card });
+    log(game, `${game.players[playerId].name}: ${card.name} special strike ${target.name} ${result.damage}`);
+    if (result.pending) return "pending";
   },
   payDestroyUpToEnemyCards({ game, playerId, card, ability }) {
     game.pendingChoice = {
@@ -1559,14 +1515,18 @@ const abilityEffects = {
     if (!card || card.redirectingDamage) return;
     const lost = (card.maxHp || card.hp || 0) - (card.currentHp || 0);
     if (lost <= 0) return;
+    card.redirectingDamage = true;
     card.currentHp += lost;
     const other = [...unitsOwnedBy(playerId), ...unitsOwnedBy(opponentOf(playerId))].find((unit) => unit.instanceId !== card.instanceId);
     if (other) {
-      other.currentHp -= lost;
+      const result = dealDamageToUnit(game, other, lost, { source: card }, { cleanup: false });
       log(game, `${card.name}: redirects ${lost} damage to ${other.name}`);
+      card.redirectingDamage = false;
+      if (result.pending) return "pending";
       cleanupAllDestroyed(card);
       return;
     }
+    card.redirectingDamage = false;
     game.players[opponentOf(playerId)].core.hp -= lost;
     log(game, `${card.name}: redirects ${lost} damage to opponent core`);
     checkWinner(game);
@@ -3207,7 +3167,7 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782152241822") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "bigConstructionPlanPlay" });
-    // レスト：金3鉱5燃2 / 5回後自壊 / 破壊時コスト総量18以上を手札 は bigConstructionPlanActivate で処理
+    // レスト：金3鉱5燃2 / 5回後TACTゾーンから破壊 / 破壊時コスト総量18以上を手札
   }
 
   if (card.id === "card_1782239599000") {
@@ -4680,6 +4640,8 @@ function createGame(
     globalEffects: [],
     pendingTarget: null,
     pendingChoice: null,
+    pendingAttackContinuation: null,
+    pendingDamageBatch: null,
     pendingStructPhase: null,
     cardReveal: null,
     cardRevealSeq: 0,
@@ -5163,6 +5125,10 @@ function canControlActivePlayer() {
   return controlledPlayerId() === state.activePlayer;
 }
 
+function canControlChoicePlayer(playerId) {
+  return controlledPlayerId() === playerId;
+}
+
 function requireActivePlayerControl() {
   if (canControlActivePlayer()) return true;
   state.message = "相手のターンです。操作できません。";
@@ -5175,6 +5141,7 @@ function triggerAbilities(game, playerId, card, trigger, source = {}) {
     game.effectQueue.push({ playerId, card, ability, source });
   }
   processEffectQueue(game);
+  if (game.pendingChoice || game.pendingTarget) return "pending";
 }
 
 function processEffectQueue(game) {
@@ -5205,6 +5172,9 @@ function processEffectQueue(game) {
     const result = effect({ game, playerId: item.playerId, card: item.card, ability: item.ability, source: item.source, target: item.target || null });
     if (result === "pending") return;
     completeAbilitySource(game, item);
+  }
+  if (!game.pendingChoice && !game.pendingTarget) {
+    resumePendingDamageBatch(game);
   }
 }
 
@@ -5309,6 +5279,7 @@ function resolveMysticCaptureChoice({ exile = false } = {}) {
 function resolveRevealPick(cardIndex) {
   const pending = state.pendingChoice;
   if (pending?.type !== "revealPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
   const player = state.players[pending.playerId];
   const card = pending.revealed[cardIndex];
   if (!card) return false;
@@ -5326,6 +5297,7 @@ function resolveRevealPick(cardIndex) {
   log(state, `${player.name}: 「${card.name}」を手札に加え、残りをデッキ下へ`);
   completeAbilitySource(state, qi);
   processEffectQueue(state);
+  resumePendingAfterChoice();
   syncOnlineAction("resolveChoice", pending.playerId);
   return true;
 }
@@ -5333,6 +5305,7 @@ function resolveRevealPick(cardIndex) {
 function resolveRevealPickSkip() {
   const pending = state.pendingChoice;
   if (pending?.type !== "revealPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
   const player = state.players[pending.playerId];
   const rest = pending.shuffleToBottom ? shuffleCards(pending.revealed) : pending.revealed;
   for (const c of rest) player.mainDeck.push(c);
@@ -5342,7 +5315,103 @@ function resolveRevealPickSkip() {
   log(state, `${player.name}: カードを選ばず全てデッキ下へ`);
   completeAbilitySource(state, qi);
   processEffectQueue(state);
+  resumePendingAfterChoice();
   syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function resumePendingAttackContinuation() {
+  const cont = state.pendingAttackContinuation;
+  if (!cont || state.pendingChoice || state.pendingTarget) return;
+  const unit = state.board[cont.attackerRow]?.[cont.attackerCol];
+  const defender = state.board[cont.defenderRow]?.[cont.defenderCol];
+  if (!unit || !defender || defender.owner === unit.owner) {
+    state.pendingAttackContinuation = null;
+    if (unit) cleanupAllDestroyed(unit);
+    return;
+  }
+  if (!cont.postPrimaryDone) {
+    if (cont.damage > 0 && cont.attackerShock) defender.rested = true;
+  }
+  const cleaveResult = applyCleave(unit, defender, cont.cleaveDeltaIndex || 0);
+  if (cleaveResult.pending) {
+    state.pendingAttackContinuation = {
+      ...cont,
+      postPrimaryDone: true,
+      attackerShock: false,
+      cleaveDeltaIndex: cleaveResult.nextDeltaIndex,
+    };
+    return;
+  }
+  if (!cont.postCounterDone && canCounterAttack(defender, unit)) {
+    const counterResult = dealDamageToUnit(
+      state,
+      unit,
+      calculateAttackDamage(defender, unit),
+      { source: defender },
+      { cleanup: false }
+    );
+    if (counterResult.pending) {
+      state.pendingAttackContinuation = {
+        ...cont,
+        postPrimaryDone: true,
+        attackerShock: false,
+        postCounterDone: true,
+        cleaveDeltaIndex: cleaveResult.nextDeltaIndex,
+      };
+      return;
+    }
+  }
+  state.pendingAttackContinuation = null;
+  if (cont.damage > 0) {
+    for (const ability of (unit.abilities || [])) {
+      if (ability.trigger === "onDamageDealt") {
+        state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" }, target: defender });
+      }
+    }
+    processEffectQueue(state);
+  }
+  startAttackAnimation(unit, cont.attackerRow, cont.attackerCol, cont.defenderRow, cont.defenderCol);
+  afterAttack(unit);
+  log(state, `「${unit.name}」が「${defender.name}」を攻撃`);
+  cleanupAllDestroyed(unit);
+  syncOnlineAction("attackUnit", unit.owner);
+}
+
+function resolveDestroyEnemyStructChoice(enemyIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "destroyEnemyStruct") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const sourceCard = pending.queueItem?.card;
+  const opponent = opponentOf(pending.playerId);
+  if (!destroyEnemyStructAt(state, pending.playerId, opponent, enemyIndex, sourceCard, {
+    fuelCost: pending.fuelCost || 0,
+    cardName: pending.cardName,
+  })) {
+    state.message = "そのストラクトは選択できません。";
+    return false;
+  }
+  pending.remaining -= 1;
+  if (pending.remaining > 0 && getDestroyableEnemyStructEntries(state, opponent, sourceCard).length > 0) {
+    state.message = `${pending.cardName}: 破壊する相手ストラクトを選択してください（残り${pending.remaining}枚）`;
+    render();
+    return true;
+  }
+  if (pending.remaining > 0) {
+    log(state, `${state.players[pending.playerId].name}: これ以上破壊できる相手ストラクトがない`);
+  }
+  finishDestroyEnemyStructChoice();
+  render();
+  return true;
+}
+
+function resolveDestroyEnemyStructSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "destroyEnemyStruct") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  log(state, `${state.players[pending.playerId].name}: ストラクト破壊を終了`);
+  finishDestroyEnemyStructChoice();
+  render();
   return true;
 }
 
@@ -5390,6 +5459,7 @@ function resolvePayForBuff(pay) {
   state.pendingChoice = null;
   state.selected = null;
   processEffectQueue(state);
+  resumePendingAfterChoice();
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
   return true;
@@ -5442,6 +5512,13 @@ function resolveDeployHeroCell(row, col) {
   if (pending?.type !== "deployHeroFromAttack" || pending.step !== "chooseCell") return false;
   const isEligible = (pending.adjCells || []).some((c) => c.row === row && c.col === col);
   if (!isEligible) { state.message = "そのマスには出撃できません。"; render(); return false; }
+  if (!canSummonUnitTo(pending.playerId, row, col, pending.sourceCol)) {
+    state.message = rowHasEnemyUnit(pending.playerId, row)
+      ? "敵ユニットが存在する横列には配置できません。"
+      : "敵ユニットが存在する縦列には配置できません。";
+    render();
+    return false;
+  }
   const player = state.players[pending.playerId];
   const opt = pending.heroOptions[pending.selectedHeroIdx];
   if (!opt) return false;
@@ -5520,6 +5597,12 @@ function resolveSummonToken(row, col) {
   const unit = state.board[row][col];
   if (unit) {
     state.message = "そのマスは空いていません。";
+    return false;
+  }
+  if (!canSummonUnitTo(pending.playerId, row, col)) {
+    state.message = rowHasEnemyUnit(pending.playerId, row)
+      ? "敵ユニットが存在する横列には配置できません。"
+      : "敵ユニットが存在する縦列には配置できません。";
     return false;
   }
   const player = state.players[pending.playerId];
@@ -5914,6 +5997,93 @@ function effectProtectLevel(game, unit) {
   return level;
 }
 
+function structTauntLevel(struct) {
+  return keywordValue(struct, "structTaunt");
+}
+
+function enemyStructChoicePool(structs) {
+  if (!structs.length) return [];
+  const maxTaunt = Math.max(...structs.map(structTauntLevel));
+  const entries = structs.map((struct, index) => ({ struct, index }));
+  if (maxTaunt > 0) return entries.filter(({ struct }) => structTauntLevel(struct) >= maxTaunt);
+  return entries;
+}
+
+function canDestroyEnemyStructByEffect(sourceCard, struct) {
+  const protection = keywordValue(struct, "effectProtect");
+  if (protection <= 0) return true;
+  const penetration = keywordValue(sourceCard, "effectPenetrate");
+  return penetration >= protection;
+}
+
+function getDestroyableEnemyStructEntries(game, opponentId, sourceCard) {
+  const structs = game.players[opponentId]?.structs || [];
+  return enemyStructChoicePool(structs).filter(({ struct }) => canDestroyEnemyStructByEffect(sourceCard, struct));
+}
+
+function isValidEnemyStructDestroyIndex(game, opponentId, structIndex, sourceCard) {
+  return getDestroyableEnemyStructEntries(game, opponentId, sourceCard).some((entry) => entry.index === structIndex);
+}
+
+function offerDestroyEnemyStructChoice(game, playerId, card, ability, source, options = {}) {
+  const opponent = opponentOf(playerId);
+  const player = game.players[playerId];
+  const amount = options.amount ?? 1;
+  const fuelCost = options.fuelCost ?? 0;
+  if (fuelCost > 0 && (player.resources.fuel || 0) < fuelCost) {
+    log(game, `${player.name}: 燃料が不足しているため「${card?.name || "効果"}」を使えない`);
+    return;
+  }
+  if (!game.players[opponent].structs.length) {
+    log(game, `${player.name}: 相手のストラクトがないため「${card?.name || "効果"}」は破壊しなかった`);
+    return;
+  }
+  if (!getDestroyableEnemyStructEntries(game, opponent, card).length) {
+    log(game, `${player.name}: 効果で破壊できる相手ストラクトがない`);
+    return;
+  }
+  game.pendingChoice = {
+    type: "destroyEnemyStruct",
+    playerId,
+    cardName: card?.name || "効果",
+    remaining: amount,
+    fuelCost,
+    queueItem: { playerId, card, ability, source },
+  };
+  game.selected = { kind: "choice", choice: "destroyEnemyStruct" };
+  const remainLabel = amount > 1 ? `（残り${amount}枚）` : "";
+  game.message = `${card?.name || "効果"}: 破壊する相手ストラクトを選択してください${remainLabel}`;
+  return "pending";
+}
+
+function destroyEnemyStructAt(game, playerId, opponentId, structIndex, sourceCard, { fuelCost = 0, cardName = "効果" } = {}) {
+  const player = game.players[playerId];
+  const structs = game.players[opponentId].structs;
+  if (!isValidEnemyStructDestroyIndex(game, opponentId, structIndex, sourceCard)) return false;
+  if (fuelCost > 0) {
+    if ((player.resources.fuel || 0) < fuelCost) return false;
+    addResources(player, "fuel", -fuelCost);
+  }
+  const [removed] = structs.splice(structIndex, 1);
+  game.players[opponentId].structDeck.push(removed);
+  const fuelLabel = fuelCost > 0 ? `燃${fuelCost}支払い → ` : "";
+  log(game, `${player.name}: 「${cardName}」${fuelLabel}相手の「${removed.name}」を破壊`);
+  return true;
+}
+
+function finishDestroyEnemyStructChoice() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "destroyEnemyStruct") return false;
+  const qi = pending.queueItem;
+  const playerId = pending.playerId;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", playerId);
+  return true;
+}
+
 function isValidAbilityTarget(item, target) {
   if (!target) return false;
   if (item.ability.target === "enemyUnit" && target.owner === item.playerId) return false;
@@ -5981,6 +6151,7 @@ function startTurn(game, playerId) {
   }
   // onTurnStart: 永続タクトカード
   for (const tact of (player.tactZone || [])) {
+    tact.rested = false;
     if ((tact.abilities || []).some((a) => a.trigger === "onTurnStart")) {
       triggerAbilities(game, playerId, tact, "onTurnStart");
     }
@@ -5996,13 +6167,37 @@ function startTurn(game, playerId) {
   finishStartTurn(game, playerId, resourcesBefore, handBefore);
 }
 
+function structPhaseActivatables(player) {
+  const items = [];
+  (player.structs || []).forEach((card, index) => {
+    if ((card.abilities || []).some((a) => a.trigger === "onStructurePhase")) {
+      items.push({ kind: "struct", index, card });
+    }
+  });
+  (player.tactZone || []).forEach((card, index) => {
+    if ((card.abilities || []).some((a) => a.trigger === "onStructurePhase")) {
+      items.push({ kind: "tact", index, card });
+    }
+  });
+  return items;
+}
+
+function destroyTactFromZone(game, playerId, card) {
+  const player = game.players[playerId];
+  const idx = player.tactZone.findIndex((c) => c.instanceId === card.instanceId);
+  if (idx < 0) return false;
+  const [removed] = player.tactZone.splice(idx, 1);
+  triggerAbilities(game, playerId, removed, "onDestroy");
+  player.dump.push(removed);
+  notifyDumpChanged(game, playerId);
+  return true;
+}
+
 function finishStartTurn(game, playerId, resourcesBefore, handBefore) {
   const player = game.players[playerId];
-  const structsWithEffect = player.structs.filter(
-    (s) => (s.abilities || []).some((a) => a.trigger === "onStructurePhase")
-  );
-  if (structsWithEffect.length > 0) {
-    game.pendingStructPhase = { playerId, activatedIndexes: [], resourcesBefore, handBefore };
+  const activatables = structPhaseActivatables(player);
+  if (activatables.length > 0) {
+    game.pendingStructPhase = { playerId, activatedIndexes: [], activatedTactIndexes: [], resourcesBefore, handBefore };
     game.message = `${player.name}: ストラクトフェーズ`;
   } else {
     const gained = resourceDelta(resourcesBefore, player.resources);
@@ -6067,6 +6262,31 @@ function activateStructInPhase(index) {
   return true;
 }
 
+function activateTactInPhase(tactIndex) {
+  if (!canControlActivePlayer()) return false;
+  if (state.pendingChoice) return false;
+  const pending = state.pendingStructPhase;
+  if (!pending) return false;
+  if (pending.pendingResourceChoice) return false;
+  if (pending.pendingEnemyStructChoice) return false;
+  const player = state.players[pending.playerId];
+  const tact = player.tactZone[tactIndex];
+  if (!tact) return false;
+  if (tact.rested) return false;
+
+  const hasMultiActivate = (tact.abilities || []).some((a) => a.multiActivate);
+  if (!hasMultiActivate && pending.activatedTactIndexes.includes(tactIndex)) return false;
+
+  if (!canAffordStructActivation(tact, player)) return false;
+  if (!hasMultiActivate && !pending.activatedTactIndexes.includes(tactIndex)) {
+    pending.activatedTactIndexes.push(tactIndex);
+  }
+  triggerAbilities(state, pending.playerId, tact, "onStructurePhase");
+  syncOnlineAction("tactActivate");
+  render();
+  return true;
+}
+
 function endStructPhase() {
   if (!canControlActivePlayer()) return false;
   if (state.pendingChoice) return false;
@@ -6101,17 +6321,25 @@ function resolveEnemyStructChoice(enemyIndex) {
   const choice = pending?.pendingEnemyStructChoice;
   if (!choice) return;
   const opponent = opponentOf(pending.playerId);
-  const structs = state.players[opponent].structs;
-  if (enemyIndex < 0 || enemyIndex >= structs.length) return;
-  const player = state.players[pending.playerId];
-  if ((player.resources.fuel || 0) < choice.fuelCost) return;
-  addResources(player, "fuel", -choice.fuelCost);
-  const [removed] = structs.splice(enemyIndex, 1);
-  state.players[opponent].structDeck.push(removed);
-  log(state, `${player.name}: 「${choice.cardName}」燃${choice.fuelCost}支払い → 相手の「${removed.name}」を破壊`);
+  const sourceCard = choice.sourceCard || { name: choice.cardName };
+  if (!destroyEnemyStructAt(state, pending.playerId, opponent, enemyIndex, sourceCard, {
+    fuelCost: choice.fuelCost,
+    cardName: choice.cardName,
+  })) {
+    state.message = "そのストラクトは選択できません。";
+    render();
+    return;
+  }
   choice.remaining -= 1;
-  pending.pendingEnemyStructChoice = choice.remaining > 0 ? choice : null;
-  if (!pending.pendingEnemyStructChoice) processEffectQueue(state);
+  if (choice.remaining > 0 && getDestroyableEnemyStructEntries(state, opponent, sourceCard).length > 0) {
+    pending.pendingEnemyStructChoice = choice;
+  } else {
+    if (choice.remaining > 0) {
+      log(state, `${state.players[pending.playerId].name}: これ以上破壊できる相手ストラクトがない`);
+    }
+    pending.pendingEnemyStructChoice = null;
+    processEffectQueue(state);
+  }
   syncOnlineAction("enemyStructChoice");
   render();
 }
@@ -6235,7 +6463,36 @@ function unitsOwnedBy(playerId) {
 }
 
 function enemyInRow(playerId, row) {
-  return state.board[row].some((unit) => unit && unit.owner !== playerId);
+  return rowHasEnemyUnit(playerId, row);
+}
+
+function rowHasEnemyUnit(playerId, row) {
+  if (row < 0 || row >= ROWS) return false;
+  const enemyId = opponentOf(playerId);
+  return state.board[row]?.some((unit) => unit?.owner === enemyId);
+}
+
+function columnHasEnemy(playerId, col) {
+  if (col < 0 || col >= COLS) return false;
+  const enemyId = opponentOf(playerId);
+  return state.board.some((boardRow) => boardRow[col]?.owner === enemyId);
+}
+
+function isDiagonalColumnMove(fromCol, toCol) {
+  return fromCol !== toCol;
+}
+
+function canMoveUnitTo(unit, toRow, toCol) {
+  if (!unit) return false;
+  if (rowHasEnemyUnit(unit.owner, toRow)) return false;
+  if (isDiagonalColumnMove(unit.col, toCol) && columnHasEnemy(unit.owner, toCol)) return false;
+  return true;
+}
+
+function canSummonUnitTo(playerId, row, col, referenceCol = BOARD_CORE_COL) {
+  if (rowHasEnemyUnit(playerId, row)) return false;
+  if (isDiagonalColumnMove(referenceCol, col) && columnHasEnemy(playerId, col)) return false;
+  return true;
 }
 
 function canMeetUnitStructRequirement(player, card) {
@@ -6271,7 +6528,10 @@ function placeUnitFromHand(handIndex, row, col) {
   if (card.requiredSacrificeName && !findRequiredSacrificeUnit(state.activePlayer, card)) return fail(`${card.requiredSacrificeName} がないため出撃できません。`);
   if (!canSummonToRow(card, player, row)) return fail("この行には配置できません。");
   if (state.board[row][col]) return fail("このマスには既にユニットがあります。");
-  if (enemyInRow(state.activePlayer, row)) return fail("敵ユニットが存在する横列には配置できません。");
+  if (!canSummonUnitTo(state.activePlayer, row, col)) {
+    if (rowHasEnemyUnit(state.activePlayer, row)) return fail("敵ユニットが存在する横列には配置できません。");
+    return fail("敵ユニットが存在する縦列には配置できません。");
+  }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
 
   applyUnitSacrificeRequirement(state.activePlayer, card);
@@ -6454,9 +6714,11 @@ function relocateUnit(unit, toRow, toCol, actionLabel, onlineAction) {
   if (state.pendingChoice || state.pendingTarget) return false;
   if (toRow < 0 || toRow >= ROWS || toCol < 0 || toCol >= COLS) return fail("移動先が無効です。");
   if (!isUnitFieldCell(toRow, toCol)) return fail("その行には配置できません。");
-  const opponentSummonRow = state.players[state.activePlayer === "p1" ? "p2" : "p1"].summonRow;
-  if (toRow === opponentSummonRow) return fail("相手のサモンフィールドに進軍できません。");
   if (state.board[toRow][toCol]) return fail("移動先のマスが埋まっています。");
+  if (!canMoveUnitTo(unit, toRow, toCol)) {
+    if (rowHasEnemyUnit(unit.owner, toRow)) return fail("敵ユニットが存在する横列には移動できません。");
+    return fail("敵ユニットが存在する縦列には斜め移動できません。");
+  }
   if (!payForCard(player, unit.actCost, unit)) return fail("アクトコストが不足しています。");
   const fromRow = unit.row;
   const fromCol = unit.col;
@@ -6487,10 +6749,13 @@ function moveSelectedUnit() {
   if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
   const toRow = unit.row + player.forward;
   if (toRow < 0 || toRow >= ROWS) return fail("これ以上前進できません。");
-  const enemyId = opponentOf(unit.owner);
+  const colBlocked = (c) => isDiagonalColumnMove(unit.col, c) && columnHasEnemy(unit.owner, c);
   const candidateCols = [unit.col, unit.col - 1, unit.col + 1].filter((c) => c >= 0 && c < COLS);
-  const destCol = candidateCols.find((c) => !state.board[toRow][c]);
-  if (destCol == null) return fail("前方のマスが埋まっています。");
+  const destCol = candidateCols.find((c) => !state.board[toRow][c] && !colBlocked(c));
+  if (destCol == null) {
+    if (rowHasEnemyUnit(unit.owner, toRow)) return fail("敵ユニットが存在する横列には前進できません。");
+    return fail("前方のマスが埋まっているか、縦列に敵がいます。");
+  }
   return relocateUnit(unit, toRow, destCol, "前進", "moveUnit");
 }
 
@@ -6505,9 +6770,13 @@ function retreatSelectedUnit() {
   if (unit.noRetreatUntilOpponentTurnEnd) return fail("This unit cannot retreat now.");
   const toRow = unit.row - player.forward;
   if (toRow < 0 || toRow >= ROWS) return fail("これ以上後退できません。");
+  const colBlocked = (c) => isDiagonalColumnMove(unit.col, c) && columnHasEnemy(unit.owner, c);
   const candidateCols = [unit.col, unit.col - 1, unit.col + 1].filter((c) => c >= 0 && c < COLS);
-  const destCol = candidateCols.find((c) => !state.board[toRow][c]);
-  if (destCol == null) return fail("後方のマスが埋まっています。");
+  const destCol = candidateCols.find((c) => !state.board[toRow][c] && !colBlocked(c));
+  if (destCol == null) {
+    if (rowHasEnemyUnit(unit.owner, toRow)) return fail("敵ユニットが存在する横列には後退できません。");
+    return fail("後方のマスが埋まっているか、縦列に敵がいます。");
+  }
   return relocateUnit(unit, toRow, destCol, "後退", "retreatUnit");
 }
 
@@ -6608,15 +6877,57 @@ function attackWithSelectedUnit(target) {
 
   triggerAttackAbilities(unit);
   const rawDamage = calculateAttackDamage(unit, defender);
-  const damage = hasKeyword(defender, "oneDamage") ? Math.min(rawDamage, 1) : rawDamage;
-  defender.currentHp -= damage;
-  const damageReceiveResult = triggerAbilities(state, defender.owner, defender, "onDamageReceived", { source: unit, damage });
-  if (damageReceiveResult === "pending") return "pending";
+  const { damage, pending } = dealDamageToUnit(state, defender, rawDamage, { source: unit }, { cleanup: false });
+  if (pending) {
+    state.pendingAttackContinuation = {
+      attackerRow: unit.row,
+      attackerCol: unit.col,
+      defenderRow: defender.row,
+      defenderCol: defender.col,
+      damage,
+      attackerShock: hasKeyword(unit, "shock"),
+    };
+    render();
+    return true;
+  }
   if (damage > 0 && hasKeyword(unit, "shock")) defender.rested = true;
-  applyCleave(unit, defender);
+  const cleaveResult = applyCleave(unit, defender, 0);
+  if (cleaveResult.pending) {
+    state.pendingAttackContinuation = {
+      attackerRow: unit.row,
+      attackerCol: unit.col,
+      defenderRow: defender.row,
+      defenderCol: defender.col,
+      damage,
+      attackerShock: false,
+      postPrimaryDone: true,
+      cleaveDeltaIndex: cleaveResult.nextDeltaIndex,
+    };
+    render();
+    return true;
+  }
   if (canCounterAttack(defender, unit)) {
-    const counterDamage = calculateAttackDamage(defender, unit);
-    unit.currentHp -= hasKeyword(unit, "oneDamage") ? Math.min(counterDamage, 1) : counterDamage;
+    const counterResult = dealDamageToUnit(
+      state,
+      unit,
+      calculateAttackDamage(defender, unit),
+      { source: defender },
+      { cleanup: false }
+    );
+    if (counterResult.pending) {
+      state.pendingAttackContinuation = {
+        attackerRow: unit.row,
+        attackerCol: unit.col,
+        defenderRow: defender.row,
+        defenderCol: defender.col,
+        damage,
+        attackerShock: false,
+        postPrimaryDone: true,
+        postCounterDone: true,
+      };
+      render();
+      return true;
+    }
   }
   if (damage > 0) {
     for (const ability of (unit.abilities || [])) {
@@ -6713,13 +7024,88 @@ function canCounterAttack(defender, attacker) {
   return true;
 }
 
-function applyCleave(attacker, defender) {
+function applyCleave(attacker, defender, fromDeltaIndex = 0) {
   const cleaveDamage = keywordValue(attacker, "cleave");
-  if (!cleaveDamage) return;
-  for (const delta of [-1, 1]) {
-    const adjacent = state.board[defender.row]?.[defender.col + delta];
-    if (adjacent && adjacent.owner !== attacker.owner) adjacent.currentHp -= cleaveDamage;
+  if (!cleaveDamage) return { pending: false, nextDeltaIndex: 0 };
+  const deltas = [-1, 1];
+  for (let i = fromDeltaIndex; i < deltas.length; i += 1) {
+    const adjacent = state.board[defender.row]?.[defender.col + deltas[i]];
+    if (adjacent && adjacent.owner !== attacker.owner) {
+      const result = dealDamageToUnit(state, adjacent, cleaveDamage, { source: attacker }, { cleanup: false });
+      if (result.pending) return { pending: true, nextDeltaIndex: i + 1 };
+    }
   }
+  return { pending: false, nextDeltaIndex: deltas.length };
+}
+
+function capUnitDamage(target, amount) {
+  return hasKeyword(target, "oneDamage") ? Math.min(amount, 1) : amount;
+}
+
+function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
+  if (!target || rawAmount <= 0) return { damage: 0, pending: false };
+  const damage = capUnitDamage(target, rawAmount);
+  target.currentHp -= damage;
+  const triggerResult = triggerAbilities(game, target.owner, target, "onDamageReceived", { ...source, damage });
+  const pending = triggerResult === "pending" || !!game.pendingChoice || !!game.pendingTarget;
+  if (options.cleanup && !pending) cleanupAllDestroyed(options.killer ?? null);
+  return { damage, pending };
+}
+
+function runDamageAllEnemiesAndPushBack(game, playerId, ability, card, startIndex = 0, pushed = 0) {
+  const opponent = opponentOf(playerId);
+  const player = game.players[opponent];
+  const units = unitsOwnedBy(opponent);
+  for (let i = startIndex; i < units.length; i += 1) {
+    const unit = units[i];
+    if (!unit || unit.currentHp <= 0) continue;
+    const result = dealDamageToUnit(game, unit, ability.amount || 3, { source: card }, { cleanup: false });
+    if (result.pending) {
+      game.pendingDamageBatch = { kind: "damageAllEnemiesAndPushBack", playerId, ability, card, startIndex: i + 1, pushed };
+      return "pending";
+    }
+    const toRow = unit.row - player.forward;
+    if (toRow >= 0 && toRow < ROWS && !game.board[toRow][unit.col]) {
+      game.board[unit.row][unit.col] = null;
+      unit.row = toRow;
+      game.board[toRow][unit.col] = unit;
+      pushed += 1;
+    }
+  }
+  if (pushed > 0 && card?.id === "card_1755906183709") {
+    const targets = unitsOwnedBy(playerId).filter((unit) => unit.instanceId !== card.instanceId);
+    for (let i = 0; i < pushed && targets.length; i += 1) {
+      const target = targets[i % targets.length];
+      target.atk = (target.atk || 0) + 1;
+      target.maxHp = (target.maxHp || target.hp || 0) + 1;
+      target.currentHp = (target.currentHp || target.hp || 0) + 1;
+    }
+  }
+  game.pendingDamageBatch = null;
+  cleanupAllDestroyed(card);
+}
+
+function resumePendingDamageBatch(game = state) {
+  const batch = game.pendingDamageBatch;
+  if (!batch || game.pendingChoice || game.pendingTarget) return;
+  if (batch.kind === "damageAllEnemiesAndPushBack") {
+    const result = runDamageAllEnemiesAndPushBack(
+      game,
+      batch.playerId,
+      batch.ability,
+      batch.card,
+      batch.startIndex,
+      batch.pushed
+    );
+    if (result === "pending") return;
+    game.pendingDamageBatch = null;
+    processEffectQueue(game);
+  }
+}
+
+function resumePendingAfterChoice() {
+  resumePendingDamageBatch(state);
+  resumePendingAttackContinuation();
 }
 
 function cleanupAllDestroyed(killer = null) {
@@ -6857,7 +7243,7 @@ function finalizePendingDestruction(unit, killer = null) {
   if (blast) {
     for (const [row, col] of adjacentCells(unit.row, unit.col)) {
       const adjacent = state.board[row]?.[col];
-      if (adjacent) adjacent.currentHp -= blast;
+      if (adjacent) dealDamageToUnit(state, adjacent, blast, { source: unit }, { cleanup: false });
     }
     cleanupAllDestroyed();
   }
@@ -8506,10 +8892,10 @@ function handleCellClick(row, col) {
       const forwardRow = unitCard.row + player.forward;
       const retreatRow = unitCard.row - player.forward;
       const colDiff = Math.abs(col - unitCard.col);
-      if (colDiff <= 1 && row === forwardRow) {
+      if (colDiff <= 1 && row === forwardRow && canMoveUnitTo(unitCard, row, col)) {
         return relocateUnit(unitCard, row, col, "前進", "moveUnit");
       }
-      if (colDiff <= 1 && row === retreatRow) {
+      if (colDiff <= 1 && row === retreatRow && canMoveUnitTo(unitCard, row, col)) {
         return relocateUnit(unitCard, row, col, "後退", "retreatUnit");
       }
     }
@@ -8896,12 +9282,16 @@ function drawBoardActionButtons() {
   }
 
   function rowHasEnemy(row) {
-    const enemyId = opponentOf(unit.owner);
-    return state.board[row]?.some((u) => u?.owner === enemyId);
+    return rowHasEnemyUnit(unit.owner, row);
+  }
+
+  function colHasEnemy(col) {
+    return columnHasEnemy(unit.owner, col);
   }
 
   function dirBtn(label, row, col, logLabel, action, canBase) {
-    const valid = canBase && cellOpen(row, col) && !rowHasEnemy(row);
+    const isDiag = isDiagonalColumnMove(unit.col, col);
+    const valid = canBase && cellOpen(row, col) && !rowHasEnemy(row) && !(isDiag && colHasEnemy(col));
     return {
       label,
       fn: valid ? () => relocateUnit(unit, row, col, logLabel, action) : null,
@@ -8996,6 +9386,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "coreStructStartDiscard") drawCoreStructStartDiscardPanel(pending);
   else if (pending.type === "deployHeroFromAttack") drawDeployHeroFromAttackPanel(pending);
   else if (pending.type === "intelAgencyCancel") drawIntelAgencyCancelPanel(pending);
+  else if (pending.type === "destroyEnemyStruct") drawDestroyEnemyStructPanel(pending);
 }
 
 function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
@@ -9095,7 +9486,7 @@ function drawRevealPickPanel(pending) {
     ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
     ctx.fillText(`[${pending.tagFilter}]タグのカードのみ選択可`, x + 24, y + 56);
   }
-  const isController = canControlActivePlayer() && state.pendingChoice?.playerId === controlledPlayerId();
+  const isController = canControlChoicePlayer(pending.playerId);
   cards.forEach((card, i) => {
     const row = Math.floor(i / cols);
     const col = i % cols;
@@ -9130,10 +9521,78 @@ function drawIntelAgencyCancelPanel(pending) {
   ctx.fillText(`相手が「${pending.tactName}」を使用しました。無効化しますか？`, x + 28, y + 66, w - 56);
   const costLabel = pending.preferPeople ? "人③" : "電③";
   ctx.fillText(`無効化する場合：${costLabel}を支払います。`, x + 28, y + 92);
-  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const isController = canControlChoicePlayer(pending.playerId);
   if (isController) {
     drawButton(x + 28, y + h - 58, 240, 36, `${costLabel}で無効化`, () => { resolveIntelAgencyCancel(true); render(); }, null, { accent: "p1" });
     drawButton(x + 290, y + h - 58, 220, 36, "効果を通す", () => { resolveIntelAgencyCancel(false); render(); });
+  }
+}
+
+function drawDestroyEnemyStructPanel(pending) {
+  const opponentId = opponentOf(pending.playerId);
+  const structs = state.players[opponentId].structs || [];
+  const sourceCard = pending.queueItem?.card;
+  const validIndices = new Set(getDestroyableEnemyStructEntries(state, opponentId, sourceCard).map((entry) => entry.index));
+  const tauntRequired = enemyStructChoicePool(structs).length < structs.length;
+  const cardW = 96;
+  const cardH = Math.round(cardW / CARD_ASPECT);
+  const gap = 14;
+  const cols = Math.min(Math.max(structs.length, 1), 5);
+  const rows = Math.ceil(Math.max(structs.length, 1) / cols);
+  const panelW = Math.max(520, cols * (cardW + gap) + 56);
+  const panelH = Math.max(300, rows * (cardH + 36) + 150);
+  const x = Math.round((W - panelW) / 2);
+  const y = Math.round((H - panelH) / 2);
+  drawChoicePanelBase(x, y, panelW, panelH, "rgba(180,60,60,0.75)", "#ff4040");
+  ctx.fillStyle = "#ffc0c0";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  const remainLabel = pending.remaining > 1 ? `（残り${pending.remaining}枚）` : "";
+  ctx.fillText(`${pending.cardName}: 破壊するストラクトを選択${remainLabel}`, x + 24, y + 34);
+  ctx.fillStyle = "rgba(255,190,190,0.85)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  let hint = "クリックで破壊するストラクトを選んでください。";
+  if (tauntRequired) hint += " [構造挑発]があるストラクトのみ選択可。";
+  if (structs.some((s) => keywordValue(s, "effectProtect") > 0)) hint += " [効果保護]は[効果貫通]以上が必要。";
+  ctx.fillText(hint, x + 24, y + 56, panelW - 48);
+  const isController = canControlChoicePlayer(pending.playerId);
+  const canPayFuel = !pending.fuelCost || (state.players[pending.playerId].resources.fuel || 0) >= pending.fuelCost;
+  const startX = x + 28;
+  const startY = y + 78;
+  if (!structs.length) {
+    ctx.fillStyle = "rgba(220,180,180,0.8)";
+    ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("相手のストラクトがありません", startX, startY + 24);
+  } else {
+    structs.forEach((struct, idx) => {
+      const row = Math.floor(idx / cols);
+      const col = idx % cols;
+      const cx = startX + col * (cardW + gap);
+      const cy = startY + row * (cardH + 36);
+      const selectable = validIndices.has(idx);
+      let label = "";
+      if (!selectable) {
+        if (!canDestroyEnemyStructByEffect(sourceCard, struct)) label = "効果保護";
+        else if (tauntRequired) label = "挑発対象外";
+        else label = "選択不可";
+      }
+      drawSelectableChoiceCard(cx, cy, cardW, cardH, struct, {
+        disabled: !selectable,
+        label,
+        onClick: isController && selectable && canPayFuel
+          ? () => { resolveDestroyEnemyStructChoice(idx); }
+          : null,
+      });
+    });
+  }
+  if (isController) {
+    if (pending.fuelCost > 0) {
+      ctx.fillStyle = canPayFuel ? "rgba(255,210,210,0.85)" : "#ff9090";
+      ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+      ctx.fillText(`破壊ごとに燃${pending.fuelCost}が必要`, x + 24, y + panelH - 62);
+    }
+    if (pending.remaining > 1) {
+      drawButton(x + panelW - 220, y + panelH - 52, 196, 36, "破壊を終了", () => { resolveDestroyEnemyStructSkip(); render(); });
+    }
   }
 }
 
@@ -9405,7 +9864,7 @@ function drawPayForBuffPanel(pending) {
   // ボタンを表示する条件：このプレイヤーを操作しているユーザーか
   // （相手のターン中に自分が被ダメージを受けた場合、activePlayer ≠ pending.playerId なため、
   //  canControlActivePlayer() は false になる。そのため、単純に playerId チェックのみ）
-  const isController = pending.playerId === controlledPlayerId();
+  const isController = canControlChoicePlayer(pending.playerId);
   console.log(`drawPayForBuffPanel: isController=${isController}, playerId=${pending.playerId}, controlled=${controlledPlayerId()}`);
   if (isController) {
     const canPay = curRes >= pending.amount;
@@ -9656,7 +10115,7 @@ function canAffordStructActivation(struct, player) {
     } else if (ab.effect === "destroyEnemyStructs") {
       if ((player.resources.fuel || 0) < (ab.fuelCost || 1)) return false;
       const opponent = opponentOf(player.id);
-      if (!state.players[opponent].structs.length) return false;
+      if (!getDestroyableEnemyStructEntries(state, opponent, struct).length) return false;
     } else {
       for (const [res, amt] of Object.entries(ab.cost || {})) {
         if ((player.resources[res] || 0) < amt) return false;
@@ -9673,9 +10132,8 @@ function drawStructPhaseOverlay() {
   const pending = state.pendingStructPhase;
   if (!pending) { structPhaseScroll = 0; return; }
   const player = state.players[pending.playerId];
-  const structs = player.structs
-    .map((s, origIdx) => ({ s, origIdx }))
-    .filter(({ s }) => (s.abilities || []).some((a) => a.trigger === "onStructurePhase"));
+  if (!pending.activatedTactIndexes) pending.activatedTactIndexes = [];
+  const activatables = structPhaseActivatables(player);
   const isController = canControlActivePlayer();
 
   ctx.fillStyle = "rgba(0,0,8,0.76)";
@@ -9686,9 +10144,9 @@ function drawStructPhaseOverlay() {
   const cardH = Math.round(cardW / CARD_ASPECT); // 134
   const cardGap = 14;
   const maxCols = 5;
-  structPhaseScroll = Math.max(0, Math.min(structPhaseScroll, Math.max(0, structs.length - maxCols)));
-  const visibleStructs = structs.slice(structPhaseScroll, structPhaseScroll + maxCols);
-  const cols = Math.min(maxCols, visibleStructs.length || 1);
+  structPhaseScroll = Math.max(0, Math.min(structPhaseScroll, Math.max(0, activatables.length - maxCols)));
+  const visibleItems = activatables.slice(structPhaseScroll, structPhaseScroll + maxCols);
+  const cols = Math.min(maxCols, visibleItems.length || 1);
   const contentW = cols * (cardW + cardGap) - cardGap;
 
   const headerH = 72;
@@ -9722,7 +10180,7 @@ function drawStructPhaseOverlay() {
   ctx.fillText("ストラクトフェーズ", x + 24, y + 28);
   ctx.fillStyle = "rgba(130,200,160,0.75)";
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("発動するストラクトを選択（スキップ可）", x + 24, y + 50);
+  ctx.fillText("発動するストラクト／タクトを選択（スキップ可）", x + 24, y + 50);
 
   const cardsAreaX = x + Math.round((w - contentW) / 2);
   const cardsAreaY = y + headerH;
@@ -9733,23 +10191,25 @@ function drawStructPhaseOverlay() {
   if (structPhaseScroll > 0) {
     drawButton(x + 6, navBtnY, navBtnW, navBtnH, "◀", () => { structPhaseScroll--; });
   }
-  if (structPhaseScroll + maxCols < structs.length) {
+  if (structPhaseScroll + maxCols < activatables.length) {
     drawButton(x + w - navBtnW - 6, navBtnY, navBtnW, navBtnH, "▶", () => { structPhaseScroll++; });
   }
-  if (structs.length > maxCols) {
+  if (activatables.length > maxCols) {
     ctx.fillStyle = "rgba(120,190,150,0.8)";
     ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
     ctx.textAlign = "right";
-    ctx.fillText(`${structPhaseScroll + 1}〜${Math.min(structPhaseScroll + maxCols, structs.length)} / ${structs.length}`, x + w - 10, y + 52);
+    ctx.fillText(`${structPhaseScroll + 1}〜${Math.min(structPhaseScroll + maxCols, activatables.length)} / ${activatables.length}`, x + w - 10, y + 52);
     ctx.textAlign = "left";
   }
 
   const choice = pending.pendingResourceChoice;
   const waitingChoice = choice || enemyChoice;
-  visibleStructs.forEach(({ s: struct, origIdx }, i) => {
+  visibleItems.forEach(({ kind, index, card: struct }, i) => {
     const hasMultiActivate = (struct.abilities || []).some((a) => a.multiActivate);
-    const activated = !hasMultiActivate && pending.activatedIndexes.includes(origIdx);
-    const affordable = canAffordStructActivation(struct, player);
+    const activated = kind === "struct"
+      ? !hasMultiActivate && pending.activatedIndexes.includes(index)
+      : !hasMultiActivate && pending.activatedTactIndexes.includes(index);
+    const affordable = canAffordStructActivation(struct, player) && !struct.rested;
     const cx = cardsAreaX + i * (cardW + cardGap);
     const cy = cardsAreaY;
 
@@ -9781,7 +10241,10 @@ function drawStructPhaseOverlay() {
     const btnY = cy + cardH + 22;
     if (isController && (!activated || hasMultiActivate)) {
       if (affordable && !waitingChoice) {
-        drawButton(cx, btnY, cardW, btnH, hasMultiActivate ? "再発動" : "発動", () => activateStructInPhase(origIdx));
+        const activate = kind === "struct"
+          ? () => activateStructInPhase(index)
+          : () => activateTactInPhase(index);
+        drawButton(cx, btnY, cardW, btnH, hasMultiActivate ? "再発動" : "発動", activate);
       } else {
         drawButton(cx, btnY, cardW, btnH, affordable ? "選択中..." : "発動不可", null, null, { accent: "dim" });
       }
@@ -9796,7 +10259,7 @@ function drawStructPhaseOverlay() {
       const hpCanAfford = player.core.hp > hpAbility.hpCost;
       const hpLabel = `ライフ${hpAbility.hpCost}`;
       drawButton(cx, btnY + btnH + 4, cardW, 22, hpLabel,
-        hpCanAfford ? () => activateStructHPAbility(origIdx) : null,
+        kind === "struct" && hpCanAfford ? () => activateStructHPAbility(index) : null,
         null, hpCanAfford ? { accent: "p2" } : { accent: "dim" });
     }
   });
@@ -9830,19 +10293,38 @@ function drawStructPhaseOverlay() {
   }
 
   if (enemyChoice) {
-    const opponent = state.players[opponentOf(pending.playerId)];
-    const enemyStructs = opponent.structs;
+    const opponentId = opponentOf(pending.playerId);
+    const enemyStructs = state.players[opponentId].structs;
+    const sourceCard = enemyChoice.sourceCard || { name: enemyChoice.cardName };
+    const validIndices = new Set(getDestroyableEnemyStructEntries(state, opponentId, sourceCard).map((entry) => entry.index));
+    const tauntRequired = enemyStructChoicePool(enemyStructs).length < enemyStructs.length;
     const choiceY = y + h - footerH - choiceH + 6;
     roundRect(x + 14, choiceY, w - 28, 108, 6, "rgba(28,8,8,0.92)", "rgba(180,60,60,0.7)", 1.5);
     ctx.fillStyle = "#f0a0a0";
     ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(`${enemyChoice.cardName}: 破壊する相手ストラクトを選択（燃${enemyChoice.fuelCost}）`, x + 26, choiceY + 20);
+    const remainLabel = enemyChoice.remaining > 1 ? `（残り${enemyChoice.remaining}枚）` : "";
+    ctx.fillText(`${enemyChoice.cardName}: 破壊する相手ストラクトを選択${remainLabel}（燃${enemyChoice.fuelCost}）`, x + 26, choiceY + 20);
+    if (tauntRequired) {
+      ctx.fillStyle = "rgba(220,170,170,0.85)";
+      ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+      ctx.fillText("[構造挑発]対象のみ選択可 / [効果保護]は[効果貫通]が必要", x + 26, choiceY + 36, w - 52);
+    }
     const pickW = 88;
     const pickH = Math.round(pickW / CARD_ASPECT);
     let px = x + 26;
+    const canPayFuel = (player.resources.fuel || 0) >= enemyChoice.fuelCost;
     enemyStructs.forEach((enemyStruct, enemyIdx) => {
-      drawCard(px, choiceY + 30, pickW, pickH, enemyStruct, { noHover: !isController, small: true, artOnly: true });
-      if (isController && (player.resources.fuel || 0) >= enemyChoice.fuelCost) {
+      const selectable = validIndices.has(enemyIdx);
+      drawCard(px, choiceY + 30, pickW, pickH, enemyStruct, { noHover: !isController || !selectable, small: true, artOnly: true });
+      if (!selectable) {
+        roundRect(px, choiceY + 30, pickW, pickH, 6, "rgba(0,0,0,0.55)", "rgba(80,40,40,0.5)", 1);
+        ctx.fillStyle = "#c09090";
+        ctx.font = "600 9px 'Yu Gothic UI', sans-serif";
+        ctx.textAlign = "center";
+        const blockLabel = !canDestroyEnemyStructByEffect(sourceCard, enemyStruct) ? "効果保護" : "挑発対象外";
+        ctx.fillText(blockLabel, px + pickW / 2, choiceY + 30 + pickH / 2 + 3, pickW - 8);
+        ctx.textAlign = "left";
+      } else if (isController && canPayFuel) {
         addHit(px, choiceY + 30, pickW, pickH, () => resolveEnemyStructChoice(enemyIdx));
       }
       px += pickW + 10;
@@ -10950,6 +11432,7 @@ const testing = {
   playGrandFromHand,
   playStruct,
   activateStructInPhase,
+  activateTactInPhase,
   resolveMarketChoice,
   resolveChooseGainResource,
   resolveLifeCounterPayment,
