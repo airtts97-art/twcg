@@ -1,4 +1,5 @@
 import deckData from "./deck_data.js";
+import supplementalCards from "./supplemental_cards.js";
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
@@ -198,6 +199,10 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782540000000",  // 第11歩兵大隊
   "card_1782204551547",  // 第76森人狙撃分隊
   "card_1782205873100",  // シルバーゴーレム
+  "card_1782315551233",  // 第６サラマンダー混成支援大隊
+  "card_1782307790847",  // 北東軍第33師団砲中隊
+  "card_1782303856785",  // 第8装甲騎兵大隊
+  "card_1782287759412",  // DTO前線指揮所
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -2297,7 +2302,10 @@ function loadCustomCardsIntoCatalog() {
 }
 
 function loadBundledDeckData() {
-  const cards = Array.isArray(deckData?.cards) ? deckData.cards : [];
+  const cards = [
+    ...(Array.isArray(deckData?.cards) ? deckData.cards : []),
+    ...(Array.isArray(supplementalCards) ? supplementalCards : []),
+  ];
   for (const deckmakerCard of cards) {
     try {
       const card = fromDeckmakerCard(deckmakerCard);
@@ -2497,7 +2505,8 @@ function parseDeckmakerAbilities(card, localType) {
   const baseTrigger = localType === "unit" ? "onSummon" : "onPlay";
 
   // Draw patterns: "カードをX枚引く", "デッキからX枚ドロー", "X枚ドロー"
-  const drawMatch = text.match(/(?:カードを|デッキから)([0-9０-９一二三四五六七八九]+)枚(?:引く|ドロー)/);
+  const drawMatch = text.match(/(?:カードを|デッキから)([0-9０-９一二三四五六七八九]+)枚(?:引く|ドロー)/)
+    || text.match(/([0-9０-９一二三四五六七八九]+)枚ドロー/);
   if (drawMatch) {
     const amount = parseDeckmakerKeywordValue(drawMatch[1]) || 1;
     abilities.push({ trigger: baseTrigger, effect: "drawCards", amount });
@@ -3190,6 +3199,10 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "defeatIfNamedUnitDestroyed", targetName: "北東軍最高司令官" });
   }
 
+  if (card.id === "card_1782315551233" && !abilities.some((a) => a.effect === "drawCards")) {
+    abilities.push({ trigger: "onSummon", effect: "drawCards", amount: 2 });
+  }
+
   return abilities;
 }
 
@@ -3235,6 +3248,16 @@ function fromDeckmakerCard(card) {
     base.income = fromDeckmakerCosts(card.income || card.generates || {});
     base.specialRequirements = Array.isArray(card.specialRequirements) ? card.specialRequirements : [];
     base.armor = Number(card.armor) || 0;
+    if (card.id === "card_1782287759412") {
+      const dtoTags = ["アトラス北東軍", "グラダナ連邦共和国", "ルディワ公国"];
+      base.passiveBuffTags = dtoTags;
+      base.passiveBuffAtk = 1;
+      base.deckRestriction = { tags: dtoTags, maxPlayCost: 5, minCount: 20 };
+      base.defeatCondition = card.defeatCondition || "このカードが破壊される。";
+      base.specialRequirements = [
+        "[アトラス北東軍][グラダナ連邦共和国][ルディワ公国]タグ・プレイコスト5以下のカードを20枚以上",
+      ];
+    }
   }
   return normalizeCardResources(base);
 }
@@ -5067,7 +5090,15 @@ function applyConditionalBuff(unit, key, active, { atk = 0, hp = 0 } = {}) {
 
 function refreshContinuousEffects(game = state) {
   for (const pid of ["p1", "p2"]) {
+    const core = game.players[pid]?.core;
+    const coreBuffTags = core?.passiveBuffTags;
+    const coreBuffAtk = core?.passiveBuffAtk || 0;
+    const coreTagSet = coreBuffTags?.length ? new Set(coreBuffTags) : null;
     for (const unit of unitsOwnedBy(pid)) {
+      if (coreTagSet && coreBuffAtk) {
+        const hasTag = (unit.tags || []).some((t) => coreTagSet.has(t));
+        applyConditionalBuff(unit, `corePassive_${core.id}`, hasTag, { atk: coreBuffAtk, hp: 0 });
+      }
       if (unit.id === "card_1753680748888") {
         const adjacentPureHumans = adjacentCells(unit.row, unit.col).filter(([row, col]) => {
           const adjacent = game.board[row]?.[col];
@@ -5164,6 +5195,15 @@ function payForCard(player, cost = {}, card = null) {
 
 function totalCostAmount(cost = {}) {
   return Object.values(cost).reduce((sum, amount) => sum + amount, 0);
+}
+
+function countDeckRestrictionCards(mainCards, restriction) {
+  if (!restriction?.tags?.length) return 0;
+  const tagSet = new Set(restriction.tags);
+  return mainCards.filter((card) => {
+    if (totalCostAmount(card.cost || {}) > (restriction.maxPlayCost ?? 5)) return false;
+    return (card.tags || []).some((tag) => tagSet.has(tag));
+  }).length;
 }
 
 // 「name」→ 名前に含む、[tag] → タグに含む の条件チェック
@@ -7538,6 +7578,14 @@ function deckAnalysis() {
   for (const entry of groupedCardEntries(app.deck.main, cardCatalog.main)) {
     const maxCopies = hasKeyword(entry.card, "legendary") ? 1 : 4;
     if (entry.count > maxCopies) warnings.push(`${entry.card.name} ${entry.count}/${maxCopies}`);
+  }
+
+  if (core.deckRestriction) {
+    const restrictedCount = countDeckRestrictionCards(mainCards, core.deckRestriction);
+    const need = core.deckRestriction.minCount || 20;
+    if (restrictedCount < need) {
+      warnings.push(`コア条件: 対象カード ${restrictedCount}/${need}枚`);
+    }
   }
 
   const topTags = Object.entries(tagCounts)
