@@ -306,4 +306,27 @@ export default [
     tags: ["産業", "工場", "科学"],
     rarity: "通常",
   },
+  {
+    id: "card_1782600000000",
+    name: "戦時国債",
+    type: "タクト",
+    world: "ユニフォール",
+    description:
+      "自分のターンの始め金③を支払うことで墓地のこのカードを手札に加えてもよい。\n自分のコアカードに期限カウンター②と国債カウンター⑩をのせ、金⑥を得る。\n期限カウンター：自分のターンの終わりに①減らす。\n国債カウンター：期限カウンターが⓪ならカウンターの値を⓪にして金をその分だけ減らし、不足分はLPで支払う。",
+    flavorText:
+      "戦費は帳簿の数字ではなく、国民の血と汗で支払われる。だが戦が終われば、借金は必ず返さねばならない。",
+    tags: ["経済", "財政", "戦争"],
+    costs: {
+      play: { gold: 0, human: 0, nature: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+      act: {},
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { gold: 0, human: 0, nature: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: "通常",
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782600000000.jpeg",
+  },
 ];

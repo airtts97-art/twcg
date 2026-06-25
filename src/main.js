@@ -217,6 +217,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782225519182",  // 北東軍最高司令官
   "card_1782330659181",  // ÜSPz.76V Aust. A
   "card_1782229353995",  // 長距離砲撃陣
+  "card_1782600000000",  // 戦時国債
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -396,6 +397,30 @@ const abilityEffects = {
   gainResource({ game, playerId, ability }) {
     addResources(game.players[playerId], ability.resource, ability.amount);
     log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
+  },
+  warTimeBondPlay({ game, playerId, card }) {
+    const core = game.players[playerId].core;
+    core.termCounter = (core.termCounter || 0) + 2;
+    core.warBondCounter = (core.warBondCounter || 0) + 10;
+    addResources(game.players[playerId], "funds", 6);
+    log(
+      game,
+      `${game.players[playerId].name}: 「${card.name}」→ コアに期限カウンター+2・国債カウンター+10、金+6`,
+    );
+  },
+  dumpWarBondReturn({ game, playerId, card, ability, source }) {
+    game.pendingChoice = {
+      type: "dumpWarBondReturn",
+      playerId,
+      cardName: card.name,
+      resource: ability.resource || "funds",
+      amount: ability.amount || 3,
+      dumpCardRef: card,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "dumpWarBondReturn" };
+    game.message = `墓地の「${card.name}」を金${ability.amount || 3}で手札に戻しますか？`;
+    return "pending";
   },
   millCards({ game, playerId, ability }) {
     const player = game.players[playerId];
@@ -1033,6 +1058,37 @@ const abilityEffects = {
       }
     }
     if (found) log(game, `${player.name}: 「${ability.cardName || ability.tag}」を${found}枚手札に`);
+  },
+  searchDeckPick({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const filters = ability.filters || [];
+    const matchesDeckSearchFilter = (deckCard) => filters.some((filter) => {
+      if (filter.cardType && deckCard.type !== filter.cardType) return false;
+      if (filter.tag && !(deckCard.tags || []).includes(filter.tag)) return false;
+      return true;
+    });
+    const candidates = player.mainDeck.filter((deckCard) => matchesDeckSearchFilter(deckCard));
+    if (!candidates.length) {
+      log(game, `${player.name}: 条件に合うカードがデッキにありません`);
+      return;
+    }
+    if (candidates.length === 1) {
+      const deckIdx = player.mainDeck.indexOf(candidates[0]);
+      if (deckIdx < 0) return;
+      const [picked] = player.mainDeck.splice(deckIdx, 1);
+      player.hand.push(picked);
+      log(game, `${player.name}: 「${picked.name}」を手札に加えた`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "searchDeckPick",
+      playerId,
+      candidates,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "searchDeckPick" };
+    game.message = "デッキから1枚選んで手札に加えてください。";
+    return "pending";
   },
   summonGolemFromDeckOrDump({ game, playerId, card, ability }) {
     summonGolemFromZones(game, playerId, {
@@ -2345,6 +2401,8 @@ function applyCoreDefaults(core) {
     core.income = normalizeResourceObject(core.income);
   } else if (core.name === "\u738b\u57ce\u30ce\u30fc\u30d9\u30eb\u30b0" && core.description === "(\u52b9\u679c\u7121\u3057)") {
     core.income = {};
+  } else if (core.id === "card_1753611174564" || core.name === "\u8089\u306e\u738b\u57ce") {
+    core.income = {};
   } else {
     core.income = normalizeResourceObject(fallback.income || {});
   }
@@ -2630,7 +2688,7 @@ function parseDeckmakerAbilities(card, localType) {
     const generates = fromDeckmakerCosts(card.generates || {});
     const negEntries = Object.entries(generates).filter(([, a]) => a < 0);
     const posEntries = Object.entries(generates).filter(([, a]) => a > 0);
-    if (negEntries.length > 1 && posEntries.length > 0) {
+    if (negEntries.length >= 1 && posEntries.length > 0) {
       abilities.push({
         trigger: "onStructurePhase",
         effect: "chooseExchange",
@@ -3156,8 +3214,15 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1753661560335") {
     abilities.length = 0;
-    abilities.push({ trigger: "onPlay", effect: "searchCardToHand", tags: ["\u5100\u5f0f", "\u964d\u81e8"], amount: 1 });
-    abilities.push({ trigger: "onPlay", effect: "searchCardToHand", tag: "儀式", amount: 1 });
+    abilities.push({
+      trigger: "onPlay",
+      effect: "searchDeckPick",
+      filters: [
+        { cardType: "tact", tag: "\u5100\u5f0f" },
+        { cardType: "unit", tag: "\u964d\u81e8" },
+      ],
+      amount: 1,
+    });
   }
 
   if (card.id === "card_1753660371468") {
@@ -3427,6 +3492,11 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1782520000000") {
     abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "defeatIfNamedUnitDestroyed", targetName: "北東軍最高司令官" });
+  }
+
+  if (card.id === "card_1782600000000") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "warTimeBondPlay" });
   }
 
   if (card.id === "card_1782315551233" && !abilities.some((a) => a.effect === "drawCards")) {
@@ -5777,6 +5847,31 @@ function resolveMysticCaptureChoice({ exile = false } = {}) {
   return true;
 }
 
+function resolveSearchDeckPick(cardIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "searchDeckPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const card = pending.candidates[cardIndex];
+  if (!card) return false;
+  const deckIdx = player.mainDeck.indexOf(card);
+  if (deckIdx < 0) {
+    state.message = "そのカードはもうデッキにありません。";
+    return false;
+  }
+  const [picked] = player.mainDeck.splice(deckIdx, 1);
+  player.hand.push(picked);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  log(state, `${player.name}: 「${picked.name}」を手札に加えた`);
+  completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
 function resolveRevealPick(cardIndex) {
   const pending = state.pendingChoice;
   if (pending?.type !== "revealPick") return false;
@@ -5926,6 +6021,36 @@ function resolveDestroyEnemyStructSkip() {
   if (!canControlChoicePlayer(pending.playerId)) return false;
   log(state, `${state.players[pending.playerId].name}: ストラクト破壊を終了`);
   finishDestroyEnemyStructChoice();
+  render();
+  return true;
+}
+
+function resolveDumpWarBondReturn(pay) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "dumpWarBondReturn") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  if (pay) {
+    if ((player.resources.funds || 0) < pending.amount) {
+      state.message = "金が不足しています。";
+      return false;
+    }
+    const dumpIdx = player.dump.indexOf(pending.dumpCardRef);
+    if (dumpIdx >= 0) {
+      const card = player.dump.splice(dumpIdx, 1)[0];
+      addResources(player, pending.resource, -pending.amount);
+      player.hand.push(card);
+      log(state, `${player.name}: 金${pending.amount}支払い → 墓地の「${card.name}」を手札に`);
+    }
+  } else {
+    log(state, `${player.name}: 「${pending.cardName}」の墓地回収をスキップ`);
+  }
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
   render();
   return true;
 }
@@ -6697,6 +6822,16 @@ function startTurn(game, playerId, options = {}) {
       }
     }
   }
+  for (const dumpCard of player.dump) {
+    if (dumpCard.id === "card_1782600000000") {
+      game.effectQueue.push({
+        playerId,
+        card: dumpCard,
+        ability: { effect: "dumpWarBondReturn", resource: "funds", amount: 3 },
+        source: { zone: "dump" },
+      });
+    }
+  }
   processEffectQueue(game);
   advanceTurnStartSequence(game);
 }
@@ -6975,6 +7110,26 @@ function resolveMarketChoice(resource) {
   render();
 }
 
+function processWarBondCountersAtTurnEnd(game, playerId) {
+  const core = game.players[playerId]?.core;
+  if (!core || (core.termCounter || 0) <= 0) return;
+  core.termCounter -= 1;
+  log(game, `${game.players[playerId].name}: 期限カウンター -1（残り${core.termCounter}）`);
+  if (core.termCounter !== 0 || (core.warBondCounter || 0) <= 0) return;
+  const bondAmount = core.warBondCounter;
+  core.warBondCounter = 0;
+  const player = game.players[playerId];
+  const available = player.resources.funds || 0;
+  const paid = Math.min(available, bondAmount);
+  const shortfall = bondAmount - paid;
+  player.resources.funds = available - paid;
+  log(game, `${player.name}: 国債償還 金${bondAmount}（不足${shortfall}はLP）`);
+  if (shortfall > 0) {
+    player.core.hp -= shortfall;
+    checkWinner(game);
+  }
+}
+
 function endTurn() {
   if (!requireActivePlayerControl()) return false;
   if (state.winner) return false;
@@ -7016,6 +7171,7 @@ function endTurn() {
       triggerAbilities(state, endingPlayer, unit, "onTurnEnd");
     }
   }
+  processWarBondCountersAtTurnEnd(state, endingPlayer);
   for (const unit of unitsOwnedBy(endingPlayer)) {
     if (unit.indestructibleUntilTurnEnd === endingPlayer) delete unit.indestructibleUntilTurnEnd;
     // ターン終了時に期間切れの一時的ability（保険金など）を削除
@@ -9645,6 +9801,17 @@ function drawCore(playerId, x, y, w, h) {
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
   ctx.fillText(player.core.name, x + 16, y + 40);
 
+  const termCounter = player.core.termCounter || 0;
+  const warBondCounter = player.core.warBondCounter || 0;
+  if (termCounter > 0 || warBondCounter > 0) {
+    ctx.fillStyle = "rgba(255,220,140,0.85)";
+    ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
+    const counterParts = [];
+    if (termCounter > 0) counterParts.push(`期限${termCounter}`);
+    if (warBondCounter > 0) counterParts.push(`国債${warBondCounter}`);
+    ctx.fillText(counterParts.join(" / "), x + 16, y + 54);
+  }
+
   // HP
   const maxHp = player.core.maxHp || 20;
   const hpRatio = Math.max(0, player.core.hp / maxHp);
@@ -10185,7 +10352,9 @@ function drawChoiceOverlay() {
   ctx.fillRect(0, 0, W, H);
   if (pending.type === "mysticCapture") drawMysticCapturePanel(pending);
   else if (pending.type === "revealPick") drawRevealPickPanel(pending);
+  else if (pending.type === "searchDeckPick") drawSearchDeckPickPanel(pending);
   else if (pending.type === "payOrDamage") drawPayOrDamagePanel(pending);
+  else if (pending.type === "dumpWarBondReturn") drawDumpWarBondReturnPanel(pending);
   else if (pending.type === "reviveFromDump") drawReviveFromDumpPanel(pending);
   else if (pending.type === "reviveFromExile") drawReviveFromExilePanel(pending);
   else if (pending.type === "chooseActivationResource") drawChooseActivationResourcePanel(pending);
@@ -10281,6 +10450,36 @@ function drawMysticCapturePanel(pending) {
   drawButton(x + 28, y + h - 58, 150, 36, "選ばず解決", () => resolveMysticCaptureChoice({ exile: false }));
   drawButton(x + 196, y + h - 58, 180, 36, "捨てて1回発動", () => resolveMysticCaptureChoice({ exile: false }));
   drawButton(x + 394, y + h - 58, 210, 36, "除外して2回発動", () => resolveMysticCaptureChoice({ exile: true }), null, { accent: "p1" });
+}
+
+function drawSearchDeckPickPanel(pending) {
+  const cards = pending.candidates || [];
+  const colW = 200, colH = 80, cols = Math.min(cards.length, 3);
+  const rows = Math.ceil(cards.length / cols);
+  const panelW = Math.max(500, cols * (colW + 16) + 56);
+  const panelH = Math.max(350, rows * (colH + 16) + 120);
+  const x = Math.round((W - panelW) / 2);
+  const y = Math.round((H - panelH) / 2);
+  drawChoicePanelBase(x, y, panelW, panelH, "rgba(120,80,180,0.7)", "#8040ff");
+  ctx.fillStyle = "#d0b8ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("デッキ検索：1枚選んで手札に", x + 24, y + 36);
+  const isController = canControlChoicePlayer(pending.playerId);
+  cards.forEach((card, i) => {
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    const cx = x + 28 + col * (colW + 16);
+    const cy = y + 72 + row * (colH + 16);
+    roundRect(cx, cy, colW, colH, 6, "rgba(30,20,50,0.8)", "rgba(140,100,220,0.8)", 2);
+    ctx.fillStyle = "#e8d8ff";
+    ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.name, cx + 8, cy + 22, colW - 16);
+    ctx.fillStyle = "rgba(180,160,220,0.7)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.type + (card.tags?.length ? "  " + card.tags.slice(0, 2).join("/") : ""), cx + 8, cy + 40, colW - 16);
+    ctx.fillText(formatCost(card.cost || {}), cx + 8, cy + 56, colW - 16);
+    if (isController) addHit(cx, cy, colW, colH, () => { resolveSearchDeckPick(i); render(); });
+  });
 }
 
 function drawRevealPickPanel(pending) {
@@ -10687,6 +10886,37 @@ function drawCoreStructStartDiscardPanel(pending) {
       drawButton(px + pw / 2 - 135, py + ph - 48, 120, 34, "捨てる", () => resolveCoreStructStartDiscard(sel), null, { accent: "p1" });
     }
     drawButton(px + pw / 2 + (sel !== undefined ? 5 : -100), py + ph - 48, 210, 34, `スキップ（コアHP-${pending.hpCostOnDecline}）`, () => resolveCoreStructStartDecline());
+  }
+}
+
+function drawDumpWarBondReturnPanel(pending) {
+  const x = 420, y = 300, w = 600, h = 220;
+  drawChoicePanelBase(x, y, w, h, "rgba(120,90,40,0.85)", "#d0a040");
+  ctx.fillStyle = "#fff0d0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`墓地の「${pending.cardName}」`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(255,240,210,0.95)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`金${pending.amount}を支払って手札に加えますか？`, x + 28, y + 64, w - 56);
+  const player = state.players[pending.playerId];
+  const curFunds = player.resources.funds || 0;
+  ctx.fillStyle = "rgba(220,200,160,0.8)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`現在の金: ${curFunds}`, x + 28, y + 96);
+  const isController = canControlChoicePlayer(pending.playerId);
+  if (isController) {
+    const canPay = curFunds >= pending.amount;
+    drawButton(
+      x + 20,
+      y + h - 52,
+      270,
+      38,
+      `金${pending.amount}を支払う`,
+      canPay ? () => resolveDumpWarBondReturn(true) : null,
+      null,
+      canPay ? { accent: "p1" } : { accent: "dim" },
+    );
+    drawButton(x + 310, y + h - 52, 270, 38, "スキップ", () => resolveDumpWarBondReturn(false));
   }
 }
 
@@ -11986,6 +12216,7 @@ function abilityText(card) {
         destroySelf: "自壊",
         searchDeckByType: `デッキから${ability.cardType || "?"}を手札に`,
         revealTopNPick: `デッキ上${ability.amount || 3}枚公開→1枚手札に`,
+        searchDeckPick: "デッキから条件合致カードを1枚手札に",
         payResourceOrCoreDamage: `${RESOURCE_LABELS[ability.resource] || ability.resource}${ability.amount}支払いまたはコア${ability.damage}ダメージ`,
         gainShockOrAlert: "[衝撃]か[警戒]を得る",
         grantKeywordsToEnemyRelativeRow: `敵第${ability.row}行に${(ability.keywords || []).map((k) => `[${KEYWORD_DEFINITIONS[k]?.label || k}]`).join("")}付与`,
@@ -12321,6 +12552,7 @@ const testing = {
   resolveMysticCaptureChoice,
   resolveRevealPick,
   resolveRevealPickSkip,
+  resolveSearchDeckPick,
   resolveChargeAttack,
   selectHandCard: selectHandCardForTest,
   selectStructDeckCard: selectStructDeckCardForTest,
