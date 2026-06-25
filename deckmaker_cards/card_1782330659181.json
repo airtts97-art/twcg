@@ -1,0 +1,47 @@
+{
+  "id": "card_1782330659181",
+  "name": "ÜSPz.76V Aust. A",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["アトラス北東軍", "機械", "車両", "戦車"],
+  "roles": [],
+  "attack": 6,
+  "defense": 20,
+  "description": "[装甲⑧][貫通⑥][衝撃][機動][連撃①][曲射①]\n鉱6を支払う：ATK+④を得る",
+  "flavorText": "軍事費の無駄だと最高司令官に一蹴されたこの超重戦車は、技術将校達による数ヶ月にも及ぶ拷問とも思える“説得”によって製造許可が降りた。",
+  "limit": 4,
+  "tactSubType": null,
+  "costs": {
+    "play": {
+      "mineral": 15,
+      "electric": 0,
+      "fuel": 10,
+      "nature": 0,
+      "magic": 0,
+      "gold": 10,
+      "human": 2
+    },
+    "choiceAct": [],
+    "act": {
+      "human": 0,
+      "gold": 5,
+      "nature": 0,
+      "magic": 0,
+      "fuel": 5,
+      "electric": 0,
+      "mineral": 0
+    },
+    "choice": []
+  },
+  "generates": {
+    "mineral": 0,
+    "electric": 0,
+    "fuel": 0,
+    "gold": 0,
+    "magic": 0,
+    "nature": 0,
+    "human": 0
+  },
+  "imageUrl": "assets/cards/card_1782330659181.jpeg"
+}

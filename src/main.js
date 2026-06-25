@@ -210,6 +210,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782237267608",  // 北東軍第27迫撃砲分隊
   "card_1782308723608",  // 特別計画
   "card_1782361783127",  // GNS Soveregin
+  "card_1782225519182",  // 北東軍最高司令官
+  "card_1782330659181",  // ÜSPz.76V Aust. A
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -600,8 +602,9 @@ const abilityEffects = {
   bigConstructionPlanPlay({ game, playerId, card }) {
     card.activationCount = 0;
     card.rested = false;
+    card.permanentTact = true;
     card.abilities = [
-      { trigger: "onStructurePhase", effect: "bigConstructionPlanActivate" },
+      { trigger: "onStructurePhase", effect: "bigConstructionPlanActivate", isPermanent: true },
       { trigger: "onDestroy", effect: "searchDeckMinCostToHand", minCost: 18 },
     ];
     log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
@@ -796,6 +799,7 @@ const abilityEffects = {
     if (target.indestructibleUntilTurnEnd) return;
     target.currentHp = 0;
     drawCards(game, playerId, ability.amount || 1);
+    cleanupAllDestroyed(null, game);
   },
   controlEnemyUnitToSummonRow({ game, playerId, target }) {
     if (!target || target.owner === playerId) return;
@@ -2905,6 +2909,17 @@ function parseDeckmakerAbilities(card, localType) {
       atkBuff: 0,
       hpBuff: parseDeckmakerKeywordValue(payHpBuffMatch[2]) || 5,
       noRest: true,
+    });
+  }
+
+  const payAtkBuffMatch = text.match(/([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払う[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/);
+  if (payAtkBuffMatch && localType === "unit") {
+    const DESC_RES = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+    abilities.push({
+      trigger: "onActivate",
+      effect: "buffSelfAtk",
+      activationCost: { [DESC_RES[payAtkBuffMatch[1]] || "ore"]: parseDeckmakerKeywordValue(payAtkBuffMatch[2]) || 1 },
+      amount: parseDeckmakerKeywordValue(payAtkBuffMatch[3]) || 1,
     });
   }
 
@@ -5231,6 +5246,19 @@ function refreshContinuousEffects(game = state) {
         applyConditionalBuff(unit, "108thBattalionBuff", adjacentPureHumans >= 2, { atk: 2, hp: 0 });
       }
     }
+    const commander = unitsOwnedBy(pid, game).find((unit) => unit.id === "card_1782225519182");
+    if (commander) {
+      const hqCore =
+        game.players[pid]?.core?.id === "card_1782520000000"
+        || game.players[pid]?.core?.name === "北東軍総司令部";
+      applyConditionalBuff(commander, "northeastCommanderHqCore", hqCore, { atk: 5, hp: 0 });
+      const hasAtlasUnit = unitsOwnedBy(pid, game).some((unit) =>
+        (unit.tags || []).includes("アトラス北東軍")
+      );
+      for (const unit of unitsOwnedBy(pid, game)) {
+        applyConditionalBuff(unit, "northeastCommanderFieldAura", hasAtlasUnit, { atk: 3, hp: 0 });
+      }
+    }
   }
 }
 
@@ -5442,7 +5470,10 @@ function processEffectQueue(game) {
         return;
       }
       const result = effect({ game, playerId: item.playerId, card: item.card, ability: item.ability, source: item.source, target: item.target || null });
-      if (result === "pending") return;
+      if (result === "pending") {
+        cleanupAllDestroyed(null, game);
+        return;
+      }
       completeAbilitySource(game, item);
     }
     if (!game.pendingChoice && !game.pendingTarget) {
@@ -6385,11 +6416,13 @@ function completeAbilitySource(game, item) {
     c === item.card || (item.card?.instanceId != null && c.instanceId === item.card.instanceId));
   if (index >= 0) {
     const card = player.tactZone[index];
-    // 永続tactカード（description に「永続」や「５回目」など複数回の能力がある場合）は削除しない
-    const isPermanent = (card.description || "").includes("回目") ||
-                        (card.description || "").includes("永続") ||
-                        (card.description || "").includes("まで") ||
-                        (card.abilities || []).some(a => a.isPermanent);
+    // 永続tactカード（text/description に「永続」や「５回目」など複数回の能力がある場合）は削除しない
+    const descText = card.description || card.text || "";
+    const isPermanent = card.permanentTact ||
+                        descText.includes("回目") ||
+                        descText.includes("永続") ||
+                        descText.includes("まで") ||
+                        (card.abilities || []).some((a) => a.isPermanent);
     if (!isPermanent) {
       const [removed] = player.tactZone.splice(index, 1);
       player.dump.push(removed);
@@ -7377,11 +7410,19 @@ function capUnitDamage(target, amount) {
 
 function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
   if (!target || rawAmount <= 0) return { damage: 0, pending: false };
+  const attacker = source?.source;
+  if (
+    target.id === "card_1782225519182"
+    && attacker
+    && (attacker.tags || []).includes("アトラス北東軍")
+  ) {
+    return { damage: 0, pending: false };
+  }
   const damage = capUnitDamage(target, rawAmount);
-  target.currentHp -= damage;
+  target.currentHp = (target.currentHp ?? target.maxHp ?? target.hp ?? 0) - damage;
   const triggerResult = triggerAbilities(game, target.owner, target, "onDamageReceived", { ...source, damage });
   const pending = triggerResult === "pending" || !!game.pendingChoice || !!game.pendingTarget;
-  if (options.cleanup && !pending) cleanupAllDestroyed(options.killer ?? null);
+  cleanupAllDestroyed(options.killer ?? source?.source ?? null, game);
   return { damage, pending };
 }
 
@@ -7441,6 +7482,14 @@ function resumePendingAfterChoice() {
   resumePendingAttackContinuation();
 }
 
+function shouldDeferUnitDestruction(game, unit) {
+  const pending = game.pendingChoice;
+  if (!pending || !unit) return false;
+  if (pending.type === "payForBuff" && pending.unitRow === unit.row && pending.unitCol === unit.col) return true;
+  if (pending.type === "revealPick" && pending.queueItem?.card?.instanceId === unit.instanceId) return true;
+  return false;
+}
+
 function cleanupAllDestroyed(killer = null, game) {
   const g = game ?? state;
   // 1. HP <= 0 のユニットをすべて集める
@@ -7448,7 +7497,7 @@ function cleanupAllDestroyed(killer = null, game) {
   for (let row = 0; row < ROWS; row += 1) {
     for (let col = 0; col < COLS; col += 1) {
       const unit = g.board[row][col];
-      if (unit?.currentHp <= 0 && !unit.destroyed) {
+      if (unit?.currentHp <= 0 && !unit.destroyed && !shouldDeferUnitDestruction(g, unit)) {
         unitsToDestroy.push(unit);
       }
     }
@@ -7547,7 +7596,10 @@ function cleanupDestroyed(unit, killer = null) {
 
 function finalizePendingDestruction(unit, killer = null, game) {
   const g = game ?? state;
-  if (!unit || !unit.destroyed) return;
+  if (!unit || !unit.destroyed || unit._finalizing) return;
+  unit._finalizing = true;
+  const { row, col } = unit;
+  g.board[row][col] = null;
   triggerAbilities(g, unit.owner, unit, "onDestroy");
   triggerAbilities(g, unit.owner, g.players[unit.owner].core, "onFriendlyUnitDestroyed", { target: unit });
   for (let r = 0; r < g.board.length; r += 1) {
@@ -7558,7 +7610,6 @@ function finalizePendingDestruction(unit, killer = null, game) {
       }
     }
   }
-  g.board[unit.row][unit.col] = null;
   // [降臨] returnToHandOnDestroy: owner gets card back to hand instead of dump
   const returnEffect = (g.globalEffects || []).find(
     (e) => e.type === "returnToHandOnDestroy" && e.playerId === unit.owner
@@ -7571,7 +7622,7 @@ function finalizePendingDestruction(unit, killer = null, game) {
     notifyDumpChanged(g, unit.owner);
     log(g, `「${unit.name}」が破壊された`);
   }
-  if (g.selected?.row === unit.row && g.selected?.col === unit.col) g.selected = null;
+  if (g.selected?.row === row && g.selected?.col === col) g.selected = null;
   // notify structs always; notify only the killing unit (or all units if no specific killer)
   const enemyId = opponentOf(unit.owner);
   for (const struct of g.players[enemyId].structs) {
@@ -7586,8 +7637,8 @@ function finalizePendingDestruction(unit, killer = null, game) {
   }
   const blast = keywordValue(unit, "selfDestruct");
   if (blast) {
-    for (const [row, col] of adjacentCells(unit.row, unit.col)) {
-      const adjacent = g.board[row]?.[col];
+    for (const [adjRow, adjCol] of adjacentCells(row, col)) {
+      const adjacent = g.board[adjRow]?.[adjCol];
       if (adjacent) dealDamageToUnit(g, adjacent, blast, { source: unit }, { cleanup: false });
     }
     cleanupAllDestroyed(null, g);
