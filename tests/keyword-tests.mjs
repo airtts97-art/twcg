@@ -97,6 +97,13 @@ const results = await page.evaluate(() => {
   out.push(snapshot("arc_and_cleave"));
 
   reset();
+  api.testing.placeUnit("mageBattery", "p1", 2, 1, { rested: false });
+  const coreHpBefore = api.state.players.p2.core.hp;
+  api.testing.selectUnit(2, 1);
+  api.testing.attack({ kind: "core", playerId: "p2" });
+  out.push({ ...snapshot("arc_reaches_core"), coreHpBefore, coreHpAfter: api.state.players.p2.core.hp });
+
+  reset();
   api.testing.placeUnit("militia", "p1", 2, 1, { rested: false });
   api.testing.placeUnit("bombDrone", "p2", 1, 1, { rested: true });
   api.testing.placeUnit("militia", "p2", 1, 0, { rested: true });
@@ -114,6 +121,11 @@ const results = await page.evaluate(() => {
   api.testing.selectUnit(2, 1);
   api.testing.attack({ kind: "unit", row: 1, col: 2 });
   out.push(snapshot("self_destruct_blocked_by_effect_protect"));
+
+  reset();
+  api.testing.addHandCard("p1", "lightInfantry");
+  const blockedOpponentSummon = api.testing.summonFromHand(0, 0, 3);
+  out.push({ ...snapshot("cannot_summon_opponent_summon_row"), blockedOpponentSummon, handCount: api.state.players.p1.hand.length });
 
   reset();
   api.testing.addHandCard("p1", "raidBike");
@@ -689,6 +701,12 @@ assert(byName.guard_protects_adjacent_unit.board[2][1].rested === false, "guarde
 assert(byName.arc_and_cleave.board[1][1] === null, "arc attacker should destroy distant target");
 assert(byName.arc_and_cleave.board[1][0].hp === 3, "cleave should damage left adjacent enemy");
 assert(byName.arc_and_cleave.board[1][2].hp === 3, "cleave should damage right adjacent enemy");
+
+assert(byResult.arc_reaches_core.coreHpAfter === byResult.arc_reaches_core.coreHpBefore - 5, "arc extended range should allow core attack from row 2");
+
+assert(byResult.cannot_summon_opponent_summon_row.blockedOpponentSummon === false, "summon to opponent summon row should fail");
+assert(byResult.cannot_summon_opponent_summon_row.handCount === 1, "card should remain in hand when opponent summon row is blocked");
+assert(byName.cannot_summon_opponent_summon_row.board[0][3] == null, "opponent summon row should stay empty");
 
 assert(byName.self_destruct_splash.board[1][1] === null, "destroyed bomb drone should leave board");
 assert(byName.self_destruct_splash.board[1][0].hp === 2, "self-destruct should damage left adjacent unit");

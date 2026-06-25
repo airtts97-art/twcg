@@ -93,7 +93,7 @@ const KEYWORD_DEFINITIONS = {
   multiStrike: { label: "連撃", description: "Can attack this many times before resting." },
   flying: { label: "航空", description: "Cannot be attacked or countered by non-flying units with ATK at or below the value." },
   antiAir: { label: "対空", description: "Can attack flying units regardless of their flying value." },
-  arc: { label: "曲射", description: "Can attack up to this many rows ahead without counterattack." },
+  arc: { label: "曲射", description: "前方へこの値まで攻撃でき、反撃を受けない。延長射程は相手コアにも届く（コアは最前線の1行奥）。" },
   legendary: { label: "伝説", description: "Only one copy should be put in a deck." },
   alert: { label: "警戒", description: "Unrests at the end of its controller's turn." },
   guard: { label: "守護", description: "Protects adjacent allied units from ordinary attacks." },
@@ -502,7 +502,7 @@ const abilityEffects = {
     for (let col = 0; col < COLS; col++) {
       if (!game.board[summonRow][col]) {
         const unit = makeUnit(card.id, playerId, summonRow, col, { fromDump: true });
-        game.board[summonRow][col] = unit;
+        commitUnitToBoard(game, unit, summonRow, col);
         log(game, `${player.name}: 「${card.name}」が墓地から出た`);
         triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
         return;
@@ -858,7 +858,7 @@ const abilityEffects = {
     player.hand.splice(idx, 1);
     const unit = makeUnit(targetCard.id, playerId, player.summonRow, col, { rested: false });
     unit.counters = ability.counters || 0;
-    game.board[player.summonRow][col] = unit;
+    commitUnitToBoard(game, unit, player.summonRow, col);
     triggerAbilities(game, playerId, unit, "onSummon");
     log(game, `${player.name}: 「${card.name}」で「${targetCard.name}」を出撃`);
   },
@@ -888,7 +888,7 @@ const abilityEffects = {
       i--;
       remaining -= cost;
       const unit = makeUnit(c.id, playerId, player.summonRow, col, { rested: false, fromDump: true });
-      game.board[player.summonRow][col] = unit;
+      commitUnitToBoard(game, unit, player.summonRow, col);
       triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
       count++;
     }
@@ -981,12 +981,10 @@ const abilityEffects = {
   descentEffect({ game, playerId }) {
     if (!game.globalEffects) game.globalEffects = [];
     game.globalEffects = game.globalEffects.filter(
-      (e) => !(e.type === "returnToHandOnDestroy" && e.playerId === playerId) &&
-             !(e.type === "healingHealOnTurnEnd" && e.playerId === playerId)
+      (e) => !(e.type === "healingHealOnTurnEnd" && e.playerId === playerId)
     );
-    game.globalEffects.push({ type: "returnToHandOnDestroy", playerId });
     game.globalEffects.push({ type: "healingHealOnTurnEnd", playerId });
-    log(game, `${game.players[playerId].name}: [降臨] 自分の全カードに「破壊時：手札に戻す」、全ユニットに「ターン終了時：治療数×2回復」を付与`);
+    log(game, `${game.players[playerId].name}: [降臨] 場にいる間に現れたユニットは破壊時に手札へ戻る、全ユニットにターン終了時：治療数×2回復`);
   },
   searchUnitToCostHand({ game, playerId, ability }) {
     const player = game.players[playerId];
@@ -1079,7 +1077,7 @@ const abilityEffects = {
         const unit = makeUnit(card.id, playerId, summonRow, col, { fromDump: true });
         if (!unit.keywords) unit.keywords = [];
         if (!unit.keywords.some((k) => k.id === "mobile")) unit.keywords.push({ id: "mobile" });
-        game.board[summonRow][col] = unit;
+        commitUnitToBoard(game, unit, summonRow, col);
         log(game, `${player.name}: 「${card.name}」が墓地から[機動]付きで出た`);
         triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
         return;
@@ -1322,6 +1320,7 @@ const abilityEffects = {
     const hasRaid = (def.keywords || []).some((k) => k.id === "raid");
     const validRows = [];
     for (let row = 0; row < ROWS; row++) {
+      if (isOpponentSummonRow(playerId, row)) continue;
       if (hasRaid && row === player.summonRow + player.forward && !enemyInRow(playerId, row)) {
         validRows.push(row);
       } else if (row === player.summonRow) {
@@ -1415,7 +1414,7 @@ const abilityEffects = {
       if (emptyCol < 0) break;
       const unitCard = player.mainDeck.splice(i, 1)[0];
       const unit = makeUnit(unitCard.id, playerId, player.summonRow, emptyCol, { rested: false });
-      game.board[player.summonRow][emptyCol] = unit;
+      commitUnitToBoard(game, unit, player.summonRow, emptyCol);
       log(game, `${player.name}: 「${card.name}」効果 — 「${unitCard.name}」出撃`);
       placed++;
       i--;
@@ -1515,7 +1514,7 @@ const abilityEffects = {
     const [unitCard] = player.dump.splice(idx, 1);
     notifyDumpChanged(game, playerId);
     const unit = makeUnit(unitCard.id, playerId, player.summonRow, col, { rested: false, fromDump: true });
-    game.board[player.summonRow][col] = unit;
+    commitUnitToBoard(game, unit, player.summonRow, col);
     card.rested = true;
     triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
     log(game, `${player.name}: ${card.name} summons ${unit.name} from dump`);
@@ -1530,7 +1529,7 @@ const abilityEffects = {
     if (col < 0) return;
     const [unitCard] = player.hand.splice(idx, 1);
     const unit = makeUnit(unitCard.id, opponentId, opponent.summonRow, col, { rested: false });
-    game.board[opponent.summonRow][col] = unit;
+    commitUnitToBoard(game, unit, opponent.summonRow, col);
     triggerAbilities(game, opponentId, unit, "onSummon");
     log(game, `${game.players[playerId].name}: ${card.name} gives ${unit.name} to opponent`);
   },
@@ -1684,7 +1683,7 @@ function summonGolemFromZones(game, playerId, { maxCost = 3, row = null, sourceC
 
   const [card] = player[zone].splice(index, 1);
   const unit = makeUnit(card.id, playerId, targetRow, col, { rested: false });
-  game.board[targetRow][col] = unit;
+  commitUnitToBoard(game, unit, targetRow, col);
   log(game, `${sourceCardName}: ${card.name} を場に出しました`);
   triggerAbilities(game, playerId, unit, "onSummon", { from: zone });
   return true;
@@ -5826,7 +5825,9 @@ function resolveDeployHeroCell(row, col) {
   const isEligible = (pending.adjCells || []).some((c) => c.row === row && c.col === col);
   if (!isEligible) { state.message = "そのマスには出撃できません。"; render(); return false; }
   if (!canSummonUnitTo(pending.playerId, row)) {
-    state.message = "敵ユニットが存在する横列には配置できません。";
+    state.message = isOpponentSummonRow(pending.playerId, row)
+      ? "相手のサモンフィールドには配置できません。"
+      : "敵ユニットが存在する横列には配置できません。";
     render();
     return false;
   }
@@ -5843,7 +5844,7 @@ function resolveDeployHeroCell(row, col) {
     row, col, maxHp: heroCard.hp, currentHp: heroCard.hp, rested: false,
     attacksThisTurn: 0, mobileMoveUsed: false, counters: 0,
     handOwnerId: pending.playerId, returnAtPlayer: pending.playerId, returnAtTurn: state.turn + 1 };
-  state.board[row][col] = unit;
+  commitUnitToBoard(state, unit, row, col);
   triggerAbilities(state, pending.playerId, unit, "onSummon");
   log(state, `${player.name}: 「${unit.name}」を金${goldNeeded}で出撃（次の${player.name}のフェーズ終わりに手札へ戻る）`);
   state.pendingChoice = null;
@@ -5907,7 +5908,9 @@ function resolveSummonToken(row, col) {
     return false;
   }
   if (!canSummonUnitTo(pending.playerId, row)) {
-    state.message = "敵ユニットが存在する横列には配置できません。";
+    state.message = isOpponentSummonRow(pending.playerId, row)
+      ? "相手のサモンフィールドには配置できません。"
+      : "敵ユニットが存在する横列には配置できません。";
     return false;
   }
   const player = state.players[pending.playerId];
@@ -5999,7 +6002,7 @@ function resolveReviveFromDump(index) {
       if (pending.grantTag && !(unit.tags || []).includes(pending.grantTag)) {
         unit.tags = [...(unit.tags || []), pending.grantTag];
       }
-      state.board[playerInfo.summonRow][col] = unit;
+      commitUnitToBoard(state, unit, playerInfo.summonRow, col);
       placed = true;
       log(state, `${player.name}: 「${card.name}」を墓地から蘇生${pending.grantTag ? `（[${pending.grantTag}]付与）` : ""}`);
       break;
@@ -6059,7 +6062,7 @@ function resolveReviveFromExile(index) {
         counters: 0,
       };
       delete unit._exileOwner;
-      state.board[playerInfo.summonRow][col] = unit;
+      commitUnitToBoard(state, unit, playerInfo.summonRow, col);
       placed = true;
       log(state, `${player.name}: 「${card.name}」を除外ゾーンから場に出す`);
       triggerAbilities(state, pending.playerId, unit, "onSummon", { zone: "exile" });
@@ -6175,7 +6178,7 @@ function resolveLifeCounterPayment(amount) {
   unit.counters = payAmount;
   unit.lifeCounterUnit = true;
   unit.abilities = [...(unit.abilities || []), { trigger: "onTurnStart", effect: "removeLifeCounterOrBottomDeck" }];
-  state.board[player.summonRow][col] = unit;
+  commitUnitToBoard(state, unit, player.summonRow, col);
   triggerAbilities(state, pending.playerId, unit, "onSummon");
   log(state, `${player.name}: 「${pending.cardName}」で「${targetCard.name}」を出撃（生命カウンター${payAmount}）`);
   const qi = pending.queueItem;
@@ -6838,6 +6841,28 @@ function unitsOwnedBy(playerId, game) {
   return units;
 }
 
+const DESCENT_GOD_CARD_ID = "card_1753662603276";
+
+function hasDescentGodOnField(game, playerId) {
+  return unitsOwnedBy(playerId, game).some((unit) =>
+    unit.id === DESCENT_GOD_CARD_ID ||
+    (unit.abilities || []).some((a) => a.effect === "descentEffect"),
+  );
+}
+
+function applyDescentReturnBlessing(game, unit) {
+  if (!unit?.owner) return;
+  if (hasDescentGodOnField(game, unit.owner)) unit.descentReturnToHand = true;
+}
+
+function commitUnitToBoard(game, unit, row, col) {
+  const g = game ?? state;
+  unit.row = row;
+  unit.col = col;
+  g.board[row][col] = unit;
+  applyDescentReturnBlessing(g, unit);
+}
+
 function enemyInRow(playerId, row) {
   return rowHasEnemyUnit(playerId, row);
 }
@@ -6854,7 +6879,12 @@ function canMoveUnitTo(unit, toRow) {
 }
 
 function canSummonUnitTo(playerId, row) {
+  if (isOpponentSummonRow(playerId, row)) return false;
   return !rowHasEnemyUnit(playerId, row);
+}
+
+function isOpponentSummonRow(playerId, row) {
+  return row === PLAYERS[opponentOf(playerId)].summonRow;
 }
 
 function canMeetUnitStructRequirement(player, card) {
@@ -6897,17 +6927,23 @@ function placeUnitFromHand(handIndex, row, col) {
   if (isPlayBlockedBySadGirl(state.activePlayer, card)) return fail("This card is blocked by Unknown Sad Girl.");
   if (!canMeetUnitStructRequirement(player, card)) return fail(`${card.requiredStructName || "\u5fc5\u8981\u30b9\u30c8\u30e9\u30af\u30c8"} \u304c\u306a\u3044\u305f\u3081\u51fa\u6483\u3067\u304d\u307e\u305b\u3093\u3002`);
   if (card.requiredSacrificeName && !findRequiredSacrificeUnit(state.activePlayer, card)) return fail(`${card.requiredSacrificeName} がないため出撃できません。`);
-  if (!canSummonToRow(card, player, row)) return fail("この行には配置できません。");
+  if (!canSummonToRow(card, player, row)) {
+    return fail(isOpponentSummonRow(state.activePlayer, row)
+      ? "相手のサモンフィールドには配置できません。"
+      : "この行には配置できません。");
+  }
   if (state.board[row][col]) return fail("このマスには既にユニットがあります。");
   if (!canSummonUnitTo(state.activePlayer, row)) {
-    return fail("敵ユニットが存在する横列には配置できません。");
+    return fail(isOpponentSummonRow(state.activePlayer, row)
+      ? "相手のサモンフィールドには配置できません。"
+      : "敵ユニットが存在する横列には配置できません。");
   }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
 
   applyUnitSacrificeRequirement(state.activePlayer, card);
   revealCardUse(state.activePlayer, card, "summon");
   const unit = makeUnit(card.id, state.activePlayer, row, col, { rested: false });
-  state.board[row][col] = unit;
+  commitUnitToBoard(state, unit, row, col);
   player.hand.splice(handIndex, 1);
   state.selected = { kind: "unit", row, col };
   state.message = `${card.name} をサモンしました。`;
@@ -6919,6 +6955,7 @@ function placeUnitFromHand(handIndex, row, col) {
 }
 
 function canSummonToRow(card, player, row) {
+  if (isOpponentSummonRow(player.id, row)) return false;
   if (row === player.summonRow) return true;
   const raidRow = player.summonRow + player.forward;
   return hasKeyword(card, "raid") && row === raidRow && !enemyInRow(player.id, raidRow);
@@ -7580,13 +7617,14 @@ function isCoreGuardedFrom(attacker, defenderPlayerId) {
 function canAttackCore(unit, corePlayerId) {
   const owner = state.players[unit.owner];
   const defenderId = corePlayerId || opponentOf(unit.owner);
-  const defender = state.players[defenderId];
+  const defenderInfo = PLAYERS[defenderId];
   const inDirectRow = owner.forward < 0 ? unit.row <= owner.directRow : unit.row >= owner.directRow;
   if (inDirectRow) return true;
   const arcRange = keywordValue(unit, "arc", 0);
   if (arcRange < 1) return false;
-  const forwardDistance = (defender.coreRow - unit.row) * owner.forward;
-  return forwardDistance >= 1 && forwardDistance <= arcRange;
+  const forwardDistance = (state.players[defenderId].coreRow - unit.row) * owner.forward;
+  const coreDepthBeyondFront = (defenderInfo.summonRow - defenderInfo.coreRow) * defenderInfo.forward;
+  return forwardDistance >= 1 && forwardDistance <= arcRange + coreDepthBeyondFront;
 }
 
 function canTargetCore(attacker, corePlayerId) {
@@ -7634,11 +7672,8 @@ function finalizePendingDestruction(unit, killer = null, game) {
       }
     }
   }
-  // [降臨] returnToHandOnDestroy: owner gets card back to hand instead of dump
-  const returnEffect = (g.globalEffects || []).find(
-    (e) => e.type === "returnToHandOnDestroy" && e.playerId === unit.owner
-  );
-  if (returnEffect) {
+  // [降臨] descentReturnToHand: blessed units return to hand instead of dump
+  if (unit.descentReturnToHand) {
     g.players[unit.owner].hand.push(stripRuntime(unit));
     log(g, `${unit.name} → 手札に戻る（降臨効果）`);
   } else {
@@ -7687,6 +7722,7 @@ function stripRuntime(unit) {
   delete copy.instanceId;
   delete copy.currentHp;
   delete copy.maxHp;
+  delete copy.descentReturnToHand;
   return copy;
 }
 
@@ -11791,7 +11827,7 @@ function resetForTest(options = {}) {
 
 function placeUnitForTest(cardId, owner, row, col, options = {}) {
   const unit = makeUnit(cardId, owner, row, col, options);
-  state.board[row][col] = unit;
+  commitUnitToBoard(state, unit, row, col);
   render();
   return unit;
 }
