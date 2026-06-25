@@ -204,6 +204,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782303856785",  // 第8装甲騎兵大隊
   "card_1782287759412",  // DTO前線指揮所
   "card_1782311181226",  // 壊滅怪異
+  "card_1782237267608",  // 北東軍第27迫撃砲分隊
+  "card_1782308723608",  // 特別計画
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -1151,12 +1153,19 @@ const abilityEffects = {
   searchDeckMinCostToHand({ game, playerId, ability }) {
     const player = game.players[playerId];
     const minCost = ability.minCost || 18;
-    const highCostIdx = player.mainDeck.findIndex((c) => totalCostAmount(c.cost || {}) >= minCost);
-    if (highCostIdx >= 0) {
-      const found = player.mainDeck.splice(highCostIdx, 1)[0];
-      player.hand.push(found);
-      log(game, `${player.name}: デッキからコスト総量${minCost}以上「${found.name}」を手札に`);
-    } else {
+    const amount = ability.amount || 1;
+    let found = 0;
+    for (let i = 0; i < player.mainDeck.length && found < amount; ) {
+      if (totalCostAmount(player.mainDeck[i].cost || {}) >= minCost) {
+        const card = player.mainDeck.splice(i, 1)[0];
+        player.hand.push(card);
+        log(game, `${player.name}: デッキからコスト総量${minCost}以上「${card.name}」を手札に`);
+        found += 1;
+      } else {
+        i += 1;
+      }
+    }
+    if (!found) {
       log(game, `${player.name}: コスト総量${minCost}以上のカードがデッキにありません`);
     }
   },
@@ -2017,8 +2026,12 @@ const cardCatalog = {
       id: "fieldOrder",
       type: "tact",
       name: "野戦命令",
+      faction: "ニュートラル",
+      tags: ["補給", "命令"],
       cost: { funds: 1 },
-      text: "カードを1枚引く。使用後墓地へ。",
+      text: "デッキからカードを1枚引く。",
+      flavor: "「前線からの通信です。カード1枚なんかよりも燃を寄越せと…」\n「通信兵の頭がおかしくなった様だな。衛生兵を送れ。」",
+      imageUrl: "assets/cards/fieldOrder.jpeg",
       abilities: [{ trigger: "onPlay", effect: "drawCards", amount: 1 }],
     },
     precisionStrike: {
@@ -2709,6 +2722,27 @@ function parseDeckmakerAbilities(card, localType) {
     const maxCost = parseDeckmakerKeywordValue(searchCostMatch[1]) || 1;
     const tag = searchCostMatch[2] || null;
     abilities.push({ trigger: baseTrigger, effect: "searchUnitToCostHand", maxCost, tag, amount: 1 });
+  }
+
+  // Search min total cost to hand: "コスト18以上のカードを2枚、手札に加える"
+  const searchMinCostMatch = text.match(/コスト([0-9０-９①②③④⑤⑥⑦⑧⑨]+)以上のカードを([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚[、,]?手札に加える/);
+  if (searchMinCostMatch) {
+    abilities.push({
+      trigger: baseTrigger,
+      effect: "searchDeckMinCostToHand",
+      minCost: parseDeckmakerKeywordValue(searchMinCostMatch[1]) || 18,
+      amount: parseDeckmakerKeywordValue(searchMinCostMatch[2]) || 1,
+    });
+  }
+
+  // vs-tag attack bonus: "「歩兵」タグを持っているユニットに対し与攻撃時：ATK+①"
+  const vsTagAtkMatch = text.match(/「([^」]+)」タグを持っているユニットに対し与攻撃時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
+  if (vsTagAtkMatch && localType === "unit") {
+    abilities.push({
+      effect: "vsTagAtkBonus",
+      vsTag: vsTagAtkMatch[1],
+      atkBonus: parseDeckmakerKeywordValue(vsTagAtkMatch[2]) || 1,
+    });
   }
 
   // onMill summonSelfFromDumpMobile: "デッキから墓地へ送られた時：…[機動]を得る"
@@ -7186,10 +7220,16 @@ function defenderArmorValue(defender, attacker) {
 }
 
 function calculateAttackDamage(attacker, defender) {
+  let atk = attacker.atk || 0;
+  for (const ability of attacker.abilities || []) {
+    if (ability.effect === "vsTagAtkBonus" && ability.vsTag && (defender?.tags || []).includes(ability.vsTag)) {
+      atk += ability.atkBonus || 1;
+    }
+  }
   const ignoresArmor = hasKeyword(attacker, "charge");
   const armorVal = defenderArmorValue(defender, attacker);
   const armor = ignoresArmor ? 0 : Math.max(0, armorVal - keywordValue(attacker, "pierce"));
-  return Math.max(0, attacker.atk - armor);
+  return Math.max(0, atk - armor);
 }
 
 function canCounterAttack(defender, attacker) {
