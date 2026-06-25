@@ -5096,7 +5096,7 @@ function refreshContinuousEffects(game = state) {
     const coreBuffTags = core?.passiveBuffTags;
     const coreBuffAtk = core?.passiveBuffAtk || 0;
     const coreTagSet = coreBuffTags?.length ? new Set(coreBuffTags) : null;
-    for (const unit of unitsOwnedBy(pid)) {
+    for (const unit of unitsOwnedBy(pid, game)) {
       if (coreTagSet && coreBuffAtk) {
         const hasTag = (unit.tags || []).some((t) => coreTagSet.has(t));
         applyConditionalBuff(unit, `corePassive_${core.id}`, hasTag, { atk: coreBuffAtk, hp: 0 });
@@ -6287,7 +6287,7 @@ function startTurn(game, playerId, options = {}) {
   for (const struct of (player.structs || [])) {
     struct.hpActivatedThisTurn = false;
   }
-  for (const unit of unitsOwnedBy(playerId)) {
+  for (const unit of unitsOwnedBy(playerId, game)) {
     if ((unit.lockedRestTurns || 0) > 0) {
       unit.lockedRestTurns--;
     } else {
@@ -6300,7 +6300,7 @@ function startTurn(game, playerId, options = {}) {
   refreshContinuousEffects(game);
   if (!options.skipDraw) drawCards(game, playerId, player.core.draw);
   // onTurnStart: trigger for all owned units (destroySelf, payOrDamage, gainShockOrAlert, etc.)
-  const turnStartUnits = unitsOwnedBy(playerId);
+  const turnStartUnits = unitsOwnedBy(playerId, game);
   for (const unit of turnStartUnits) {
     if ((unit.abilities || []).some((a) => a.trigger === "onTurnStart")) {
       triggerAbilities(game, playerId, unit, "onTurnStart");
@@ -6625,11 +6625,12 @@ function endTurn() {
   return true;
 }
 
-function unitsOwnedBy(playerId) {
+function unitsOwnedBy(playerId, game) {
+  const board = (game ?? state).board;
   const units = [];
   for (let row = 0; row < ROWS; row += 1) {
     for (let col = 0; col < COLS; col += 1) {
-      const unit = state.board[row][col];
+      const unit = board[row][col];
       if (unit?.owner === playerId) units.push(unit);
     }
   }
