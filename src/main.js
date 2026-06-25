@@ -437,7 +437,7 @@ const abilityEffects = {
         }
       }
     }
-    cleanupAllDestroyed(card);
+    cleanupAllDestroyed(card, game);
     if (count > 0) {
       log(game, `${game.players[playerId].name}: 「${card.name}」で相手ユニット${count}体を破壊`);
     } else {
@@ -1568,7 +1568,7 @@ const abilityEffects = {
       log(game, `${card.name}: redirects ${lost} damage to ${other.name}`);
       card.redirectingDamage = false;
       if (result.pending) return "pending";
-      cleanupAllDestroyed(card);
+      cleanupAllDestroyed(card, game);
       return;
     }
     card.redirectingDamage = false;
@@ -5447,7 +5447,7 @@ function processEffectQueue(game) {
     }
     if (!game.pendingChoice && !game.pendingTarget) {
       resumePendingDamageBatch(game);
-      cleanupAllDestroyed();
+      cleanupAllDestroyed(null, game);
     }
   } finally {
     game._effectQueueDepth -= 1;
@@ -7441,12 +7441,13 @@ function resumePendingAfterChoice() {
   resumePendingAttackContinuation();
 }
 
-function cleanupAllDestroyed(killer = null) {
+function cleanupAllDestroyed(killer = null, game) {
+  const g = game ?? state;
   // 1. HP <= 0 のユニットをすべて集める
   const unitsToDestroy = [];
   for (let row = 0; row < ROWS; row += 1) {
     for (let col = 0; col < COLS; col += 1) {
-      const unit = state.board[row][col];
+      const unit = g.board[row][col];
       if (unit?.currentHp <= 0 && !unit.destroyed) {
         unitsToDestroy.push(unit);
       }
@@ -7473,21 +7474,21 @@ function cleanupAllDestroyed(killer = null) {
   // 3. 破壊が確定したユニットの onDestroy トリガーを実行
   for (const unit of unitsToDestroy) {
     if (unit.destroyed) {
-      finalizePendingDestruction(unit, killer);
+      finalizePendingDestruction(unit, killer, g);
     }
   }
 
   // 4. destroyed=true のまま場に残ったゾンビを回収（旧 destroyFriendlyUnitDraw 等）
   for (let row = 0; row < ROWS; row += 1) {
     for (let col = 0; col < COLS; col += 1) {
-      const unit = state.board[row][col];
+      const unit = g.board[row][col];
       if (unit?.destroyed && unit.currentHp <= 0) {
-        finalizePendingDestruction(unit, killer);
+        finalizePendingDestruction(unit, killer, g);
       }
     }
   }
 
-  refreshContinuousEffects(state);
+  refreshContinuousEffects(g);
 }
 
 function isCoreGuardedFrom(attacker, defenderPlayerId) {
@@ -7544,51 +7545,52 @@ function cleanupDestroyed(unit, killer = null) {
   finalizePendingDestruction(unit, killer);
 }
 
-function finalizePendingDestruction(unit, killer = null) {
+function finalizePendingDestruction(unit, killer = null, game) {
+  const g = game ?? state;
   if (!unit || !unit.destroyed) return;
-  triggerAbilities(state, unit.owner, unit, "onDestroy");
-  triggerAbilities(state, unit.owner, state.players[unit.owner].core, "onFriendlyUnitDestroyed", { target: unit });
-  for (let r = 0; r < state.board.length; r++) {
-    for (let c = 0; c < (state.board[r] || []).length; c++) {
-      const ally = state.board[r]?.[c];
+  triggerAbilities(g, unit.owner, unit, "onDestroy");
+  triggerAbilities(g, unit.owner, g.players[unit.owner].core, "onFriendlyUnitDestroyed", { target: unit });
+  for (let r = 0; r < g.board.length; r += 1) {
+    for (let c = 0; c < (g.board[r] || []).length; c += 1) {
+      const ally = g.board[r]?.[c];
       if (ally && ally.owner === unit.owner) {
-        triggerAbilities(state, unit.owner, ally, "onFriendlyUnitDestroyed", { target: unit });
+        triggerAbilities(g, unit.owner, ally, "onFriendlyUnitDestroyed", { target: unit });
       }
     }
   }
-  state.board[unit.row][unit.col] = null;
+  g.board[unit.row][unit.col] = null;
   // [降臨] returnToHandOnDestroy: owner gets card back to hand instead of dump
-  const returnEffect = (state.globalEffects || []).find(
+  const returnEffect = (g.globalEffects || []).find(
     (e) => e.type === "returnToHandOnDestroy" && e.playerId === unit.owner
   );
   if (returnEffect) {
-    state.players[unit.owner].hand.push(stripRuntime(unit));
-    log(state, `${unit.name} → 手札に戻る（降臨効果）`);
+    g.players[unit.owner].hand.push(stripRuntime(unit));
+    log(g, `${unit.name} → 手札に戻る（降臨効果）`);
   } else {
-    state.players[unit.owner].dump.push(stripRuntime(unit));
-    notifyDumpChanged(state, unit.owner);
-    log(state, `「${unit.name}」が破壊された`);
+    g.players[unit.owner].dump.push(stripRuntime(unit));
+    notifyDumpChanged(g, unit.owner);
+    log(g, `「${unit.name}」が破壊された`);
   }
-  if (state.selected?.row === unit.row && state.selected?.col === unit.col) state.selected = null;
+  if (g.selected?.row === unit.row && g.selected?.col === unit.col) g.selected = null;
   // notify structs always; notify only the killing unit (or all units if no specific killer)
   const enemyId = opponentOf(unit.owner);
-  for (const struct of state.players[enemyId].structs) {
-    triggerAbilities(state, enemyId, struct, "onDestroyEnemyUnit", { target: unit });
+  for (const struct of g.players[enemyId].structs) {
+    triggerAbilities(g, enemyId, struct, "onDestroyEnemyUnit", { target: unit });
   }
   if (killer && killer.owner === enemyId) {
-    triggerAbilities(state, enemyId, killer, "onDestroyEnemyUnit", { target: unit });
+    triggerAbilities(g, enemyId, killer, "onDestroyEnemyUnit", { target: unit });
   } else if (!killer) {
-    for (const enemyUnit of unitsOwnedBy(enemyId)) {
-      triggerAbilities(state, enemyId, enemyUnit, "onDestroyEnemyUnit", { target: unit });
+    for (const enemyUnit of unitsOwnedBy(enemyId, g)) {
+      triggerAbilities(g, enemyId, enemyUnit, "onDestroyEnemyUnit", { target: unit });
     }
   }
   const blast = keywordValue(unit, "selfDestruct");
   if (blast) {
     for (const [row, col] of adjacentCells(unit.row, unit.col)) {
-      const adjacent = state.board[row]?.[col];
-      if (adjacent) dealDamageToUnit(state, adjacent, blast, { source: unit }, { cleanup: false });
+      const adjacent = g.board[row]?.[col];
+      if (adjacent) dealDamageToUnit(g, adjacent, blast, { source: unit }, { cleanup: false });
     }
-    cleanupAllDestroyed();
+    cleanupAllDestroyed(null, g);
   }
 }
 
