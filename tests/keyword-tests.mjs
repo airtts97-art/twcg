@@ -85,6 +85,14 @@ const results = await page.evaluate(() => {
   out.push(snapshot("mobile_move_does_not_rest_once"));
 
   reset();
+  api.testing.placeUnit("armoredCar", "p1", 3, 0, { rested: false });
+  api.testing.selectUnit(3, 0);
+  api.testing.move();
+  api.testing.selectUnit(2, 0);
+  api.testing.move();
+  out.push(snapshot("mobile_second_move_blocked"));
+
+  reset();
   api.testing.placeUnit("militia", "p1", 2, 1, { rested: false });
   api.testing.placeUnit("guardian", "p2", 1, 0, { rested: true });
   api.testing.placeUnit("militia", "p2", 1, 1, { rested: true });
@@ -743,6 +751,9 @@ assert(byName.flying_blocks_low_ground_attack.board[2][0].rested === false, "fai
 
 assert(byName.mobile_move_does_not_rest_once.board[2][0]?.name === "装甲車", "mobile unit should advance");
 assert(byName.mobile_move_does_not_rest_once.board[2][0].rested === false, "first mobile move should not rest");
+assert(byName.mobile_second_move_blocked.board[2][0]?.name === "装甲車", "mobile unit should stay after blocked second move");
+assert(byName.mobile_second_move_blocked.board[2][0].mobileMoveUsed === true, "mobile unit should be marked moved this turn");
+assert(byName.mobile_second_move_blocked.board[1][0] == null, "mobile unit should not advance twice in one turn");
 
 assert(byName.guard_protects_adjacent_unit.board[1][1].hp === 4, "guard should prevent adjacent unit from being attacked");
 assert(byName.guard_protects_adjacent_unit.board[2][1].rested === false, "guarded failed attack should not rest attacker");

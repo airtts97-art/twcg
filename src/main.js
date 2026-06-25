@@ -91,7 +91,7 @@ const KEYWORD_DEFINITIONS = {
   pierce: { label: "貫通", description: "Ignore armor up to the keyword value." },
   shock: { label: "衝撃", description: "When this unit deals attack damage, rest the damaged target." },
   charge: { label: "帯電", description: "On attack, you may pay electric equal to total act cost to ignore armor." },
-  mobile: { label: "機動", description: "Once each turn, moving does not rest this unit." },
+  mobile: { label: "機動", description: "Once per turn, may move without resting (still only one move per turn)." },
   multiStrike: { label: "連撃", description: "Can attack this many times before resting." },
   flying: { label: "航空", description: "Cannot be attacked or countered by non-flying units with ATK at or below the value." },
   antiAir: { label: "対空", description: "Can attack flying units regardless of their flying value." },
@@ -7551,6 +7551,7 @@ function relocateUnit(unit, toRow, toCol, actionLabel, onlineAction) {
   const player = state.players[unit.owner];
   if (unit.owner !== state.activePlayer) return fail("現在のプレイヤーのユニットではありません。");
   if (unit.rested) return fail("このユニットはレスト状態です。");
+  if (unit.mobileMoveUsed) return fail("このターンはもう移動しました。");
   if (hasKeyword(unit, "immobile")) return fail("このユニットは移動できません。");
   if (state.pendingChoice || state.pendingTarget) return false;
   if (toRow < 0 || toRow >= ROWS || toCol < 0 || toCol >= COLS) return fail("移動先が無効です。");
@@ -7566,9 +7567,8 @@ function relocateUnit(unit, toRow, toCol, actionLabel, onlineAction) {
   unit.row = toRow;
   unit.col = toCol;
   state.board[unit.row][unit.col] = unit;
-  if (hasKeyword(unit, "mobile") && !unit.mobileMoveUsed) {
-    unit.mobileMoveUsed = true;
-  } else {
+  unit.mobileMoveUsed = true;
+  if (!hasKeyword(unit, "mobile")) {
     unit.rested = true;
   }
   state.selected = { kind: "unit", row: unit.row, col: unit.col };
@@ -10298,7 +10298,7 @@ function drawBoardActionButtons() {
   if (panelY + panelH > layout.board.y + layout.board.h) panelY = cellY - panelH - 3;
   if (panelY < layout.board.y) panelY = cellY + cH + 3;
 
-  const canMoveFwd = !unit.rested && !hasKeyword(unit, "immobile");
+  const canMoveFwd = !unit.rested && !unit.mobileMoveUsed && !hasKeyword(unit, "immobile");
   const canMoveBck = canMoveFwd && !unit.noRetreatUntilOpponentTurnEnd;
   const fwdRow = unit.row + player.forward;
   const bkRow = unit.row - player.forward;
