@@ -1,0 +1,45 @@
+{
+  "id": "card_1782361783127",
+  "name": "GNS Soveregin",
+  "type": "タクト",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["グラダナ連邦共和国", "命令"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 8,
+      "human": 8,
+      "nature": 0,
+      "mineral": 8,
+      "fuel": 8,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "description": "すべての相手ユニットを破壊する",
+  "flavorText": "「自由なる海と、自由なる人民に、我らは奉仕する。」",
+  "limit": 4,
+  "tactSubType": "通常",
+  "imageUrl": "assets/cards/card_1782361783127.jpeg"
+}

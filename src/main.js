@@ -139,6 +139,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1753680748888", // 連合王国歩兵
   "card_1753664241159", // 諜報機関
   "card_1753664708023", // ゴールドゴーレム
+  "card_1753626357784", // カッパーゴーレム
   "card_1753664097092", // 改良型マーガト
   "card_1755655012242", // 忌地:山
   "card_1753611174564", // 肉の王城
@@ -208,6 +209,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782311181226",  // 壊滅怪異
   "card_1782237267608",  // 北東軍第27迫撃砲分隊
   "card_1782308723608",  // 特別計画
+  "card_1782361783127",  // GNS Soveregin
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -422,6 +424,25 @@ const abilityEffects = {
       if (dumpChanged) notifyDumpChanged(game, pid);
     }
     log(game, "全ユニット・タクト・ストラクトを破壊");
+  },
+  destroyAllEnemyUnits({ game, playerId, card }) {
+    const opponent = opponentOf(playerId);
+    let count = 0;
+    for (let row = 0; row < ROWS; row += 1) {
+      for (let col = 0; col < COLS; col += 1) {
+        const unit = game.board[row][col];
+        if (unit?.owner === opponent) {
+          unit.currentHp = 0;
+          count += 1;
+        }
+      }
+    }
+    cleanupAllDestroyed(card);
+    if (count > 0) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」で相手ユニット${count}体を破壊`);
+    } else {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 破壊する相手ユニットがいなかった`);
+    }
   },
   searchSelfToHand({ game, playerId, card, ability }) {
     const player = game.players[playerId];
@@ -772,11 +793,8 @@ const abilityEffects = {
   },
   destroyFriendlyUnitDraw({ game, playerId, target, ability }) {
     if (!target || target.owner !== playerId) return;
+    if (target.indestructibleUntilTurnEnd) return;
     target.currentHp = 0;
-    // onDestroy トリガーは処理終了後に一括実行するため、ここでは destroyed フラグのみ立てる
-    if (!target.destroyed && !target.indestructibleUntilTurnEnd) {
-      target.destroyed = true;
-    }
     drawCards(game, playerId, ability.amount || 1);
   },
   controlEnemyUnitToSummonRow({ game, playerId, target }) {
@@ -802,8 +820,18 @@ const abilityEffects = {
   },
   summonNamedFromHand({ game, playerId, card, ability }) {
     const player = game.players[playerId];
-    const idx = player.hand.findIndex((c) => c.name === ability.cardName || c.id === ability.cardId);
-    if (idx < 0) return;
+    const idx = player.hand.findIndex((c) =>
+      (ability.cardName && c.name === ability.cardName) || (ability.cardId && c.id === ability.cardId));
+    const targetLabel = ability.cardName
+      || cardCatalog.main[ability.cardId]?.name
+      || cardCatalog.structs[ability.cardId]?.name
+      || ability.cardId
+      || "指定ユニット";
+    if (idx < 0) {
+      game.message = `手札に「${targetLabel}」がないため効果は発動しませんでした。`;
+      log(game, `${player.name}: 手札に「${targetLabel}」がないため「${card.name}」を発動できません`);
+      return;
+    }
     const targetCard = player.hand[idx];
     if (ability.lifeCounterFromPeople) {
       game.pendingChoice = {
@@ -817,7 +845,7 @@ const abilityEffects = {
         queueItem: { playerId, card, ability, source: { zone: "tact" } },
       };
       game.selected = { kind: "choice", choice: "lifeCounterPayment" };
-      game.message = `${card.name}: 支払う人資源を選んでください。`;
+      game.message = `${card.name}: 生命カウンターを置く人資源を選んでください。`;
       return "pending";
     }
     if (!payForCard(player, targetCard.cost || {}, targetCard)) return;
@@ -2318,10 +2346,16 @@ function loadCustomCardsIntoCatalog() {
 }
 
 function loadBundledDeckData() {
-  const cards = [
+  const rawCards = [
     ...(Array.isArray(deckData?.cards) ? deckData.cards : []),
     ...(Array.isArray(supplementalCards) ? supplementalCards : []),
   ];
+  // deck_data.js may contain duplicate ids; keep the last (newest) export per id.
+  const cardsById = new Map();
+  for (const deckmakerCard of rawCards) {
+    if (deckmakerCard?.id) cardsById.set(deckmakerCard.id, deckmakerCard);
+  }
+  const cards = [...cardsById.values()];
   for (const deckmakerCard of cards) {
     try {
       const card = fromDeckmakerCard(deckmakerCard);
@@ -2601,6 +2635,11 @@ function parseDeckmakerAbilities(card, localType) {
   // On-mill summon self: "デッキから墓地へ送られた時：このカードを場に出す"
   if (/デッキから墓地へ送られた時[：:].*場に出す/.test(text)) {
     abilities.push({ trigger: "onMill", effect: "summonSelfFromDump" });
+  }
+
+  // Destroy all enemy units: "すべての相手ユニットを破壊"
+  if (/すべての相手ユニットを破壊/.test(text)) {
+    abilities.push({ trigger: baseTrigger, effect: "destroyAllEnemyUnits" });
   }
 
   // Destroy all: "場のすべてのユニット・タクト・ストラクトを破壊"
@@ -3119,8 +3158,14 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1753662513755") {
     abilities.length = 0;
-    abilities.push({ trigger: "onPlay", effect: "summonNamedFromHand", cardId: "card_1753662603276", counters: 0, lifeCounterFromPeople: true, maxLifeCounters: 5 });
-    abilities.push({ trigger: "onPlay", effect: "summonNamedFromHand", cardName: "再生の真なる神", counters: 0 });
+    abilities.push({
+      trigger: "onPlay",
+      effect: "summonNamedFromHand",
+      cardId: "card_1753662603276",
+      cardName: "再生の真なる神",
+      lifeCounterFromPeople: true,
+      maxLifeCounters: 5,
+    });
   }
 
   if (card.id === "card_1753662124367") {
@@ -5402,6 +5447,7 @@ function processEffectQueue(game) {
     }
     if (!game.pendingChoice && !game.pendingTarget) {
       resumePendingDamageBatch(game);
+      cleanupAllDestroyed();
     }
   } finally {
     game._effectQueueDepth -= 1;
@@ -6060,6 +6106,12 @@ function resolveChooseGainResource(optionId) {
   return true;
 }
 
+function lifeCounterMaxPay(player, targetCard, maxLifeCounters = 5) {
+  const people = player.resources.people || 0;
+  const costPeople = targetCard?.cost?.people || 0;
+  return Math.max(0, Math.min(maxLifeCounters, people - costPeople));
+}
+
 function resolveLifeCounterPayment(amount) {
   const pending = state.pendingChoice;
   if (pending?.type !== "lifeCounterPayment") return false;
@@ -6069,7 +6121,11 @@ function resolveLifeCounterPayment(amount) {
     state.message = "対象カードが手札にありません。";
     return false;
   }
-  const payAmount = Math.max(0, Math.min(Number(amount) || 0, pending.maxLifeCounters || 0, player.resources.people || 0));
+  const payAmount = Math.max(0, Math.min(
+    Number(amount) || 0,
+    pending.maxLifeCounters || 5,
+    lifeCounterMaxPay(player, targetCard, pending.maxLifeCounters || 5),
+  ));
   const col = findFirstEmptyColInRow(state, player.summonRow);
   if (col < 0) {
     state.message = "サモン行に空きがありません。";
@@ -6087,6 +6143,7 @@ function resolveLifeCounterPayment(amount) {
   unit.abilities = [...(unit.abilities || []), { trigger: "onTurnStart", effect: "removeLifeCounterOrBottomDeck" }];
   state.board[player.summonRow][col] = unit;
   triggerAbilities(state, pending.playerId, unit, "onSummon");
+  log(state, `${player.name}: 「${pending.cardName}」で「${targetCard.name}」を出撃（生命カウンター${payAmount}）`);
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = { kind: "unit", row: player.summonRow, col };
@@ -6324,7 +6381,8 @@ function isValidAbilityTarget(item, target) {
 function completeAbilitySource(game, item) {
   if (item.source?.zone !== "tact") return;
   const player = game.players[item.playerId];
-  const index = player.tactZone.findIndex((c) => c.instanceId === item.card.instanceId);
+  const index = player.tactZone.findIndex((c) =>
+    c === item.card || (item.card?.instanceId != null && c.instanceId === item.card.instanceId));
   if (index >= 0) {
     const card = player.tactZone[index];
     // 永続tactカード（description に「永続」や「５回目」など複数回の能力がある場合）は削除しない
@@ -6824,6 +6882,16 @@ function playTactFromHand(handIndex) {
     return fail("現在、指令カードを使用できません。");
   }
   for (const ability of card.abilities || []) {
+    if (ability.trigger === "onPlay" && ability.effect === "summonNamedFromHand") {
+      const label = ability.cardName
+        || cardCatalog.main[ability.cardId]?.name
+        || cardCatalog.structs[ability.cardId]?.name
+        || "指定ユニット";
+      const hasTarget = player.hand.some((c) => c !== card && (
+        (ability.cardId && c.id === ability.cardId) || (ability.cardName && c.name === ability.cardName)
+      ));
+      if (!hasTarget) return fail(`${card.name}: 手札に「${label}」が必要です。`);
+    }
     if (ability.trigger === "onPlay" && ability.target) {
       const fakeItem = { ability, playerId: state.activePlayer, card };
       if (!hasValidAbilityTarget(state, fakeItem)) {
@@ -6840,6 +6908,7 @@ function playTactFromHand(handIndex) {
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
   revealCardUse(state.activePlayer, card, "play");
   player.hand.splice(handIndex, 1);
+  if (!card.instanceId) card.instanceId = nextInstanceId++;
   player.tactZone.push(card);
   if (offerIntelAgencyCancel(state.activePlayer, card)) {
     syncOnlineAction("playTact", state.activePlayer);
@@ -7405,6 +7474,16 @@ function cleanupAllDestroyed(killer = null) {
   for (const unit of unitsToDestroy) {
     if (unit.destroyed) {
       finalizePendingDestruction(unit, killer);
+    }
+  }
+
+  // 4. destroyed=true のまま場に残ったゾンビを回収（旧 destroyFriendlyUnitDraw 等）
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const unit = state.board[row][col];
+      if (unit?.destroyed && unit.currentHp <= 0) {
+        finalizePendingDestruction(unit, killer);
+      }
     }
   }
 
@@ -10262,14 +10341,14 @@ function drawLifeCounterPaymentPanel(pending) {
   const x = 430, y = 250, w = 580, h = 270;
   drawChoicePanelBase(x, y, w, h, "rgba(40,120,200,0.75)", "#4080ff");
   const player = state.players[pending.playerId];
-  const maxPay = Math.max(0, Math.min(pending.maxLifeCounters || 0, player.resources.people || 0));
+  const maxPay = lifeCounterMaxPay(player, pending.targetCard, pending.maxLifeCounters || 5);
   ctx.fillStyle = "#b8dcff";
   ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`${pending.cardName}: 生命カウンター`, x + 28, y + 38);
   ctx.fillStyle = "rgba(190,220,255,0.85)";
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`${pending.targetCard.name} に置く生命カウンター数を選択してください。現在の人: ${player.resources.people}`, x + 28, y + 68, w - 56);
-  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  ctx.fillText(`${pending.targetCard.name} の出撃コスト支払い後、追加で支払う人資源を選んでください。（最大${maxPay}）`, x + 28, y + 68, w - 56);
+  const isController = canControlChoicePlayer(pending.playerId);
   const btnW = 76, btnH = 42, gap = 12;
   const totalW = (maxPay + 1) * btnW + maxPay * gap;
   const startX = x + Math.max(28, Math.floor((w - totalW) / 2));
