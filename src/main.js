@@ -4817,6 +4817,7 @@ function createGame(
     pendingAttackContinuation: null,
     pendingDamageBatch: null,
     pendingStructPhase: null,
+    turnStartResume: null,
     cardReveal: null,
     cardRevealSeq: 0,
     turnStartSummary: null,
@@ -5341,32 +5342,40 @@ function processEffectQueue(game) {
   if (game.pendingChoice) return;
   if (game.pendingStructPhase?.pendingResourceChoice) return;
   if (game.pendingStructPhase?.pendingEnemyStructChoice) return;
-  while (game.effectQueue.length) {
-    const item = game.effectQueue.shift();
-    const effect = abilityEffects[item.ability.effect];
-    if (!effect) {
-      completeAbilitySource(game, item);
-      continue;
-    }
-    if (item.ability.target) {
-      if (!hasValidAbilityTarget(game, item)) {
-        const message = `${item.card.name}: 対象がいないため効果は発動しませんでした。`;
-        game.message = message;
-        log(game, message);
+  game._effectQueueDepth = (game._effectQueueDepth || 0) + 1;
+  try {
+    while (game.effectQueue.length) {
+      const item = game.effectQueue.shift();
+      const effect = abilityEffects[item.ability.effect];
+      if (!effect) {
         completeAbilitySource(game, item);
         continue;
       }
-      game.pendingTarget = item;
-      game.selected = { kind: "target", target: item.ability.target };
-      game.message = `${item.card.name}: 対象を選択してください。`;
-      return;
+      if (item.ability.target) {
+        if (!hasValidAbilityTarget(game, item)) {
+          const message = `${item.card.name}: 対象がいないため効果は発動しませんでした。`;
+          game.message = message;
+          log(game, message);
+          completeAbilitySource(game, item);
+          continue;
+        }
+        game.pendingTarget = item;
+        game.selected = { kind: "target", target: item.ability.target };
+        game.message = `${item.card.name}: 対象を選択してください。`;
+        return;
+      }
+      const result = effect({ game, playerId: item.playerId, card: item.card, ability: item.ability, source: item.source, target: item.target || null });
+      if (result === "pending") return;
+      completeAbilitySource(game, item);
     }
-    const result = effect({ game, playerId: item.playerId, card: item.card, ability: item.ability, source: item.source, target: item.target || null });
-    if (result === "pending") return;
-    completeAbilitySource(game, item);
-  }
-  if (!game.pendingChoice && !game.pendingTarget) {
-    resumePendingDamageBatch(game);
+    if (!game.pendingChoice && !game.pendingTarget) {
+      resumePendingDamageBatch(game);
+    }
+  } finally {
+    game._effectQueueDepth -= 1;
+    if (game._effectQueueDepth === 0) {
+      maybeResumeTurnStart(game);
+    }
   }
 }
 
@@ -5620,11 +5629,9 @@ function resolvePayOrDamage(payChoice) {
     checkWinner(state);
   }
   const qi = pending.queueItem;
-  const afterResolve = pending._afterResolve;
   state.pendingChoice = null;
   state.selected = null;
   completeAbilitySource(state, qi);
-  handleTurnStartAfterResolve(afterResolve);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   return true;
@@ -5771,10 +5778,8 @@ function resolveCoreStructStartDiscard(handIndex) {
   for (const [res, amt] of Object.entries(pending.gainOnDiscard)) addResources(player, res, amt);
   const label = Object.entries(pending.gainOnDiscard).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("・");
   log(state, `${player.name}: 「${discarded.name}」捨て → ${label}`);
-  const afterResolve = pending._afterResolve;
   state.pendingChoice = null;
   state.selected = null;
-  handleTurnStartAfterResolve(afterResolve);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -5844,10 +5849,8 @@ function resolveCoreStructStartDecline() {
   const label = Object.entries(pending.gainOnDecline).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("・");
   log(state, `${player.name}: 手札を捨てず → コアHP-${pending.hpCostOnDecline}${label ? `、${label}` : ""}`);
   checkWinner(state);
-  const afterResolve = pending._afterResolve;
   state.pendingChoice = null;
   state.selected = null;
-  handleTurnStartAfterResolve(afterResolve);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -6333,25 +6336,42 @@ function startTurn(game, playerId, options = {}) {
   for (const [key, amount] of Object.entries(player.core.income || {})) addResources(player, key, amount);
   refreshContinuousEffects(game);
   if (!options.skipDraw) drawCards(game, playerId, player.core.draw);
-  // onTurnStart: trigger for all owned units (destroySelf, payOrDamage, gainShockOrAlert, etc.)
+  game.turnStartResume = null;
+  // onTurnStart: 全ユニット・タクトの能力をキューに積んでから一括処理
   const turnStartUnits = unitsOwnedBy(playerId, game);
   for (const unit of turnStartUnits) {
-    if ((unit.abilities || []).some((a) => a.trigger === "onTurnStart")) {
-      triggerAbilities(game, playerId, unit, "onTurnStart");
+    for (const ability of unit.abilities || []) {
+      if (ability.trigger === "onTurnStart") {
+        game.effectQueue.push({ playerId, card: unit, ability, source: {} });
+      }
     }
   }
-  // onTurnStart: 永続タクトカード
   for (const tact of (player.tactZone || [])) {
     tact.rested = false;
-    if ((tact.abilities || []).some((a) => a.trigger === "onTurnStart")) {
-      triggerAbilities(game, playerId, tact, "onTurnStart");
+    for (const ability of tact.abilities || []) {
+      if (ability.trigger === "onTurnStart") {
+        game.effectQueue.push({ playerId, card: tact, ability, source: {} });
+      }
     }
   }
+  processEffectQueue(game);
   if (game.pendingChoice) {
-    game.pendingChoice._afterResolve = { type: "resumeStructurePhaseStart", playerId, resourcesBefore, handBefore };
+    game.turnStartResume = { playerId, resourcesBefore, handBefore, step: "afterOnTurnStart" };
     return;
   }
   resumeStructurePhaseStart(game, { playerId, resourcesBefore, handBefore });
+}
+
+function maybeResumeTurnStart(game) {
+  const resume = game.turnStartResume;
+  if (!resume || game.pendingChoice || game.pendingTarget) return;
+  if (resume.step === "afterOnTurnStart") {
+    game.turnStartResume = null;
+    resumeStructurePhaseStart(game, resume);
+  } else if (resume.step === "afterStructurePhaseStart") {
+    finishStartTurn(game, resume.playerId, resume.resourcesBefore, resume.handBefore);
+    game.turnStartResume = null;
+  }
 }
 
 function resumeStructurePhaseStart(game, { playerId, resourcesBefore, handBefore }) {
@@ -6359,20 +6379,12 @@ function resumeStructurePhaseStart(game, { playerId, resourcesBefore, handBefore
   if ((player.core.abilities || []).some((a) => a.trigger === "onStructurePhaseStart")) {
     triggerAbilities(game, playerId, player.core, "onStructurePhaseStart");
     if (game.pendingChoice) {
-      game.pendingChoice._afterResolve = { type: "continueStructPhase", playerId, resourcesBefore, handBefore };
+      game.turnStartResume = { playerId, resourcesBefore, handBefore, step: "afterStructurePhaseStart" };
       return;
     }
   }
   finishStartTurn(game, playerId, resourcesBefore, handBefore);
-}
-
-function handleTurnStartAfterResolve(afterResolve) {
-  if (!afterResolve) return;
-  if (afterResolve.type === "resumeStructurePhaseStart") {
-    resumeStructurePhaseStart(state, afterResolve);
-  } else if (afterResolve.type === "continueStructPhase") {
-    finishStartTurn(state, afterResolve.playerId, afterResolve.resourcesBefore, afterResolve.handBefore);
-  }
+  game.turnStartResume = null;
 }
 
 function structPhaseActivatables(player) {
