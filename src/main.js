@@ -2543,6 +2543,7 @@ function parseDeckmakerKeywords(card) {
 
 function parseDeckmakerAbilities(card, localType) {
   const abilities = [];
+  const text = String(card.description || "");
   if (localType === "struct") {
     const generates = fromDeckmakerCosts(card.generates || {});
     const negEntries = Object.entries(generates).filter(([, a]) => a < 0);
@@ -2594,7 +2595,6 @@ function parseDeckmakerAbilities(card, localType) {
       });
     }
   }
-  const text = String(card.description || "");
   const baseTrigger = localType === "unit" ? "onSummon" : "onPlay";
 
   // Draw patterns: "カードをX枚引く", "デッキからX枚ドロー", "X枚ドロー"

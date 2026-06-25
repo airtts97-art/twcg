@@ -52,6 +52,11 @@ const results = await page.evaluate(() => {
 
   const out = [];
 
+  out.push({
+    name: "struct_catalog_loaded",
+    summary: { count: Object.keys(api.cardCatalog.structs).length },
+  });
+
   reset();
   api.testing.placeUnit("militia", "p1", 2, 0, { rested: false });
   api.testing.placeUnit("armoredCar", "p2", 1, 0, { rested: true });
@@ -693,6 +698,8 @@ const results = await page.evaluate(() => {
 await browser.close();
 
 const byName = Object.fromEntries(results.map((result) => [result.name, result.summary]));
+
+assert(byName.struct_catalog_loaded.count >= 20, `struct catalog should load deckmaker structs (got ${byName.struct_catalog_loaded.count})`);
 const byResult = Object.fromEntries(results.map((result) => [result.name, result]));
 
 assert(byName.armor_reduces_damage.board[1][0].hp === 4, "armor should reduce militia damage by 1");
