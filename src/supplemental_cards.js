@@ -212,7 +212,7 @@ export default [
   },
   {
     id: "card_1782361783127",
-    name: "GNS Soveregin",
+    name: "GNS Sovereign",
     type: "タクト",
     world: "ユニフォール",
     description: "すべての相手ユニットを破壊する",

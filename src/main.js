@@ -213,7 +213,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782311181226",  // 壊滅怪異
   "card_1782237267608",  // 北東軍第27迫撃砲分隊
   "card_1782308723608",  // 特別計画
-  "card_1782361783127",  // GNS Soveregin
+  "card_1782361783127",  // GNS Sovereign
   "card_1782225519182",  // 北東軍最高司令官
   "card_1782330659181",  // ÜSPz.76V Aust. A
   "card_1782229353995",  // 長距離砲撃陣
@@ -2913,6 +2913,15 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
+  // vs-armor attack bonus: "[装甲]効果を持っているユニットに対し与攻撃時：ATK+②"
+  const vsArmorAtkMatch = text.match(/\[装甲\]効果を持っているユニットに対し与攻撃時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
+  if (vsArmorAtkMatch && localType === "unit") {
+    abilities.push({
+      effect: "vsArmorAtkBonus",
+      atkBonus: parseDeckmakerKeywordValue(vsArmorAtkMatch[1]) || 1,
+    });
+  }
+
   // onMill summonSelfFromDumpMobile: "デッキから墓地へ送られた時：…[機動]を得る"
   if (/デッキから墓地へ送られた時[：:].*場に出す/.test(text) && /\[機動\]/.test(text)) {
     const existingMill = abilities.findIndex((a) => a.trigger === "onMill" && a.effect === "summonSelfFromDump");
@@ -3200,8 +3209,9 @@ function parseDeckmakerAbilities(card, localType) {
       effect: "chooseProduceResource",
       multiActivate: true,  // 複数回激活を許可
       options: [
+        { id: "people", label: "人③", cost: { funds: 3 }, produces: { people: 3 } },
         { id: "nature", label: "自③", cost: { funds: 3 }, produces: { nature: 3 } },
-        { id: "mineral", label: "鉱③", cost: { funds: 3 }, produces: { mineral: 3 } },
+        { id: "ore", label: "鉱③", cost: { funds: 3 }, produces: { ore: 3 } },
         { id: "fuel", label: "燃③", cost: { funds: 3 }, produces: { fuel: 3 } },
       ],
     });
@@ -3490,6 +3500,14 @@ function fromDeckmakerCard(card) {
       base.specialRequirements = [
         "[アトラス北東軍][グラダナ連邦共和国][ルディワ公国]タグ・プレイコスト5以下のカードを20枚以上",
       ];
+    }
+    if (card.id === "card_1782520000000") {
+      base.requiredDeckCardIds = ["card_1782225519182"];
+      if (!base.specialRequirements?.length) {
+        base.specialRequirements = [
+          "「北東軍最高司令官」ユニットがデッキに含まれていない場合、このカードは使用できない。",
+        ];
+      }
     }
   }
   return applyCardCompatibility(normalizeCardResources(base));
@@ -4360,6 +4378,13 @@ function resetMatchGame(p2Deck) {
 }
 
 function startLocalMatch() {
+  const core = cardCatalog.cores[app.deck.core] || cardCatalog.cores[DEFAULT_CORE_ID];
+  const requirementIssues = coreDeckRequirementIssues(core, app.deck.main);
+  if (requirementIssues.length) {
+    app.match.message = `デッキ条件を満たしていません: ${requirementIssues.join("、")}`;
+    render();
+    return;
+  }
   const selectedDeckId = app.match.selectedDeckId;
   resetMatchGame();
   app.match = { status: "local", mode: "ローカル対戦", roomCode: "", role: "host", connection: "offline", message: "同じブラウザ内で対戦中です。", players: [], selectedDeckId };
@@ -4664,6 +4689,13 @@ function startMatchFromLobby() {
 }
 
 function prepareSelectedDeckForMatch() {
+  const core = cardCatalog.cores[app.deck.core] || cardCatalog.cores[DEFAULT_CORE_ID];
+  const requirementIssues = coreDeckRequirementIssues(core, app.deck.main);
+  if (requirementIssues.length) {
+    app.match.message = `デッキ条件を満たしていません: ${requirementIssues.join("、")}`;
+    return false;
+  }
+
   if (!app.match.selectedDeckId) {
     const deck = normalizeDeckData(currentDeckPayload());
     if (!deck) {
@@ -5303,7 +5335,7 @@ function emptyResources() {
 }
 
 function addResources(player, key, amount) {
-  const resourceKey = key === "food" ? "nature" : key;
+  const resourceKey = key === "food" ? "nature" : key === "mineral" ? "ore" : key;
   player.resources[resourceKey] = (player.resources[resourceKey] || 0) + amount;
 }
 
@@ -5494,6 +5526,17 @@ function countDeckRestrictionCards(mainCards, restriction) {
     if (totalCostAmount(card.cost || {}) > (restriction.maxPlayCost ?? 5)) return false;
     return (card.tags || []).some((tag) => tagSet.has(tag));
   }).length;
+}
+
+function coreDeckRequirementIssues(core, mainIds = []) {
+  const issues = [];
+  for (const cardId of core?.requiredDeckCardIds || []) {
+    if (!mainIds.some((id) => id === cardId)) {
+      const card = cardCatalog.main[cardId];
+      issues.push(`「${card?.name || cardId}」がデッキに必要です`);
+    }
+  }
+  return issues;
 }
 
 // 「name」→ 名前に含む、[tag] → タグに含む の条件チェック
@@ -7654,10 +7697,18 @@ function defenderArmorValue(defender, attacker, { useCharge = false } = {}) {
   return armorVal;
 }
 
+function unitHasArmorEffect(unit) {
+  if (!unit) return false;
+  return keywordValue(unit, "armor") > 0 || Number(unit.armor) > 0;
+}
+
 function calculateAttackDamage(attacker, defender, { useCharge = false } = {}) {
   let atk = attacker.atk || 0;
   for (const ability of attacker.abilities || []) {
     if (ability.effect === "vsTagAtkBonus" && ability.vsTag && (defender?.tags || []).includes(ability.vsTag)) {
+      atk += ability.atkBonus || 1;
+    }
+    if (ability.effect === "vsArmorAtkBonus" && unitHasArmorEffect(defender)) {
       atk += ability.atkBonus || 1;
     }
   }
@@ -8116,6 +8167,9 @@ function deckAnalysis() {
     if (restrictedCount < need) {
       warnings.push(`コア条件: 対象カード ${restrictedCount}/${need}枚`);
     }
+  }
+  for (const issue of coreDeckRequirementIssues(core, app.deck.main)) {
+    warnings.push(`コア条件: ${issue}`);
   }
 
   const compatibilityWarnings = [];

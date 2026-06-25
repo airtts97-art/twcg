@@ -1,5 +1,5 @@
 /** Cards verified as fully implemented in the engine (manual audit). */
-/** Unimplemented from 2026-06-25 audit: card_1782212242238, card_1782211899987, card_1782297782539, card_1782211693491, card_1782208064951, card_1782211496085, card_1782208333313, card_1782236231218 */
+/** Unimplemented from 2026-06-25 audit: card_1782212242238, card_1782211899987, card_1782297782539, card_1782211693491, card_1782208064951, card_1782211496085, card_1782208333313 */
 export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1753663163643", // [3→BUG←1/2→・](ガブ・バグ)
   "card_1753660083940", // アトラス・コントロール
@@ -27,7 +27,8 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "arcaneReactorCore", // 魔導炉心
   "card_1782180616372", // 唯字の騎士
   "card_1755655390809", // 雷光の荒野
-  "disruptionEngineer", // 攪乱工兵
+  "card_1782236231218", // 北東軍第11対戦車歩兵分隊
+  "card_1782361783127", // GNS Sovereign
 ]);
 
 export function isImplementedCard(cardId) {
