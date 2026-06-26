@@ -256,6 +256,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782229353995",  // 長距離砲撃陣
   "card_1782600000000",  // 戦時国債
   "card_1782610000000",  // 金準備を押収
+  "card_1782463436621",  // 露出管理
+  "card_1782464860185",  // 月下造山帯
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -459,6 +461,20 @@ const abilityEffects = {
   produceResource({ game, playerId, ability }) {
     addResources(game.players[playerId], ability.resource, ability.amount);
     log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
+  },
+  structPayDrawProduce({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const cost = ability.cost || {};
+    if (!pay(player, cost)) return;
+    card.rested = true;
+    const drawAmount = ability.draw || 1;
+    drawCards(game, playerId, drawAmount);
+    for (const [res, amt] of Object.entries(ability.produces || {})) {
+      addResources(player, res, amt);
+    }
+    const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
+    const gainLabel = Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("、");
+    log(game, `${player.name}: 「${card.name}」${costLabel}支払い → ドロー${drawAmount}、${gainLabel}`);
   },
   drawCards({ game, playerId, ability }) {
     drawCards(game, playerId, ability.amount);
@@ -743,6 +759,32 @@ const abilityEffects = {
       log(game, `${player.name}: 「${card.name}」5回発動後に破壊`);
       destroyTactFromZone(game, playerId, card);
     }
+  },
+  exposureManagementPlay({ game, playerId, card }) {
+    card.permanentTact = true;
+    card.rested = false;
+    card.abilities = [
+      { trigger: "onMainPhase", effect: "exposureManagementActivate", isPermanent: true },
+    ];
+    log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
+  },
+  exposureManagementActivate({ game, playerId, card, source }) {
+    if (source?.zone === "tact" && card.permanentTact) card.rested = true;
+    const candidates = exposureManagementUnitCandidates(game, playerId);
+    if (!candidates.length) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 対象のレスト中【機動】ユニットがいない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "exposureManagement",
+      step: "chooseUnit",
+      playerId,
+      tactName: card.name,
+      candidates,
+    };
+    game.selected = { kind: "choice", choice: "exposureManagement" };
+    game.message = "露出管理: レスト中の【機動】ユニットを選択";
+    return "pending";
   },
   defeatIfNamedUnitDestroyed({ game, playerId, ability, source }) {
     const destroyed = source?.target;
@@ -3593,6 +3635,22 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onPlay", effect: "permanentTactPlay" });
     abilities.push({ trigger: "onDestroyEnemyUnit", effect: "addCoreTermCounter", amount: 1 });
     abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource: "funds", amount: 1 });
+  }
+
+  if (card.id === "card_1782463436621") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "exposureManagementPlay" });
+  }
+
+  if (card.id === "card_1782464860185") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "structPayDrawProduce",
+      cost: { people: 1, magic: 1 },
+      draw: 1,
+      produces: { magic: 6 },
+    });
   }
 
   if (card.id === "card_1782225519182") {
@@ -6915,6 +6973,12 @@ function startTurn(game, playerId, options = {}) {
   // onTurnStart: 全ユニット・タクトの能力をキューに積んでから一括処理
   const turnStartUnits = unitsOwnedBy(playerId, game);
   for (const unit of turnStartUnits) {
+    if ((unit.smokeScreenCounter || 0) > 0) {
+      unit.smokeScreenCounter -= 1;
+      log(game, `「${unit.name}」煙幕カウンター -1（残り${unit.smokeScreenCounter}）`);
+    }
+  }
+  for (const unit of turnStartUnits) {
     for (const ability of unit.abilities || []) {
       if (ability.trigger === "onTurnStart") {
         game.effectQueue.push({ playerId, card: unit, ability, source: {} });
@@ -7611,6 +7675,96 @@ function playStruct(index) {
   return true;
 }
 
+function exposureManagementUnitCandidates(game, playerId) {
+  const candidates = [];
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const unit = game.board[row][col];
+      if (unit && unit.owner === playerId && unit.rested && hasKeyword(unit, "mobile")) {
+        candidates.push({ row, col });
+      }
+    }
+  }
+  return candidates;
+}
+
+function exposureRetreatTargets(unit, game = state) {
+  if (!unit) return [];
+  const player = game.players[unit.owner];
+  const retreatRow = unit.row - player.forward;
+  if (retreatRow < 0 || retreatRow >= ROWS) return [];
+  const targets = [];
+  for (const colDelta of [-1, 0, 1]) {
+    const toCol = unit.col + colDelta;
+    if (toCol < 0 || toCol >= COLS) continue;
+    if (!isUnitFieldCell(retreatRow, toCol)) continue;
+    if (game.board[retreatRow][toCol]) continue;
+    if (!canMoveUnitTo(unit, retreatRow)) continue;
+    targets.push({ row: retreatRow, col: toCol });
+  }
+  return targets;
+}
+
+function finishExposureManagement(pending, moveTarget = null) {
+  const unit = state.board[pending.unitRow]?.[pending.unitCol];
+  const player = state.players[pending.playerId];
+  if (unit) {
+    if (moveTarget) {
+      const fromRow = unit.row;
+      const fromCol = unit.col;
+      state.board[fromRow][fromCol] = null;
+      unit.row = moveTarget.row;
+      unit.col = moveTarget.col;
+      state.board[moveTarget.row][moveTarget.col] = unit;
+      startMoveAnimation(unit, fromRow, fromCol, moveTarget.row, moveTarget.col);
+      log(state, `${player.name}: 「${unit.name}」が後退（露出管理）`);
+    }
+    unit.smokeScreenCounter = (unit.smokeScreenCounter || 0) + 2;
+    log(state, `${player.name}: 「${unit.name}」に煙幕カウンター②`);
+  }
+  state.pendingChoice = null;
+  state.selected = null;
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+}
+
+function resolveExposureManagementUnit(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "exposureManagement" || pending.step !== "chooseUnit") return false;
+  const unit = state.board[row]?.[col];
+  if (!unit || unit.owner !== pending.playerId || !unit.rested || !hasKeyword(unit, "mobile")) {
+    state.message = "対象にできません。";
+    render();
+    return false;
+  }
+  pending.unitRow = row;
+  pending.unitCol = col;
+  const retreatCells = exposureRetreatTargets(unit);
+  pending.retreatCells = retreatCells;
+  if (!retreatCells.length) {
+    finishExposureManagement(pending);
+    return true;
+  }
+  pending.step = "chooseRetreat";
+  state.message = "露出管理: 後退先を選択（または移動しない）";
+  render();
+  return true;
+}
+
+function resolveExposureManagementRetreat(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "exposureManagement" || pending.step !== "chooseRetreat") return false;
+  const isEligible = (pending.retreatCells || []).some((c) => c.row === row && c.col === col);
+  if (!isEligible) {
+    state.message = "そのマスには後退できません。";
+    render();
+    return false;
+  }
+  finishExposureManagement(pending, { row, col });
+  return true;
+}
+
 function relocateUnit(unit, toRow, toCol, actionLabel, onlineAction) {
   if (!requireActivePlayerControl()) return false;
   if (!unit) return false;
@@ -7927,6 +8081,9 @@ function canAttackUnit(attacker, defender) {
   }
   if (isGuardedFrom(attacker, defender)) {
     return { ok: false, reason: "守護により隣接ユニットを攻撃できません。" };
+  }
+  if (hasKeyword(attacker, "arc") && (defender.smokeScreenCounter || 0) > 0) {
+    return { ok: false, reason: "煙幕により曲射攻撃の対象にできません。" };
   }
   return { ok: true };
 }
@@ -9992,6 +10149,17 @@ function handleCellClick(row, col) {
     resolveDeployHeroCell(row, col);
     return;
   }
+  if (state.pendingChoice?.type === "exposureManagement") {
+    if (!requireActivePlayerControl()) return;
+    if (state.pendingChoice.step === "chooseUnit") {
+      resolveExposureManagementUnit(row, col);
+      return;
+    }
+    if (state.pendingChoice.step === "chooseRetreat") {
+      resolveExposureManagementRetreat(row, col);
+      return;
+    }
+  }
   if (state.pendingTarget) {
     if (!requireActivePlayerControl()) return;
     resolvePendingTarget(row, col);
@@ -10523,6 +10691,10 @@ function drawChoiceOverlay() {
     drawDeployHeroFromAttackPanel(pending);
     return;
   }
+  if (pending.type === "exposureManagement" && (pending.step === "chooseUnit" || pending.step === "chooseRetreat")) {
+    drawExposureManagementPanel(pending);
+    return;
+  }
   ctx.fillStyle = "rgba(0, 0, 8, 0.75)";
   ctx.fillRect(0, 0, W, H);
   if (pending.type === "mysticCapture") drawMysticCapturePanel(pending);
@@ -10545,6 +10717,69 @@ function drawChoiceOverlay() {
   else if (pending.type === "intelAgencyCancel") drawIntelAgencyCancelPanel(pending);
   else if (pending.type === "destroyEnemyStruct") drawDestroyEnemyStructPanel(pending);
   else if (pending.type === "chargeAttack") drawChargeAttackPanel(pending);
+}
+
+function drawExposureManagementPanel(pending) {
+  const isController = canControlActivePlayer() && pending.playerId === state.activePlayer;
+  if (pending.step === "chooseUnit") {
+    for (const { row, col } of pending.candidates || []) {
+      const visualRow = boardRowToVisualRow(row);
+      const cx2 = layout.board.x + col * layout.cell.w;
+      const cy2 = layout.board.y + visualRow * layout.cell.h;
+      const cw2 = layout.cell.w;
+      const ch2 = layout.cell.h;
+      ctx.save();
+      ctx.shadowColor = "#80c0ff";
+      ctx.shadowBlur = 8;
+      roundRect(cx2 + 2, cy2 + 2, cw2 - 4, ch2 - 4, 4, "rgba(60,140,255,0.18)", "#60b0ff", 3);
+      ctx.restore();
+      if (isController) addHit(cx2, cy2, cw2, ch2, () => resolveExposureManagementUnit(row, col));
+    }
+    const px = W / 2 - 220;
+    const py = 20;
+    roundRect(px, py, 440, 36, 6, "rgba(8,16,40,0.92)", "#60b0ff", 1.5);
+    ctx.fillStyle = "#b0d8ff";
+    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("露出管理: レスト中の【機動】ユニットをクリック", W / 2, py + 24);
+    ctx.textAlign = "left";
+    if (isController) {
+      drawButton(W / 2 - 55, H - 56, 110, 34, "キャンセル", () => {
+        state.pendingChoice = null;
+        state.selected = null;
+        processEffectQueue(state);
+        syncOnlineAction("resolveChoice", pending.playerId);
+        render();
+      }, null, { accent: "dim" });
+    }
+    return;
+  }
+  if (pending.step === "chooseRetreat") {
+    for (const { row, col } of pending.retreatCells || []) {
+      const visualRow = boardRowToVisualRow(row);
+      const cx2 = layout.board.x + col * layout.cell.w;
+      const cy2 = layout.board.y + visualRow * layout.cell.h;
+      const cw2 = layout.cell.w;
+      const ch2 = layout.cell.h;
+      ctx.save();
+      ctx.shadowColor = "#40a0ff";
+      ctx.shadowBlur = 8;
+      roundRect(cx2 + 2, cy2 + 2, cw2 - 4, ch2 - 4, 4, "rgba(40,120,200,0.2)", "#4090e0", 3);
+      ctx.restore();
+      if (isController) addHit(cx2, cy2, cw2, ch2, () => resolveExposureManagementRetreat(row, col));
+    }
+    const px = W / 2 - 240;
+    const py = 20;
+    roundRect(px, py, 480, 36, 6, "rgba(8,16,40,0.92)", "#4090e0", 1.5);
+    ctx.fillStyle = "#b0d0ff";
+    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("後退先をクリック（移動しない場合は下のボタン）", W / 2, py + 24);
+    ctx.textAlign = "left";
+    if (isController) {
+      drawButton(W / 2 - 70, H - 56, 140, 34, "移動しない", () => finishExposureManagement(pending), null, { accent: "p2" });
+    }
+  }
 }
 
 function drawChoicePanelBase(x, y, w, h, accentColor, shadowColor) {
@@ -12128,6 +12363,30 @@ function drawCard(x, y, w, h, card, options = {}) {
       ctx.textBaseline = "alphabetic";
       ctx.restore();
     }
+    if ((card.smokeScreenCounter || 0) > 0) {
+      const r = options.small ? 9 : 12;
+      const bx = x + w - r - 4;
+      const by = y + r + 4;
+      ctx.save();
+      ctx.shadowColor = "#6080a0";
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(70,90,120,0.92)";
+      ctx.fill();
+      ctx.strokeStyle = "#b0c8e8";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#e8f0ff";
+      ctx.font = `800 ${options.small ? 8 : 10}px 'Yu Gothic UI', sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`煙${card.smokeScreenCounter}`, bx, by);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.restore();
+    }
     return;
   }
 
@@ -12417,6 +12676,7 @@ function abilityText(card) {
         damageEnemyCore: `敵コアに${ability.amount}ダメージ`,
         damageTargetUnit: `対象ユニットに${ability.amount}ダメージ`,
         produceResource: `${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
+        structPayDrawProduce: `${Object.entries(ability.cost || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("")}支払い → ドロー${ability.draw || 1}、${Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("/")}`,
         gainResource: `${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         buffFriendlyUnitsHp: `味方ユニットのHP+${ability.amount}`,
         buffFriendlyUnitsAtk: `味方ユニットのATK+${ability.amount}`,

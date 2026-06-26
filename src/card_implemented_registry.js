@@ -31,6 +31,8 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782361783127", // GNS Sovereign
   "card_1782600000000", // 戦時国債
   "card_1782610000000", // 金準備を押収
+  "card_1782463436621", // 露出管理
+  "card_1782464860185", // 月下造山帯
 ]);
 
 export function isImplementedCard(cardId) {

@@ -1,6 +1,6 @@
 {
   "id": "card_1782600000000",
-  "name": "戦時国債",
+  "name": "国債発行",
   "type": "タクト",
   "rarity": "通常",
   "world": "ユニフォール",
@@ -43,5 +43,5 @@
   "flavorText": "戦費は帳簿の数字ではなく、国民の血と汗で支払われる。だが戦が終われば、借金は必ず返さねばならない。",
   "limit": 4,
   "tactSubType": "通常",
-  "imageUrl": ""
+  "imageUrl": "assets/cards/card_1782600000000.jpeg"
 }

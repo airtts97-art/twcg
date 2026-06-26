@@ -1,0 +1,47 @@
+{
+  "id": "card_1782464860185",
+  "name": "月下造山帯",
+  "type": "ストラクト",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["産業", "鉱山"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 3,
+      "human": 3,
+      "magic": 1,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "magic": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "人①魔①を支払いレストし、\n1枚ドローする、魔⑥を得る",
+  "flavorText": "致命的な点を除けば、最高の地域だ",
+  "limit": 4,
+  "tactSubType": null,
+  "imageUrl": "assets/cards/card_1782464860185.jpeg"
+}
