@@ -811,6 +811,7 @@ const abilityEffects = {
   },
   addCounters({ game, playerId, card, ability }) {
     card.counters = (card.counters || 0) + (ability.amount || 1);
+    refreshCounterConditionalKeywords(card);
     log(game, `${game.players[playerId].name}: 「${card.name}」カウンター +${ability.amount || 1}`);
   },
   addCounterOnFirstAttack({ game, playerId, card, ability }) {
@@ -993,6 +994,7 @@ const abilityEffects = {
   },
   healSelfAndRemoveCounter({ game, playerId, card, ability }) {
     if ((card.counters || 0) > 0) card.counters -= 1;
+    refreshCounterConditionalKeywords(card);
     const amount = ability.amount || 1;
     card.currentHp = Math.min(card.maxHp || card.hp || card.currentHp || 0, (card.currentHp || 0) + amount);
     log(game, `${game.players[playerId].name}: 「${card.name}」${amount}回復`);
@@ -1439,7 +1441,10 @@ const abilityEffects = {
     clearDescentGodEffects(game, playerId);
     if (!game.globalEffects) game.globalEffects = [];
     game.globalEffects.push({ type: "healingHealOnTurnEnd", playerId });
-    log(game, `${game.players[playerId].name}: [降臨] 場にいる間に現れたユニットは破壊時に手札へ戻る、全ユニットにターン終了時：治療数×2回復`);
+    for (const unit of unitsOwnedBy(playerId, game)) {
+      unit.descentReturnToHand = true;
+    }
+    log(game, `${game.players[playerId].name}: [降臨] 味方カードは破壊時に手札へ戻る、全ユニットにターン終了時：治療数×2回復`);
   },
   searchUnitToCostHand({ game, playerId, ability }) {
     const player = game.players[playerId];
@@ -1950,9 +1955,10 @@ const abilityEffects = {
     log(game, `${game.players[playerId].name}: ${card.name} gains mobile`);
   },
   grantConditionalKeywordsByCounter({ game, playerId, card, ability }) {
-    if ((card.counters || 0) <= 0) return;
-    for (const keyword of ability.keywords || []) ensureKeyword(card, keyword.id || keyword, keyword.value ?? null);
-    log(game, `${game.players[playerId].name}: ${card.name} counter keywords applied`);
+    refreshCounterConditionalKeywords(card);
+    if ((card.counters || 0) > 0) {
+      log(game, `${game.players[playerId].name}: ${card.name} counter keywords applied`);
+    }
   },
   goldGolemStrike({ game, playerId, card, target }) {
     if (!target || target.owner === playerId) return;
@@ -3927,6 +3933,12 @@ function parseDeckmakerAbilities(card, localType) {
       lifeCounterFromPeople: true,
       maxLifeCounters: 5,
     });
+  }
+
+  if (card.id === "card_1753662603276") {
+    if (!abilities.some((a) => a.effect === "descentEffect")) {
+      abilities.push({ trigger: "onSummon", effect: "descentEffect" });
+    }
   }
 
   if (card.id === "card_1753662124367") {
@@ -6016,6 +6028,22 @@ function removeKeywords(card, ids = []) {
   card.keywords = card.keywords.filter((keyword) => !blocked.has(keyword.id));
 }
 
+function refreshCounterConditionalKeywords(card) {
+  if (!card) return;
+  const abilities = (card.abilities || []).filter((a) => a.effect === "grantConditionalKeywordsByCounter");
+  if (!abilities.length) return;
+  const keywordIds = [...new Set(abilities.flatMap((a) => (a.keywords || []).map((k) => k.id || k)))];
+  if ((card.counters || 0) <= 0) {
+    removeKeywords(card, keywordIds);
+    return;
+  }
+  for (const ability of abilities) {
+    for (const keyword of ability.keywords || []) {
+      ensureKeyword(card, keyword.id || keyword, keyword.value ?? null);
+    }
+  }
+}
+
 function keywordValue(card, id, fallback = 0) {
   const keyword = getKeyword(card, id);
   if (!keyword) return fallback;
@@ -6319,6 +6347,7 @@ function refreshContinuousEffects(game = state) {
           { atk: adjacentTagBuff.atk, hp: adjacentTagBuff.hp },
         );
       }
+      if (unit.id === "card_1753775442028") refreshCounterConditionalKeywords(unit);
     }
     const hasRevealedKaiju = unitsOwnedBy(pid, game).some((u) => u.id === "card_1782212242238");
     if (hasRevealedKaiju) {
@@ -6350,6 +6379,11 @@ function refreshContinuousEffects(game = state) {
       for (const unit of unitsOwnedBy(pid, game)) {
         applyConditionalBuff(unit, "northeastGloryAura", hasAtlasUnit, { atk: 5, hp: 5 });
         applyConditionalKeywordValue(unit, "northeastGloryArmor", hasAtlasUnit, "armor", 5);
+      }
+    }
+    if (hasDescentGodOnField(game, pid)) {
+      for (const unit of unitsOwnedBy(pid, game)) {
+        unit.descentReturnToHand = true;
       }
     }
   }
