@@ -140,7 +140,46 @@ function isPermanentTactCard(card) {
   if (descText.includes("永続")) return true;
   if ((card.abilities || []).some((a) => a.isPermanent)) return true;
   if (/[0-9０-９①②③④⑤⑥⑦⑧⑨⑩]+回目.*発動/.test(descText)) return true;
+  const catalog = catalogCardFor(card);
+  if (catalog && catalog !== card) return isPermanentTactCard(catalog);
   return false;
+}
+
+function markPermanentTactIfNeeded(card) {
+  if (!card || card.permanentTact) return card;
+  if (isPermanentTactCard(card)) card.permanentTact = true;
+  return card;
+}
+
+function syncBundledRuntimeCard(card) {
+  if (!card?.id || !FORCE_BUNDLED_CARD_IDS.has(card.id)) return card;
+  const bundled = catalogCardFor(card);
+  if (!bundled) return card;
+  if (bundled.imageUrl) card.imageUrl = bundled.imageUrl;
+  if (bundled.text) card.text = bundled.text;
+  if (bundled.abilities?.length) {
+    card.abilities = cloneCard({ abilities: bundled.abilities }).abilities;
+  }
+  markPermanentTactIfNeeded(card);
+  return card;
+}
+
+const CARD_IMAGE_EXTENSIONS = [".jpeg", ".jpg", ".png"];
+
+function cardImageUrlCandidates(card) {
+  const urls = [];
+  const push = (src) => {
+    if (typeof src === "string" && src && !src.startsWith("data:") && !urls.includes(src)) urls.push(src);
+  };
+  push(card?.imageUrl);
+  push(card?.image);
+  if (card?.id) {
+    const cat = catalogCardFor(card);
+    push(cat?.imageUrl);
+    push(cat?.image);
+    for (const ext of CARD_IMAGE_EXTENSIONS) push(`assets/cards/${card.id}${ext}`);
+  }
+  return urls;
 }
 
 function playerIdForTactZoneCell(row, col) {
@@ -151,14 +190,10 @@ function playerIdForTactZoneCell(row, col) {
 }
 
 function tactZoneSlotCoords(playerId) {
-  const isP1 = playerId === "p1";
-  const rows = isP1 ? [2, 3] : [0, 1];
-  const cols = isP1 ? [10, 11, 12] : [0, 1, 2];
-  const slots = [];
-  for (const row of rows) {
-    for (const col of cols) slots.push({ row, col });
-  }
-  return slots;
+  const player = PLAYERS[playerId];
+  const battleRow = player.summonRow + player.forward;
+  const cols = playerId === "p1" ? [10, 11, 12] : [0, 1, 2];
+  return cols.map((col) => ({ row: battleRow, col }));
 }
 
 function tactAtZoneCell(playerId, row, col) {
@@ -208,7 +243,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1755648239499", // 虚の尖塔
   "card_1753662513755", // 命脈の交信
   "card_1753662124367", // 動死体の呼び声
-  "card_1755701443493", // 呼び贄
+  "card_1755701443493", // 赫光の炉心
   "card_1755906183709", // 風是の怪異
   "card_1755925813924", // 怪異災害:吹雪
   "card_1755670731207", // 【正体不明】罪人
@@ -258,6 +293,12 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782610000000",  // 金準備を押収
   "card_1782463436621",  // 露出管理
   "card_1782464860185",  // 月下造山帯
+  "card_1782212242238",  // 【正体判明】怪獣
+  "card_1782211899987",  // 【正体不明】私
+  "card_1782297782539",  // 【正体不明】虚空
+  "card_1782208064951",  // 【正体不明】色彩
+  "card_1782211496085",  // 【正体不明】保安官
+  "card_1782208333313",  // 正体隠匿(インポスター)
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -458,9 +499,30 @@ function pickCardFromPlayerDeck(player, entry) {
 }
 
 const abilityEffects = {
-  produceResource({ game, playerId, ability }) {
+  produceResource({ game, playerId, card, ability }) {
     addResources(game.players[playerId], ability.resource, ability.amount);
+    if (card?.type === "struct" && !ability.multiActivate) card.rested = true;
     log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
+  },
+  structPayRestChooseResource({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const cost = normalizeResourceObject(ability.activationCost || {});
+    if (!pay(player, cost)) return;
+    card.rested = true;
+    if (!game.pendingStructPhase) return;
+    const produceAmount = ability.produceAmount || 5;
+    const options = (ability.options || RESOURCE_KEYS.filter((k) => k !== "magic").map((id) => ({
+      id,
+      label: RESOURCE_LABELS[id],
+      cost: {},
+      produces: { [id]: produceAmount },
+    })));
+    game.pendingStructPhase.pendingResourceChoice = {
+      type: "chooseProduceResource",
+      options,
+      cardName: card.name,
+    };
+    return "pending";
   },
   structPayDrawProduce({ game, playerId, card, ability }) {
     const player = game.players[playerId];
@@ -479,7 +541,10 @@ const abilityEffects = {
   drawCards({ game, playerId, ability }) {
     drawCards(game, playerId, ability.amount);
   },
-  gainResource({ game, playerId, ability }) {
+  gainResource({ game, playerId, ability, target }) {
+    if (ability.vsTag) {
+      if (!target || !(target.tags || []).includes(ability.vsTag)) return;
+    }
     addResources(game.players[playerId], ability.resource, ability.amount);
     log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
   },
@@ -747,9 +812,9 @@ const abilityEffects = {
     ];
     log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
   },
-  bigConstructionPlanActivate({ game, playerId, card }) {
+  bigConstructionPlanActivate({ game, playerId, card, source }) {
     const player = game.players[playerId];
-    if (!card.rested) card.rested = true;
+    if (source?.zone === "tact") card.rested = true;
     addResources(player, "funds", 3);
     addResources(player, "ore", 5);
     addResources(player, "fuel", 2);
@@ -768,7 +833,7 @@ const abilityEffects = {
     ];
     log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
   },
-  exposureManagementActivate({ game, playerId, card, source }) {
+  exposureManagementActivate({ game, playerId, card, ability, source }) {
     if (source?.zone === "tact" && card.permanentTact) card.rested = true;
     const candidates = exposureManagementUnitCandidates(game, playerId);
     if (!candidates.length) {
@@ -781,6 +846,7 @@ const abilityEffects = {
       playerId,
       tactName: card.name,
       candidates,
+      queueItem: { playerId, card, ability, source },
     };
     game.selected = { kind: "choice", choice: "exposureManagement" };
     game.message = "露出管理: レスト中の【機動】ユニットを選択";
@@ -841,6 +907,7 @@ const abilityEffects = {
       playerId,
       cardName: card.name,
       bonusCond: ability.cond || (ability.pureHumanTag ? { tag: ability.pureHumanTag } : { tag: "純人間" }),
+      queueItem: { playerId, card, ability, source },
     };
     return "pending";
   },
@@ -961,6 +1028,192 @@ const abilityEffects = {
     target.currentHp = 0;
     drawCards(game, playerId, ability.amount || 1);
     cleanupAllDestroyed(null, game);
+  },
+  identityPrivateOnSummon({ game, playerId, card }) {
+    const player = game.players[playerId];
+    if (!player.mainDeck.length) return;
+    const top = player.mainDeck[0];
+    if (top.type !== "unit" || !isNeutralCard(top)) {
+      if (player.mainDeck.length) {
+        player.mainDeck.push(player.mainDeck.shift());
+      }
+      log(game, `${player.name}: 「${card.name}」— デッキ上はニュートラルユニットではないため山札下へ`);
+      return;
+    }
+    player.mainDeck.shift();
+    if (!card.identityStack) card.identityStack = [];
+    card.identityStack.push(cloneCard(top));
+    log(game, `${player.name}: 「${card.name}」の裏に「${top.name}」を重ねた`);
+    const stackedFaction = top.faction || top.world || "";
+    if (stackedFaction.includes("正体不明") && (top.abilities?.length || top.description || top.text)) {
+      const stackAbilities = top.abilities?.length ? top.abilities : parseDeckmakerAbilities(top, "unit");
+      if (stackAbilities.length) {
+        game.pendingChoice = {
+          type: "identityCopyAbility",
+          playerId,
+          hostUnit: card,
+          options: stackAbilities.map((ab, index) => ({ index, ability: ab, label: `${ab.trigger || "常時"}: ${ab.effect}` })),
+          queueItem: { playerId, card, ability: { effect: "identityPrivateOnSummon" }, source: { zone: "board" } },
+        };
+        game.selected = { kind: "choice", choice: "identityCopyAbility" };
+        game.message = "正体不明の能力を1つ選んで獲得";
+        return "pending";
+      }
+    }
+  },
+  identityKaijuSummonFromDump({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const maxCost = ability.maxCost || 3;
+    const limit = ability.amount || 2;
+    const eligible = player.dump.filter(
+      (c) => c.type === "unit" && isNeutralCard(c) && totalCostAmount(c.cost || {}) <= maxCost,
+    );
+    let placed = 0;
+    for (const dumpCard of eligible) {
+      if (placed >= limit) break;
+      const dumpIdx = player.dump.indexOf(dumpCard);
+      if (dumpIdx < 0) continue;
+      const col = findFirstEmptyColInRow(game, player.summonRow);
+      if (col < 0) break;
+      player.dump.splice(dumpIdx, 1);
+      notifyDumpChanged(game, playerId);
+      const unit = makeUnit(dumpCard.id, playerId, player.summonRow, col, { fromDump: true });
+      commitUnitToBoard(game, unit, player.summonRow, col);
+      log(game, `${player.name}: 「${card.name}」— 墓地から「${dumpCard.name}」を出した`);
+      triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
+      placed += 1;
+    }
+    if (!placed) log(game, `${player.name}: 「${card.name}」— 対象となる墓地ユニットがない`);
+  },
+  stripNeutralUnitAbilities({ game, playerId, target }) {
+    if (!target || target.owner !== playerId || !isNeutralUnit(target)) return;
+    target.abilities = [];
+    log(game, `${game.players[playerId].name}: 「${target.name}」の効果を消した`);
+  },
+  discardEqualToFieldUnits({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const count = unitsOwnedBy(playerId, game).length;
+    if (count <= 0 || !player.hand.length) return;
+    const toDiscard = Math.min(count, player.hand.length);
+    if (toDiscard === player.hand.length) {
+      const discarded = player.hand.splice(0);
+      player.dump.push(...discarded);
+      notifyDumpChanged(game, playerId);
+      log(game, `${player.name}: 「${card.name}」— 手札${discarded.length}枚を捨てた`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "colorfulDiscard",
+      playerId,
+      remaining: toDiscard,
+      selectedHandIndexes: [],
+      cardName: card.name,
+      queueItem: { playerId, card, ability: { effect: "discardEqualToFieldUnits" }, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "colorfulDiscard" };
+    game.message = `色彩: 手札から${toDiscard}枚捨てる`;
+    return "pending";
+  },
+  colorfulTurnEndRemap({ game, playerId, card }) {
+    const allies = unitsOwnedBy(playerId, game);
+    if (!allies.length) return;
+    game.pendingChoice = {
+      type: "colorfulRemapCost",
+      step: "pickUnit",
+      playerId,
+      units: allies,
+      cardName: card.name,
+      optional: true,
+      queueItem: { playerId, card, ability: { effect: "colorfulTurnEndRemap" }, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "colorfulRemapCost" };
+    game.message = "色彩: ユニットを選んでコストの資源種を変更（スキップ可）";
+    return "pending";
+  },
+  sheriffOnSummon({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const pinfo = PLAYERS[playerId];
+    const row2 = pinfo.summonRow + pinfo.forward;
+    let refreshed = 0;
+    if (row2 >= 0 && row2 < ROWS) {
+      for (let col = 0; col < COLS; col++) {
+        const unit = game.board[row2][col];
+        if (unit && unit.owner !== playerId) {
+          refreshBoardUnit(game, unit);
+          refreshed += 1;
+        }
+      }
+    }
+    if (refreshed) log(game, `${player.name}: 「${card.name}」— 第2行の敵ユニット${refreshed}体を更新`);
+    const allies = unitsOwnedBy(playerId, game).filter(
+      (u) => hasKeyword(u, "immobile") || hasKeyword(u, "noAttack"),
+    );
+    if (!allies.length) return;
+    game.pendingChoice = {
+      type: "sheriffRemoveKeywords",
+      playerId,
+      allies,
+      cardName: card.name,
+      queueItem: { playerId, card, ability: { effect: "sheriffOnSummon" }, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "sheriffRemoveKeywords" };
+    game.message = "保安官: [不動][不攻]を消す味方ユニットを選択";
+    return "pending";
+  },
+  imposterTactPlay({ game, playerId, card }) {
+    const neutrals = unitsOwnedBy(playerId, game).filter((u) => isNeutralUnit(u));
+    if (!neutrals.length) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— ニュートラルユニットがいない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "imposterTact",
+      step: "pickVictim",
+      playerId,
+      neutrals,
+      card,
+      queueItem: { playerId, card, ability: { effect: "imposterTactPlay" }, source: { zone: "hand" } },
+    };
+    game.selected = { kind: "choice", choice: "imposterTact" };
+    game.message = "インポスター: 破壊する自分のニュートラルユニットを選択";
+    return "pending";
+  },
+  imposterDestroyNeutral({ game, playerId, target, ability, card }) {
+    if (!target || target.owner !== playerId || !isNeutralUnit(target)) return;
+    const playCost = totalCostAmount(target.cost || {});
+    const victimCol = target.col;
+    const victimRow = target.row;
+    target.currentHp = 0;
+    cleanupAllDestroyed(null, game);
+    log(game, `${game.players[playerId].name}: 「${target.name}」を破壊`);
+    const player = game.players[playerId];
+    const opponent = opponentOf(playerId);
+    const eligible = [];
+    for (const ownerId of [playerId, opponent]) {
+      const dump = game.players[ownerId].dump;
+      for (let i = 0; i < dump.length; i++) {
+        const dumpCard = dump[i];
+        if (dumpCard.type !== "unit") continue;
+        if (totalCostAmount(dumpCard.cost || {}) !== playCost) continue;
+        eligible.push({ card: dumpCard, ownerId, dumpIndex: i });
+      }
+    }
+    if (!eligible.length) {
+      log(game, `${player.name}: コスト総量${playCost}のユニットが墓地にない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "imposterSummon",
+      playerId,
+      eligible,
+      victimCol,
+      victimRow,
+      cardName: card?.name || "正体隠匿(インポスター)",
+      queueItem: ability?.queueItem || { playerId, card, ability: { effect: "imposterTactPlay" }, source: { zone: "hand" } },
+    };
+    game.selected = { kind: "choice", choice: "imposterSummon" };
+    game.message = `インポスター: コスト総量${playCost}のユニットを墓地から選ぶ`;
+    return "pending";
   },
   controlEnemyUnitToSummonRow({ game, playerId, target }) {
     if (!target || target.owner === playerId) return;
@@ -2612,6 +2865,7 @@ async function loadFirebaseCardsIntoCatalog() {
     }
     ensureAllCardKeywords();
     refreshCatalogCompatibility(cardCatalog);
+    applySupplementalCardOverrides();
     app.cardSync = { status: "ok", count, error: null, updatedAt: Date.now() };
     if (app.screen === "deckBuilder") {
       app.deckBuilder.message = `Firebaseからカード${count}枚を同期しました。`;
@@ -2789,6 +3043,7 @@ function parseDeckmakerKeywords(card) {
     ["soulPay", /魂/g],
     ["cleave", numRe("巨撃")],
     ["oneDamage", /ダメージを1[づず]つしか受けない/g],
+    ["effectProtect", numRe("効果保護")],
   ];
   const keywords = [];
   const seen = new Set();
@@ -2861,9 +3116,26 @@ function parseDeckmakerAbilities(card, localType) {
         amount: parseDeckmakerKeywordValue(structDestroyEnemyMatch[2]) || 1,
       });
     }
+    const structMagicPayRestMatch = text.match(/魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を支払いレストする[：:]([^。\n]+)/);
+    if (structMagicPayRestMatch && !abilities.some((a) => a.effect === "structPayRestChooseResource")) {
+      const produceMatch = structMagicPayRestMatch[2].match(/([0-9０-９①②③④⑤⑥⑦⑧⑨]+)個/);
+      const produceAmount = produceMatch ? (parseDeckmakerKeywordValue(produceMatch[1]) || 5) : 5;
+      abilities.push({
+        trigger: "onStructurePhase",
+        effect: "structPayRestChooseResource",
+        activationCost: { magic: parseDeckmakerKeywordValue(structMagicPayRestMatch[1]) || 5 },
+        produceAmount,
+        options: RESOURCE_KEYS.filter((k) => k !== "magic").map((id) => ({
+          id,
+          label: RESOURCE_LABELS[id],
+          cost: {},
+          produces: { [id]: produceAmount },
+        })),
+      });
+    }
   }
   // Firebase generates フィールド（タクト等の即時資源）
-  if (localType !== "struct" && localType !== "core") {
+  if (localType !== "struct" && localType !== "core" && !/与ダメージ時/.test(text)) {
     for (const [resource, amount] of Object.entries(fromDeckmakerCosts(card.generates || {}))) {
       if (Number(amount) <= 0) continue;
       if (abilities.some((a) => a.effect === "gainResource" && a.resource === resource)) continue;
@@ -3099,12 +3371,32 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // vs-tag attack bonus: "「歩兵」タグを持っているユニットに対し与攻撃時：ATK+①"
-  const vsTagAtkMatch = text.match(/「([^」]+)」タグを持っているユニットに対し与攻撃時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
+  const vsTagAtkMatch = text.match(/「([^」]+)」タグを持っているユニットに対し(?:与)?攻撃時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
   if (vsTagAtkMatch && localType === "unit") {
     abilities.push({
       effect: "vsTagAtkBonus",
       vsTag: vsTagAtkMatch[1],
       atkBonus: parseDeckmakerKeywordValue(vsTagAtkMatch[2]) || 1,
+    });
+  }
+  const vsTagAtkBracketMatch = text.match(/\[([^\]]+)\]タグのユニットに対し(?:与)?攻撃時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
+  if (vsTagAtkBracketMatch && localType === "unit" && !abilities.some((a) => a.effect === "vsTagAtkBonus")) {
+    abilities.push({
+      effect: "vsTagAtkBonus",
+      vsTag: vsTagAtkBracketMatch[1],
+      atkBonus: parseDeckmakerKeywordValue(vsTagAtkBracketMatch[2]) || 1,
+    });
+  }
+
+  const vsTagDamageGainMatch = text.match(/\[([^\]]+)\]タグのユニットに対し(?:与)?ダメージ時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/);
+  if (vsTagDamageGainMatch && localType === "unit") {
+    const vsTagResMap = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+    abilities.push({
+      trigger: "onDamageDealt",
+      effect: "gainResource",
+      vsTag: vsTagDamageGainMatch[1],
+      resource: vsTagResMap[vsTagDamageGainMatch[2]] || "nature",
+      amount: parseDeckmakerKeywordValue(vsTagDamageGainMatch[3]) || 1,
     });
   }
 
@@ -3197,7 +3489,7 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onFirstDraw", effect: "reviveUnitFromDump", maxCost, grantTag });
   }
 
-  const payHpBuffMatch = text.match(/自([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払う[：:]HP([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
+  const payHpBuffMatch = text.match(/(?:非ダメージ時[、,]\s*)?自([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払う[：:]HP([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
   if (payHpBuffMatch && localType === "unit") {
     abilities.push({
       trigger: "onActivate",
@@ -3206,6 +3498,7 @@ function parseDeckmakerAbilities(card, localType) {
       atkBuff: 0,
       hpBuff: parseDeckmakerKeywordValue(payHpBuffMatch[2]) || 5,
       noRest: true,
+      nonDamageOnly: /非ダメージ時/.test(text),
     });
   }
 
@@ -3554,9 +3847,18 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1755701443493") {
     abilities.length = 0;
-    abilities.push({ trigger: "onSummon", effect: "enterRestedLocked", turns: 999 });
-    abilities.push({ trigger: "onDestroyEnemyUnit", effect: "unrestSelf" });
-    abilities.push({ trigger: "onActivate", effect: "summonTagFromDumpAndRest", tag: "\u602a\u7570" });
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "structPayRestChooseResource",
+      activationCost: { magic: 5 },
+      produceAmount: 5,
+      options: RESOURCE_KEYS.filter((k) => k !== "magic").map((id) => ({
+        id,
+        label: RESOURCE_LABELS[id],
+        cost: {},
+        produces: { [id]: 5 },
+      })),
+    });
   }
 
   if (card.id === "card_1755671140352") {
@@ -3617,8 +3919,32 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   if (card.id === "card_1782500000000") {
+    // vsTag damage + adjacent buff: parser + refreshContinuousEffects
+  }
+
+  if (card.id === "card_1782211899987") {
     abilities.length = 0;
-    abilities.push({ trigger: "onActivate", effect: "gainStatBuff", activationCost: { nature: 1, fuel: 1 }, atkBuff: 2, hpBuff: 0 });
+    abilities.push({ trigger: "onSummon", effect: "identityPrivateOnSummon" });
+  }
+  if (card.id === "card_1782212242238") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "identityKaijuSummonFromDump", maxCost: 3, amount: 2 });
+  }
+  if (card.id === "card_1782297782539") {
+    abilities.push({ trigger: "onSummon", effect: "stripNeutralUnitAbilities", target: "friendlyNeutralUnit" });
+  }
+  if (card.id === "card_1782208064951") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "discardEqualToFieldUnits" });
+    abilities.push({ trigger: "onTurnEnd", effect: "colorfulTurnEndRemap" });
+  }
+  if (card.id === "card_1782211496085") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "sheriffOnSummon" });
+  }
+  if (card.id === "card_1782208333313") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "imposterTactPlay" });
   }
 
   if (card.id === "card_1782520000000") {
@@ -3654,6 +3980,9 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   if (card.id === "card_1782225519182") {
+    for (let i = abilities.length - 1; i >= 0; i--) {
+      if (abilities[i].trigger === "onPlay" && abilities[i].effect === "gainResource") abilities.splice(i, 1);
+    }
     if (!abilities.some((a) => a.trigger === "onActivate" && a.effect === "gainStatBuff" && a.hpBuff)) {
       abilities.push({
         trigger: "onActivate",
@@ -3662,6 +3991,7 @@ function parseDeckmakerAbilities(card, localType) {
         atkBuff: 0,
         hpBuff: 5,
         noRest: true,
+        nonDamageOnly: true,
       });
     }
   }
@@ -3721,9 +4051,17 @@ function fromDeckmakerCard(card) {
     if (card.id === "card_1753970684315") base.requiredSacrificeName = "炎の英傑";
     if (card.id === "card_1761808048476") ensureKeyword(base, "oneDamage");
     if (card.id === "card_1753664097092") removeKeywords(base, ["mobile"]);
+    if (card.id === "card_1782212242238") {
+      base.identityRevealGate = { hostId: "card_1782211899987", stackedId: "card_1755671140352" };
+      base.countsAsNeutral = true;
+    }
+    if (["card_1782211899987", "card_1782297782539", "card_1782208064951", "card_1782211496085"].includes(card.id)) {
+      base.countsAsNeutral = true;
+    }
   }
   if (localType === "core") {
-    base.hp = Number(card.hp ?? card.defense) || 20;
+    const coreText = String(card.description || "");
+    base.hp = Number(card.hp ?? card.life ?? card.defense) || 20;
     base.initialHand = Number(card.initialHand) || 4;
     base.draw = Number(card.draw ?? card.drawCount ?? card.drawPerTurn) || 1;
     base.handLimit = Number(card.handLimit ?? card.maxHandSize ?? card.handMax) || 7;
@@ -3732,8 +4070,39 @@ function fromDeckmakerCard(card) {
     base.deckMax = Number(card.deckMax) || 60;
     base.startResources = fromDeckmakerCosts(card.startResources || card.initialResources || {});
     base.income = fromDeckmakerCosts(card.income || card.generates || {});
+    const turnStartIncomeMatch = coreText.match(/ターン開始時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/);
+    if (turnStartIncomeMatch) {
+      const coreIncomeRes = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+      const resource = coreIncomeRes[turnStartIncomeMatch[1]];
+      const amount = parseDeckmakerKeywordValue(turnStartIncomeMatch[2]) || 1;
+      if (resource) base.income[resource] = (base.income[resource] || 0) + amount;
+    }
+    const perTurnIncomeMatch = coreText.match(/毎ターン[：:]([^。\n]+)/);
+    if (perTurnIncomeMatch) {
+      const coreIncomeRes = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+      const segment = perTurnIncomeMatch[1];
+      const perTurnPatterns = [
+        [/金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
+        [/人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
+        [/自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
+        [/鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
+        [/燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
+        [/電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
+        [/魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+      ];
+      for (const [pattern, resource] of perTurnPatterns) {
+        const match = segment.match(pattern);
+        if (match) {
+          base.income[resource] = (base.income[resource] || 0) + (parseDeckmakerKeywordValue(match[1]) || 1);
+        }
+      }
+    }
     base.specialRequirements = Array.isArray(card.specialRequirements) ? card.specialRequirements : [];
     base.armor = Number(card.armor) || 0;
+    if (!base.armor) {
+      const armorKw = base.keywords.find((kw) => kw.id === "armor");
+      if (armorKw?.value) base.armor = armorKw.value;
+    }
     if (card.id === "card_1782287759412") {
       const dtoTags = ["アトラス北東軍", "グラダナ連邦共和国", "ルディワ公国"];
       base.passiveBuffTags = dtoTags;
@@ -5347,7 +5716,7 @@ function createPlayer(id, mainDeckIds = DEFAULT_MAIN_DECK_IDS, structDeckIds = D
     core,
     resources: normalizeResourceObject(core.startResources || {}),
     mainDeck: makeDeck(mainDeckIds, { shuffle: options.shuffleMainDeck !== false }),
-    structDeck: structDeckIds.map((cardId) => cloneCard(cardCatalog.structs[cardId])).filter(Boolean),
+    structDeck: structDeckIds.map((cardId) => cloneCatalogCard(cardCatalog.structs[cardId])).filter(Boolean),
     hand: [],
     structs: [],
     tactZone: [],
@@ -5361,7 +5730,7 @@ function createPlayer(id, mainDeckIds = DEFAULT_MAIN_DECK_IDS, structDeckIds = D
 function makeDeck(ids, options = {}) {
   const usableIds = ids.filter((id) => cardCatalog.main[id] && !cardCatalog.main[id].fixture);
   validateDeck(usableIds);
-  const deck = usableIds.map((id) => cloneCard(cardCatalog.main[id]));
+  const deck = usableIds.map((id) => cloneCatalogCard(cardCatalog.main[id]));
   return options.shuffle === false ? deck : shuffleCards(deck);
 }
 
@@ -5376,6 +5745,51 @@ function shuffleCards(cards) {
 
 function cloneCard(card) {
   return JSON.parse(JSON.stringify(card));
+}
+
+function cloneCatalogCard(card) {
+  if (!card) return null;
+  const copy = cloneCard(card);
+  syncBundledRuntimeCard(copy);
+  return copy;
+}
+
+function isNeutralCard(card) {
+  if (!card) return false;
+  if (card.faction === "ニュートラル" || card.world === "ニュートラル") return true;
+  const text = card.text || card.description || "";
+  return /ニュートラルとしても扱う/.test(text);
+}
+
+function isNeutralUnit(unit) {
+  return isNeutralCard(unit);
+}
+
+function findIdentityRevealSacrifice(playerId, gate, game = state) {
+  if (!gate?.hostId || !gate?.stackedId) return null;
+  return unitsOwnedBy(playerId, game).find((unit) => {
+    if (unit.id !== gate.hostId) return false;
+    return (unit.identityStack || []).some((c) => c.id === gate.stackedId);
+  });
+}
+
+function refreshBoardUnit(game, unit) {
+  const template = cardCatalog.main[unit.id];
+  if (!template) return;
+  const { row, col, owner, instanceId, rested } = unit;
+  const fresh = makeUnit(template.id, owner, row, col, { rested });
+  fresh.instanceId = instanceId;
+  if (unit.identityStack) fresh.identityStack = cloneCard(unit.identityStack);
+  game.board[row][col] = fresh;
+  log(game, `「${fresh.name}」を更新`);
+  triggerAbilities(game, owner, fresh, "onSummon");
+}
+
+function consolidatePlayCostToResource(cost, resource) {
+  const total = totalCostAmount(cost || {});
+  const next = emptyResources();
+  if (resource && total > 0) next[resource] = total;
+  return next;
 }
 
 function makeUnit(cardId, owner, row, col, options = {}) {
@@ -5462,31 +5876,31 @@ function tagLabels(card) {
 }
 
 function cardImageSource(card) {
-  const src = card?.imageUrl || card?.image;
-  if (src) return src;
-  if (card?.id) {
-    const cat = cardCatalog.main[card.id] || cardCatalog.structs[card.id] || cardCatalog.cores[card.id];
-    const fallback = cat?.imageUrl || cat?.image;
-    if (fallback) return fallback;
-  }
-  return null;
+  const candidates = cardImageUrlCandidates(card);
+  return candidates[0] || null;
 }
 
 function getCardImage(card) {
-  const src = cardImageSource(card);
-  if (!src) return null;
+  const candidates = cardImageUrlCandidates(card);
+  if (!candidates.length) return null;
+  const src = candidates[0];
   const cached = cardImageCache.get(src);
   // 失敗したエントリはキャッシュしない（サーバー起動前にロードして失敗した場合にリトライできるよう）
   if (cached && !cached.failed) return cached;
   const image = new Image();
-  const entry = { image, loaded: false, failed: false };
+  const entry = { image, loaded: false, failed: false, src, fallbacks: candidates.slice(1), cardRef: card };
   image.onload = () => {
     entry.loaded = true;
     render();
   };
   image.onerror = () => {
+    const next = entry.fallbacks.shift();
+    if (next) {
+      entry.src = next;
+      image.src = next;
+      return;
+    }
     entry.failed = true;
-    // 失敗時はキャッシュから削除して次回リトライ可能にする
     cardImageCache.delete(src);
   };
   image.src = src;
@@ -5655,6 +6069,22 @@ function refreshContinuousEffects(game = state) {
         }).length;
         applyConditionalBuff(unit, "108thBattalionBuff", adjacentPureHumans >= 2, { atk: 2, hp: 0 });
       }
+      if (unit.id === "card_1782500000000" || unit.id === "card_1782307790847") {
+        const adjacentAtlas = adjacentCells(unit.row, unit.col).filter(([row, col]) => {
+          const adjacent = game.board[row]?.[col];
+          return adjacent?.owner === pid && (adjacent.tags || []).includes("アトラス北東軍");
+        }).length;
+        const buffKey = unit.id === "card_1782500000000" ? "65thBattalionAtlasAdj" : "33rdArtilleryAtlasAdj";
+        applyConditionalBuff(unit, buffKey, adjacentAtlas >= 2, { atk: 1, hp: 1 });
+      }
+    }
+    const hasRevealedKaiju = unitsOwnedBy(pid, game).some((u) => u.id === "card_1782212242238");
+    if (hasRevealedKaiju) {
+      for (const ally of unitsOwnedBy(pid, game)) {
+        removeKeywords(ally, ["immobile", "noAttack"]);
+        ensureKeyword(ally, "armor", Math.max(keywordValue(ally, "armor"), 2));
+        ensureKeyword(ally, "guard");
+      }
     }
     const commander = unitsOwnedBy(pid, game).find((unit) => unit.id === "card_1782225519182");
     if (commander) {
@@ -5666,6 +6096,7 @@ function refreshContinuousEffects(game = state) {
         (unit.tags || []).includes("アトラス北東軍")
       );
       for (const unit of unitsOwnedBy(pid, game)) {
+        if (unit.id === commander.id) continue;
         applyConditionalBuff(unit, "northeastCommanderFieldAura", hasAtlasUnit, { atk: 3, hp: 0 });
       }
     }
@@ -5905,6 +6336,9 @@ function processEffectQueue(game) {
       }
       const result = effect({ game, playerId: item.playerId, card: item.card, ability: item.ability, source: item.source, target: item.target || null });
       if (result === "pending") {
+        if (game.pendingChoice && !game.pendingChoice.queueItem) {
+          game.pendingChoice.queueItem = item;
+        }
         cleanupAllDestroyed(null, game);
         return;
       }
@@ -6374,6 +6808,7 @@ function resolveDiscardForDraw(index) {
   }
   state.pendingChoice = null;
   state.selected = null;
+  finishPendingEffectQueue(state);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -6534,6 +6969,179 @@ function resolveReviveFromDumpSkip() {
   completeAbilitySource(state, qi);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function resolveIdentityCopyAbility(optionIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "identityCopyAbility") return false;
+  const opt = pending.options[optionIndex];
+  if (!opt) return false;
+  const host = pending.hostUnit;
+  if (!host.abilities) host.abilities = [];
+  const copied = { ...opt.ability };
+  host.abilities.push(copied);
+  log(state, `${state.players[pending.playerId].name}: 「${host.name}」が能力「${opt.label}」を獲得`);
+  if (copied.trigger === "onSummon") {
+    triggerAbilities(state, pending.playerId, host, "onSummon");
+  }
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function toggleColorfulDiscardChoice(handIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "colorfulDiscard") return;
+  const selected = new Set(pending.selectedHandIndexes);
+  if (selected.has(handIndex)) selected.delete(handIndex);
+  else if (selected.size < pending.remaining) selected.add(handIndex);
+  pending.selectedHandIndexes = [...selected];
+  state.message = `色彩: ${pending.selectedHandIndexes.length}/${pending.remaining}枚選択`;
+}
+
+function resolveColorfulDiscardConfirm() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "colorfulDiscard") return false;
+  if (pending.selectedHandIndexes.length !== pending.remaining) return false;
+  const player = state.players[pending.playerId];
+  const indexes = [...pending.selectedHandIndexes].sort((a, b) => b - a);
+  for (const idx of indexes) {
+    const card = player.hand.splice(idx, 1)[0];
+    player.dump.push(card);
+  }
+  notifyDumpChanged(state, pending.playerId);
+  log(state, `${player.name}: 「${pending.cardName}」— 手札${indexes.length}枚を捨てた`);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveColorfulRemapSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "colorfulRemapCost") return false;
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  log(state, `${state.players[pending.playerId].name}: 色彩のコスト変更をスキップ`);
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveColorfulRemapUnit(unitIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "colorfulRemapCost" || pending.step !== "pickUnit") return false;
+  const unit = pending.units[unitIndex];
+  if (!unit) return false;
+  pending.selectedUnitInstanceId = unit.instanceId;
+  pending.step = "pickResource";
+  state.message = "色彩: コストをまとめる資源の種類を選択";
+  render();
+  return true;
+}
+
+function resolveColorfulRemapResource(resource) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "colorfulRemapCost" || pending.step !== "pickResource") return false;
+  const unit = pending.units.find((u) => u.instanceId === pending.selectedUnitInstanceId);
+  if (!unit) return false;
+  const before = formatCost(unit.cost);
+  unit.cost = consolidatePlayCostToResource(unit.cost, resource);
+  log(state, `${state.players[pending.playerId].name}: 「${unit.name}」のコストを${before}→${formatCost(unit.cost)}に変更`);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveSheriffRemoveKeywords(unitIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "sheriffRemoveKeywords") return false;
+  const unit = pending.allies[unitIndex];
+  if (!unit) return false;
+  removeKeywords(unit, ["immobile", "noAttack"]);
+  log(state, `${state.players[pending.playerId].name}: 「${unit.name}」の[不動][不攻]を消した`);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveImposterVictim(unitIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "imposterTact" || pending.step !== "pickVictim") return false;
+  const target = pending.neutrals[unitIndex];
+  if (!target) return false;
+  abilityEffects.imposterDestroyNeutral({
+    game: state,
+    playerId: pending.playerId,
+    target,
+    card: pending.card,
+    ability: { queueItem: pending.queueItem },
+  });
+  if (!state.pendingChoice || state.pendingChoice.type !== "imposterSummon") {
+    state.pendingChoice = null;
+    state.selected = null;
+    completeAbilitySource(state, pending.queueItem);
+    processEffectQueue(state);
+  }
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveImposterSummon(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "imposterSummon") return false;
+  const entry = pending.eligible[index];
+  if (!entry) return false;
+  const player = state.players[pending.playerId];
+  const ownerDump = state.players[entry.ownerId].dump;
+  const dumpIdx = entry.dumpIndex ?? ownerDump.findIndex((c) => c.id === entry.card.id && c.name === entry.card.name);
+  if (dumpIdx < 0) return false;
+  const dumpCard = ownerDump.splice(dumpIdx, 1)[0];
+  notifyDumpChanged(state, entry.ownerId);
+  const row = pending.victimRow;
+  const col = pending.victimCol;
+  if (state.board[row]?.[col]) {
+    ownerDump.push(dumpCard);
+    notifyDumpChanged(state, entry.ownerId);
+    state.message = "その列は埋まっています。";
+    render();
+    return false;
+  }
+  const unit = makeUnit(dumpCard.id, pending.playerId, row, col, { fromDump: true });
+  commitUnitToBoard(state, unit, row, col);
+  log(state, `${player.name}: 「${pending.cardName}」— 「${dumpCard.name}」を列${col + 1}に出した`);
+  triggerAbilities(state, pending.playerId, unit, "onSummon", { fromDump: true });
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
   return true;
 }
 
@@ -6919,7 +7527,11 @@ function isValidAbilityTarget(item, target) {
   if (!target) return false;
   if (item.ability.target === "enemyUnit" && target.owner === item.playerId) return false;
   if (item.ability.target === "friendlyUnit" && target.owner !== item.playerId) return false;
-  if (!["enemyUnit", "friendlyUnit", "anyUnit"].includes(item.ability.target)) return false;
+  if (item.ability.target === "friendlyNeutralUnit") {
+    if (target.owner !== item.playerId || !isNeutralUnit(target)) return false;
+    return true;
+  }
+  if (!["enemyUnit", "friendlyUnit", "anyUnit", "friendlyNeutralUnit"].includes(item.ability.target)) return false;
   // 効果保護チェック（敵ユニットを対象にする場合）
   if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
     if (!canAffectUnitByEffect(state, target, item.card)) return false;
@@ -6929,17 +7541,26 @@ function isValidAbilityTarget(item, target) {
 
 function completeAbilitySource(game, item) {
   if (item.source?.zone !== "tact") return;
+  if (MAIN_PHASE_TACT_TRIGGERS.includes(item.ability?.trigger)) return;
   const player = game.players[item.playerId];
   const index = player.tactZone.findIndex((c) =>
     c === item.card || (item.card?.instanceId != null && c.instanceId === item.card.instanceId));
   if (index >= 0) {
     const card = player.tactZone[index];
+    markPermanentTactIfNeeded(card);
     if (!isPermanentTactCard(card)) {
       const [removed] = player.tactZone.splice(index, 1);
       player.dump.push(removed);
       notifyDumpChanged(game, item.playerId);
     }
   }
+}
+
+function finishPendingEffectQueue(game) {
+  const qi = game.pendingChoice?.queueItem;
+  if (!qi) return;
+  completeAbilitySource(game, qi);
+  game.pendingChoice.queueItem = null;
 }
 
 function startTurn(game, playerId, options = {}) {
@@ -6964,6 +7585,7 @@ function startTurn(game, playerId, options = {}) {
       unit.rested = false;
     }
     unit.attacksThisTurn = 0;
+    unit.dealtDamageThisTurn = false;
     unit.mobileMoveUsed = false;
   }
   for (const [key, amount] of Object.entries(player.core.income || {})) addResources(player, key, amount);
@@ -7056,7 +7678,9 @@ function cardHasStructPhaseActivation(card) {
 }
 
 function ensureStructPhaseAbilities(card) {
-  if (!card?.id || cardHasStructPhaseActivation(card)) return card;
+  if (!card?.id) return card;
+  syncBundledRuntimeCard(card);
+  if (cardHasStructPhaseActivation(card)) return card;
   const catalogCard = catalogCardFor(card);
   if (!catalogCard?.abilities?.length) return card;
   const missing = catalogCard.abilities.filter((a) => STRUCT_PHASE_TRIGGERS.includes(a.trigger));
@@ -7453,6 +8077,16 @@ function requiresTactSummon(card) {
   return (card.abilities || []).some((a) => a.trigger === "onSummon" && a.effect === "descentEffect");
 }
 
+function applyIdentityRevealGate(playerId, card, game = state) {
+  const sacrifice = findIdentityRevealSacrifice(playerId, card.identityRevealGate, game);
+  if (!sacrifice) return false;
+  game.board[sacrifice.row][sacrifice.col] = null;
+  game.players[playerId].dump.push(stripRuntime(sacrifice));
+  notifyDumpChanged(game, playerId);
+  log(game, `${game.players[playerId].name}: 「${sacrifice.name}」を破壊して「${card.name}」を出す`);
+  return true;
+}
+
 function findRequiredSacrificeUnit(playerId, card) {
   if (!card?.requiredSacrificeName) return null;
   return unitsOwnedBy(playerId).find((unit) => unit.name === card.requiredSacrificeName);
@@ -7477,6 +8111,9 @@ function placeUnitFromHand(handIndex, row, col) {
   if (isPlayBlockedBySadGirl(state.activePlayer, card)) return fail("This card is blocked by Unknown Sad Girl.");
   if (!canMeetUnitStructRequirement(player, card)) return fail(`${card.requiredStructName || "\u5fc5\u8981\u30b9\u30c8\u30e9\u30af\u30c8"} \u304c\u306a\u3044\u305f\u3081\u51fa\u6483\u3067\u304d\u307e\u305b\u3093\u3002`);
   if (card.requiredSacrificeName && !findRequiredSacrificeUnit(state.activePlayer, card)) return fail(`${card.requiredSacrificeName} がないため出撃できません。`);
+  if (card.identityRevealGate && !findIdentityRevealSacrifice(state.activePlayer, card.identityRevealGate)) {
+    return fail("【正体不明】私（骨の少女を重ねた状態）が場にないため出撃できません。");
+  }
   if (!canSummonToRow(card, player, row)) {
     return fail(isOpponentSummonRow(state.activePlayer, row)
       ? "相手のサモンフィールドには配置できません。"
@@ -7491,6 +8128,9 @@ function placeUnitFromHand(handIndex, row, col) {
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
 
   applyUnitSacrificeRequirement(state.activePlayer, card);
+  if (card.identityRevealGate && !applyIdentityRevealGate(state.activePlayer, card)) {
+    return fail("正体判明の出撃条件を満たせませんでした。");
+  }
   revealCardUse(state.activePlayer, card, "summon");
   const unit = makeUnit(card.id, state.activePlayer, row, col, { rested: false });
   commitUnitToBoard(state, unit, row, col);
@@ -7547,6 +8187,8 @@ function playTactFromHand(handIndex) {
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
   revealCardUse(state.activePlayer, card, "play");
   player.hand.splice(handIndex, 1);
+  syncBundledRuntimeCard(card);
+  markPermanentTactIfNeeded(card);
   if (!card.instanceId) card.instanceId = nextInstanceId++;
   player.tactZone.push(card);
   if (offerIntelAgencyCancel(state.activePlayer, card)) {
@@ -7566,8 +8208,8 @@ function finishPlayTact(tactOwnerId, tactCard) {
 function offerIntelAgencyCancel(tactOwnerId, tactCard) {
   const responderId = opponentOf(tactOwnerId);
   const responder = state.players[responderId];
-  const hasIntel = (responder.structs || []).some((struct) => struct.id === "card_1753664241159");
-  if (!hasIntel) return false;
+  const intelStruct = (responder.structs || []).find((struct) => struct.id === "card_1753664241159" && !struct.rested);
+  if (!intelStruct) return false;
   const canPayPeople = (responder.resources.people || 0) >= 3;
   const canPayElectric = (responder.resources.electric || 0) >= 3;
   if (!canPayPeople && !canPayElectric) return false;
@@ -7603,7 +8245,7 @@ function resolveIntelAgencyCancel(useIntel) {
         owner.dump.push(cancelled);
         notifyDumpChanged(state, tactOwnerId);
       }
-      const intelStruct = (responder.structs || []).find((struct) => struct.id === "card_1753664241159");
+      const intelStruct = (responder.structs || []).find((struct) => struct.id === "card_1753664241159" && !struct.rested);
       if (intelStruct) intelStruct.rested = true;
       const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
       log(state, `${responder.name}: 諜報機関で「${tactCard.name}」を無効化（${costLabel}）`);
@@ -7661,6 +8303,7 @@ function playStruct(index) {
   if (!card) return;
   if (!payForCard(player, card.cost, card)) return fail("施設のプレイコストが不足しています。");
   revealCardUse(state.activePlayer, card, "build");
+  syncBundledRuntimeCard(card);
   ensureStructPhaseAbilities(card);
   player.structs.push(card);
   player.structDeck.splice(index, 1);
@@ -7724,6 +8367,7 @@ function finishExposureManagement(pending, moveTarget = null) {
   }
   state.pendingChoice = null;
   state.selected = null;
+  finishPendingEffectQueue(state);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -7850,6 +8494,9 @@ function activateSelectedUnit() {
   if (!activateAbilities.length) return false;
   const player = state.players[state.activePlayer];
   const ability = activateAbilities[0];
+  if (ability.nonDamageOnly && (unit.dealtDamageThisTurn || (unit.attacksThisTurn || 0) > 0)) {
+    return fail("与ダメージ後はこの起動効果は使えません。");
+  }
   if (ability.activationCostType === "anyOne") {
     const amount = ability.activationCostAmount || 1;
     const affordable = RESOURCE_KEYS.filter((r) => (player.resources[r] || 0) >= amount);
@@ -7913,6 +8560,7 @@ function attackWithSelectedUnit(target, options = {}) {
     const coreDmg = Math.max(0, unit.atk - coreArmor);
     defender.core.hp -= coreDmg;
     if (coreDmg > 0) {
+      unit.dealtDamageThisTurn = true;
       for (const ability of (unit.abilities || [])) {
         if (ability.trigger === "onDamageDealt") {
           state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" } });
@@ -7994,6 +8642,7 @@ function executeUnitAttack(unit, defender, target, { useCharge = false } = {}) {
     }
   }
   if (damage > 0) {
+    unit.dealtDamageThisTurn = true;
     for (const ability of (unit.abilities || [])) {
       if (ability.trigger === "onDamageDealt") {
         state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" }, target: defender });
@@ -9828,7 +10477,7 @@ function drawBoard() {
       ctx.restore();
 
       const unit = state.board[row][col];
-      const tactOwnerId = isTactZone ? playerIdForTactZoneCell(row, col) : null;
+      const tactOwnerId = playerIdForTactZoneCell(row, col);
       const tactEntry = tactOwnerId ? tactAtZoneCell(tactOwnerId, row, col) : null;
 
       // TACTゾーン常駐カード
@@ -10713,6 +11362,12 @@ function drawChoiceOverlay() {
   else if (pending.type === "revealTagsForResources") drawRevealTagsForResourcesPanel(pending);
   else if (pending.type === "discardForDraw") drawDiscardForDrawPanel(pending);
   else if (pending.type === "coreStructStartDiscard") drawCoreStructStartDiscardPanel(pending);
+  else if (pending.type === "identityCopyAbility") drawIdentityCopyAbilityPanel(pending);
+  else if (pending.type === "colorfulDiscard") drawColorfulDiscardPanel(pending);
+  else if (pending.type === "colorfulRemapCost") drawColorfulRemapPanel(pending);
+  else if (pending.type === "sheriffRemoveKeywords") drawSheriffRemoveKeywordsPanel(pending);
+  else if (pending.type === "imposterTact") drawImposterTactPanel(pending);
+  else if (pending.type === "imposterSummon") drawImposterSummonPanel(pending);
   else if (pending.type === "deployHeroFromAttack") drawDeployHeroFromAttackPanel(pending);
   else if (pending.type === "intelAgencyCancel") drawIntelAgencyCancelPanel(pending);
   else if (pending.type === "destroyEnemyStruct") drawDestroyEnemyStructPanel(pending);
@@ -10821,6 +11476,103 @@ function drawSelectableChoiceCard(x, y, cardW, cardH, card, { selected = false, 
     ctx.textAlign = "left";
   }
   if (onClick && !disabled) addHit(x, y, cardW, cardH + (label ? 24 : 0), onClick);
+}
+
+function drawIdentityCopyAbilityPanel(pending) {
+  const x = 388, y = 202, w = 664, h = 320;
+  drawChoicePanelBase(x, y, w, h, "rgba(120,80,200,0.7)");
+  ctx.fillStyle = "#d0b0ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("正体不明の能力を1つ獲得", x + 28, y + 36);
+  pending.options.forEach((opt, i) => {
+    const cy = y + 70 + i * 44;
+    drawButton(x + 28, cy, w - 56, 36, opt.label, () => resolveIdentityCopyAbility(i));
+  });
+}
+
+function drawColorfulDiscardPanel(pending) {
+  const player = state.players[pending.playerId];
+  const x = 388, y = 180, w = 664, h = 380;
+  drawChoicePanelBase(x, y, w, h);
+  ctx.fillStyle = "#c8d8f0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 手札${pending.remaining}枚捨てる`, x + 28, y + 34);
+  player.hand.forEach((card, handIndex) => {
+    const selected = pending.selectedHandIndexes.includes(handIndex);
+    drawSelectableChoiceCard(x + 28 + (handIndex % 4) * 154, y + 56 + Math.floor(handIndex / 4) * 150, 140, 196, card, {
+      selected,
+      label: card.name,
+      onClick: () => toggleColorfulDiscardChoice(handIndex),
+    });
+  });
+  const ready = pending.selectedHandIndexes.length === pending.remaining;
+  drawButton(x + w - 180, y + h - 48, 150, 32, "確定", ready ? resolveColorfulDiscardConfirm : null, null, ready ? { accent: "p1" } : { accent: "dim" });
+}
+
+function drawColorfulRemapPanel(pending) {
+  const x = 388, y = 180, w = 664, h = 360;
+  drawChoicePanelBase(x, y, w, h);
+  ctx.fillStyle = "#c8d8f0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  if (pending.step === "pickResource") {
+    ctx.fillText("コストをまとめる資源を選択", x + 28, y + 34);
+    let bx = x + 28;
+    for (const key of RESOURCE_KEYS) {
+      drawButton(bx, y + 60, 72, 28, RESOURCE_LABELS[key], () => resolveColorfulRemapResource(key));
+      bx += 80;
+    }
+    return;
+  }
+  ctx.fillText(`${pending.cardName}: コスト変更するユニットを選択`, x + 28, y + 34);
+  pending.units.forEach((unit, i) => {
+    drawSelectableChoiceCard(x + 28 + (i % 4) * 154, y + 56 + Math.floor(i / 4) * 150, 140, 196, unit, {
+      label: `${unit.name} (${formatCost(unit.cost)})`,
+      onClick: () => resolveColorfulRemapUnit(i),
+    });
+  });
+  drawButton(x + 28, y + h - 48, 120, 32, "スキップ", resolveColorfulRemapSkip);
+}
+
+function drawSheriffRemoveKeywordsPanel(pending) {
+  const x = 388, y = 180, w = 664, h = 320;
+  drawChoicePanelBase(x, y, w, h);
+  ctx.fillStyle = "#c8d8f0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: [不動][不攻]を消す味方`, x + 28, y + 34);
+  pending.allies.forEach((unit, i) => {
+    drawSelectableChoiceCard(x + 28 + i * 154, y + 56, 140, 196, unit, {
+      label: unit.name,
+      onClick: () => resolveSheriffRemoveKeywords(i),
+    });
+  });
+}
+
+function drawImposterTactPanel(pending) {
+  const x = 388, y = 180, w = 664, h = 320;
+  drawChoicePanelBase(x, y, w, h);
+  ctx.fillStyle = "#c8d8f0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("破壊するニュートラルユニットを選択", x + 28, y + 34);
+  pending.neutrals.forEach((unit, i) => {
+    drawSelectableChoiceCard(x + 28 + i * 154, y + 56, 140, 196, unit, {
+      label: unit.name,
+      onClick: () => resolveImposterVictim(i),
+    });
+  });
+}
+
+function drawImposterSummonPanel(pending) {
+  const x = 388, y = 180, w = 664, h = 320;
+  drawChoicePanelBase(x, y, w, h);
+  ctx.fillStyle = "#c8d8f0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("墓地から出すユニットを選択", x + 28, y + 34);
+  pending.eligible.forEach((entry, i) => {
+    drawSelectableChoiceCard(x + 28 + i * 154, y + 56, 140, 196, entry.card, {
+      label: `${entry.card.name} (${entry.ownerId === pending.playerId ? "自" : "敵"}墓)`,
+      onClick: () => resolveImposterSummon(i),
+    });
+  });
 }
 
 function drawMysticCapturePanel(pending) {
@@ -11626,6 +12378,8 @@ function canAffordStructActivation(struct, player) {
         (opt) => (player.resources[opt.resource] || 0) >= opt.amount
       );
       if (!canAffordAny) return false;
+    } else if (ab.effect === "structPayRestChooseResource") {
+      if (!canPay(player, ab.activationCost || {})) return false;
     } else if (ab.effect === "destroyEnemyStructs") {
       if ((player.resources.fuel || 0) < (ab.fuelCost || 1)) return false;
       const opponent = opponentOf(player.id);

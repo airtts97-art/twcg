@@ -1,5 +1,4 @@
 /** Cards verified as fully implemented in the engine (manual audit). */
-/** Unimplemented from 2026-06-25 audit: card_1782212242238, card_1782211899987, card_1782297782539, card_1782211693491, card_1782208064951, card_1782211496085, card_1782208333313 */
 export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1753663163643", // [3→BUG←1/2→・](ガブ・バグ)
   "card_1753660083940", // アトラス・コントロール
@@ -33,6 +32,18 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782610000000", // 金準備を押収
   "card_1782463436621", // 露出管理
   "card_1782464860185", // 月下造山帯
+  "card_1755670973607", // 王城ノーベルグ
+  "card_1755701443493", // 赫光の炉心
+  "card_1782225814944", // 石油コンビナート
+  "card_1782225519182", // 北東軍最高司令官
+  "card_1782307790847", // 北東軍第33師団砲中隊
+  "card_1782500000000", // 北東軍第65歩兵大隊
+  "card_1782212242238", // 【正体判明】怪獣
+  "card_1782211899987", // 【正体不明】私
+  "card_1782297782539", // 【正体不明】虚空
+  "card_1782208064951", // 【正体不明】色彩
+  "card_1782211496085", // 【正体不明】保安官
+  "card_1782208333313", // 正体隠匿(インポスター)
 ]);
 
 export function isImplementedCard(cardId) {
