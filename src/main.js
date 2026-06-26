@@ -155,16 +155,43 @@ function markPermanentTactIfNeeded(card) {
   return card;
 }
 
+function deckmakerImageUrl(deckmakerCard) {
+  const raw = deckmakerCard?.imageUrl || deckmakerCard?.image;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+function isUsableImageUrl(url) {
+  if (typeof url !== "string" || !url.trim()) return false;
+  if (url.startsWith("data:image/")) return true;
+  if (url.startsWith("http://") || url.startsWith("https://")) return true;
+  if (url.startsWith("assets/")) return true;
+  return false;
+}
+
+function resolveCardImageUrl(deckmakerCard) {
+  const sourceImage = deckmakerImageUrl(deckmakerCard);
+  if (isUsableImageUrl(sourceImage)) return sourceImage;
+  const bundled = bundledImageUrlFor(deckmakerCard?.id);
+  if (isUsableImageUrl(bundled)) return bundled;
+  return deckmakerCard?.id ? `assets/cards/${deckmakerCard.id}.png` : "";
+}
+
 function bundledImageUrlFor(cardId) {
   const entry = supplementalCards.find((card) => card.id === cardId);
   return entry?.imageUrl || null;
 }
 
 function syncBundledRuntimeCard(card) {
-  if (!card?.id || !FORCE_BUNDLED_CARD_IDS.has(card.id)) return card;
-  const imageUrl = bundledImageUrlFor(card.id);
-  if (imageUrl) card.imageUrl = imageUrl;
-  markPermanentTactIfNeeded(card);
+  if (!card?.id) return card;
+  if (!isUsableImageUrl(card.imageUrl)) {
+    const catalog = catalogCardFor(card);
+    if (isUsableImageUrl(catalog?.imageUrl)) card.imageUrl = catalog.imageUrl;
+    else {
+      const bundled = bundledImageUrlFor(card.id);
+      if (isUsableImageUrl(bundled)) card.imageUrl = bundled;
+    }
+  }
+  if (FORCE_BUNDLED_CARD_IDS.has(card.id)) markPermanentTactIfNeeded(card);
   return card;
 }
 
@@ -173,7 +200,7 @@ const CARD_IMAGE_EXTENSIONS = [".jpeg", ".jpg", ".png"];
 function cardImageUrlCandidates(card) {
   const urls = [];
   const push = (src) => {
-    if (typeof src === "string" && src && !src.startsWith("data:") && !urls.includes(src)) urls.push(src);
+    if (typeof src === "string" && src && !urls.includes(src)) urls.push(src);
   };
   push(card?.imageUrl);
   push(card?.image);
@@ -2877,6 +2904,8 @@ async function loadFirebaseCardsIntoCatalog() {
       try {
         const card = fromDeckmakerCard(deckmakerCard);
         if (!card || card.fixture) continue;
+        const firebaseImage = deckmakerImageUrl(deckmakerCard);
+        if (isUsableImageUrl(firebaseImage)) card.imageUrl = firebaseImage;
         if (deckmakerCard.description) {
           card.text = String(deckmakerCard.description);
           card.description = String(deckmakerCard.description);
@@ -2889,7 +2918,7 @@ async function loadFirebaseCardsIntoCatalog() {
         console.warn("loadFirebaseCardsIntoCatalog: error processing card", deckmakerCard?.id, e);
       }
     }
-    applyBundledImageOverrides();
+    applyBundledImageFallbacks();
     applySupplementalCardFallbacks(firebaseIds);
     ensureAllCardKeywords();
     refreshCatalogCompatibility(cardCatalog);
@@ -2923,7 +2952,7 @@ async function loadFirebaseCardsIntoCatalog() {
   } catch (error) {
     console.warn("loadFirebaseCardsIntoCatalog failed:", error);
     applySupplementalCardFallbacks(new Set());
-    applyBundledImageOverrides();
+    applyBundledImageFallbacks();
     ensureAllCardKeywords();
     refreshCatalogCompatibility(cardCatalog);
     app.cardSync = { status: "error", count: 0, error: String(error.message || error), updatedAt: Date.now(), drift: [] };
@@ -2934,13 +2963,12 @@ async function loadFirebaseCardsIntoCatalog() {
   }
 }
 
-function applyBundledImageOverrides() {
-  for (const cardId of FORCE_BUNDLED_CARD_IDS) {
-    const imageUrl = bundledImageUrlFor(cardId);
-    if (!imageUrl) continue;
-    for (const group of ["main", "structs", "core"]) {
-      const card = cardCatalog[group]?.[cardId];
-      if (card) card.imageUrl = imageUrl;
+function applyBundledImageFallbacks() {
+  for (const group of ["main", "structs", "core"]) {
+    for (const card of Object.values(cardCatalog[group] || {})) {
+      if (!card?.id || isUsableImageUrl(card.imageUrl)) continue;
+      const bundled = bundledImageUrlFor(card.id);
+      if (isUsableImageUrl(bundled)) card.imageUrl = bundled;
     }
   }
 }
@@ -4132,7 +4160,7 @@ function fromDeckmakerCard(card) {
     actCost: fromDeckmakerCosts(card.costs?.act || card.actCost || {}),
     text: card.description || "",
     flavor: card.flavorText || card.flavor || card.description || "—",
-    imageUrl: typeof card.imageUrl === "string" && !card.imageUrl.startsWith("data:") ? card.imageUrl : (card.id ? `assets/cards/${card.id}.png` : ""),
+    imageUrl: resolveCardImageUrl(card),
     keywords: parseDeckmakerKeywords(card),
     abilities: parseDeckmakerAbilities(card, localType),
   };
@@ -4240,11 +4268,11 @@ function importDeckmakerAllData(payload) {
     const card = fromDeckmakerCard(deckmakerCard);
     if (!card) continue;
     const group = catalogGroupForCard(card);
-    // For FORCE_BUNDLED cards, always use the bundled imageUrl.
-    // Deckmaker exports base64 imageUrls which fromDeckmakerCard strips to a wrong fallback path.
-    if (FORCE_BUNDLED_CARD_IDS.has(card.id)) {
+    const sourceImage = deckmakerImageUrl(deckmakerCard);
+    if (isUsableImageUrl(sourceImage)) card.imageUrl = sourceImage;
+    else if (!isUsableImageUrl(card.imageUrl)) {
       const bundled = cardCatalog[group][card.id];
-      if (bundled?.imageUrl) card.imageUrl = bundled.imageUrl;
+      if (isUsableImageUrl(bundled?.imageUrl)) card.imageUrl = bundled.imageUrl;
     }
     groups[group][card.id] = card;
     cardCatalog[group][card.id] = card;
