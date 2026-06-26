@@ -131,6 +131,43 @@ const DEFAULT_MAIN_DECK_IDS = [
 const DEFAULT_STRUCT_DECK_IDS = ["town", "grove", "mine", "refinery", "powerPlant", "magicWell"];
 const BUNDLED_PRODUCTION_STRUCT_IDS = new Set(DEFAULT_STRUCT_DECK_IDS);
 const STRUCT_PHASE_TRIGGERS = ["onStructurePhase", "onStructurePhaseHP"];
+const MAIN_PHASE_TACT_TRIGGERS = ["onMainPhase"];
+
+function isPermanentTactCard(card) {
+  if (!card) return false;
+  if (card.permanentTact) return true;
+  const descText = card.description || card.text || "";
+  if (descText.includes("永続")) return true;
+  if ((card.abilities || []).some((a) => a.isPermanent)) return true;
+  if (/[0-9０-９①②③④⑤⑥⑦⑧⑨⑩]+回目.*発動/.test(descText)) return true;
+  return false;
+}
+
+function playerIdForTactZoneCell(row, col) {
+  if (row === PLAYERS.p1.summonRow || row === PLAYERS.p2.summonRow) return null;
+  if (row >= ROWS / 2 && col >= 10 && col <= 12) return "p1";
+  if (row < ROWS / 2 && col >= 0 && col <= 2) return "p2";
+  return null;
+}
+
+function tactZoneSlotCoords(playerId) {
+  const isP1 = playerId === "p1";
+  const rows = isP1 ? [2, 3] : [0, 1];
+  const cols = isP1 ? [10, 11, 12] : [0, 1, 2];
+  const slots = [];
+  for (const row of rows) {
+    for (const col of cols) slots.push({ row, col });
+  }
+  return slots;
+}
+
+function tactAtZoneCell(playerId, row, col) {
+  const slots = tactZoneSlotCoords(playerId);
+  const idx = slots.findIndex((s) => s.row === row && s.col === col);
+  if (idx < 0) return null;
+  const card = state.players[playerId]?.tactZone?.[idx];
+  return card ? { card, index: idx } : null;
+}
 const SAVED_DECK_KEY = "twcg.savedDeck.v1";
 const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
 const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
@@ -669,23 +706,34 @@ const abilityEffects = {
     card.counters = (card.counters || 0) + (ability.amount || 1);
     log(game, `${game.players[playerId].name}: 「${card.name}」初攻撃カウンター +${ability.amount || 1}`);
   },
+  permanentTactPlay({ game, playerId, card }) {
+    card.permanentTact = true;
+    card.rested = false;
+    log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに常駐`);
+  },
+  bloodlineCommitteePlay({ game, playerId, card }) {
+    card.permanentTact = true;
+    card.rested = false;
+    card.abilities = [
+      { trigger: "onMainPhase", effect: "discardForDraw", cond: { tag: "純人間" }, isPermanent: true },
+    ];
+    if (!game.globalEffects) game.globalEffects = [];
+    game.globalEffects.push({ type: "counterArmor", playerId, armorValue: 2 });
+    log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置（唯字論カウンター持ちに装甲②）`);
+  },
   bigConstructionPlanPlay({ game, playerId, card }) {
     card.activationCount = 0;
     card.rested = false;
     card.permanentTact = true;
     card.abilities = [
-      { trigger: "onStructurePhase", effect: "bigConstructionPlanActivate", isPermanent: true },
+      { trigger: "onMainPhase", effect: "bigConstructionPlanActivate", isPermanent: true },
       { trigger: "onDestroy", effect: "searchDeckMinCostToHand", minCost: 18 },
     ];
     log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
   },
   bigConstructionPlanActivate({ game, playerId, card }) {
     const player = game.players[playerId];
-    if (card.rested) {
-      log(game, `${player.name}: 「${card.name}」はレスト中`);
-      return;
-    }
-    card.rested = true;
+    if (!card.rested) card.rested = true;
     addResources(player, "funds", 3);
     addResources(player, "ore", 5);
     addResources(player, "fuel", 2);
@@ -742,8 +790,9 @@ const abilityEffects = {
     const label = ability.cond?.tag || ability.cond?.nameContains || ability.tag || "?";
     log(game, `${game.players[playerId].name}: 「${card.name}」カウンター +${ability.amount || 1}（${label}破壊）`);
   },
-  discardForDraw({ game, playerId, card, ability }) {
+  discardForDraw({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
+    if (source?.zone === "tact" && card.permanentTact) card.rested = true;
     if (!player.hand.length) return;
     game.pendingChoice = {
       type: "discardForDraw",
@@ -2133,6 +2182,7 @@ const cardCatalog = {
       keywords: [{ id: "multiStrike", value: 2 }],
       abilities: [],
     },
+    // rapidGunner: multiStrike value is total attacks (連撃①→2 stored as value 2)
     bunker: {
       id: "bunker",
       type: "unit",
@@ -2485,14 +2535,10 @@ function loadBundledDeckData() {
       const card = fromDeckmakerCard(deckmakerCard);
       if (!card) continue;
       const group = catalogGroupForCard(card);
-      // Bundled cards usually don't overwrite user-customized versions already in catalog.
-      // Core cards are refreshed from Deckmaker source so corrected initialResources
-      // migrate even when an older imported copy is still stored in localStorage.
+      // バンドルは Firebase 同期前のフォールバック。既存エントリは上書きしない。
       if (
         !cardCatalog[group][card.id]
-        || FORCE_BUNDLED_CARD_IDS.has(card.id)
         || (group === "structs" && BUNDLED_PRODUCTION_STRUCT_IDS.has(card.id))
-        || (group === "cores" && deckmakerCard.initialResources)
       ) {
         cardCatalog[group][card.id] = card;
       }
@@ -2523,7 +2569,6 @@ async function loadFirebaseCardsIntoCatalog() {
       }
     }
     ensureAllCardKeywords();
-    applySupplementalCardOverrides();
     refreshCatalogCompatibility(cardCatalog);
     app.cardSync = { status: "ok", count, error: null, updatedAt: Date.now() };
     if (app.screen === "deckBuilder") {
@@ -2532,6 +2577,9 @@ async function loadFirebaseCardsIntoCatalog() {
     return true;
   } catch (error) {
     console.warn("loadFirebaseCardsIntoCatalog failed:", error);
+    applySupplementalCardOverrides();
+    ensureAllCardKeywords();
+    refreshCatalogCompatibility(cardCatalog);
     app.cardSync = { status: "error", count: 0, error: String(error.message || error), updatedAt: Date.now() };
     if (app.screen === "deckBuilder" && !app.deckBuilder.message?.includes("同期")) {
       app.deckBuilder.message = "Firebase同期に失敗しました。バンドルデータを使用しています。";
@@ -2707,7 +2755,9 @@ function parseDeckmakerKeywords(card) {
       const key = `${id}:${match[0]}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const value = parseDeckmakerKeywordValue(match[0]);
+      let value = parseDeckmakerKeywordValue(match[0]);
+      // 連撃N = 1回 + N回の追加攻撃（合計 N+1 回）
+      if (id === "multiStrike" && value != null) value += 1;
       keywords.push(value ? { id, value } : { id });
     }
   }
@@ -2770,6 +2820,15 @@ function parseDeckmakerAbilities(card, localType) {
       });
     }
   }
+  // Firebase generates フィールド（タクト等の即時資源）
+  if (localType !== "struct" && localType !== "core") {
+    for (const [resource, amount] of Object.entries(fromDeckmakerCosts(card.generates || {}))) {
+      if (Number(amount) <= 0) continue;
+      if (abilities.some((a) => a.effect === "gainResource" && a.resource === resource)) continue;
+      abilities.push({ trigger: "onPlay", effect: "gainResource", resource, amount: Number(amount) });
+    }
+  }
+
   const baseTrigger = localType === "unit" ? "onSummon" : "onPlay";
 
   // Draw patterns: "カードをX枚引く", "デッキからX枚ドロー", "X枚ドロー"
@@ -2794,13 +2853,15 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
-  const destroyStructsOnPlayMatch = text.match(/相手のストラクトカードを([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚破壊/);
+  const destroyStructsOnPlayMatch = text.match(/相手のストラクト(?:カード)?を([0-9０-９①②③④⑤⑥⑦⑧⑨⑩]+)枚破壊/);
   if (destroyStructsOnPlayMatch && localType === "tact") {
-    abilities.push({
-      trigger: "onPlay",
-      effect: "destroyEnemyStructsOnPlay",
-      amount: parseDeckmakerKeywordValue(destroyStructsOnPlayMatch[1]) || 1,
-    });
+    if (!abilities.some((a) => a.effect === "destroyEnemyStructsOnPlay")) {
+      abilities.push({
+        trigger: "onPlay",
+        effect: "destroyEnemyStructsOnPlay",
+        amount: parseDeckmakerKeywordValue(destroyStructsOnPlayMatch[1]) || 1,
+      });
+    }
   }
 
   // Mill pattern: "デッキの上からX枚を墓地へ送る" (出撃時 or baseTrigger)
@@ -2885,6 +2946,7 @@ function parseDeckmakerAbilities(card, localType) {
       const match = textForGain.match(pattern);
       if (match) {
         const amount = parseDeckmakerKeywordValue(match[1]) || 1;
+        if (abilities.some((a) => a.effect === "gainResource" && a.resource === resource && a.trigger === baseTrigger)) continue;
         abilities.push({ trigger: baseTrigger, effect: "gainResource", resource, amount });
       }
     }
@@ -3351,11 +3413,6 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onStructurePhaseHP", effect: "produceResourceCostHP", resource: "people", amount: 2, hpCost: 3 });
   }
 
-  if (card.id === "card_1782229916488") {
-    abilities.length = 0;
-    abilities.push({ trigger: "onPlay", effect: "destroyEnemyStructsOnPlay", amount: 15 });
-  }
-
   if (card.id === "card_1755655390809") {
     abilities.length = 0;
     abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
@@ -3492,8 +3549,7 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1782182910548") {
     abilities.length = 0;
-    abilities.push({ trigger: "onPlay", effect: "discardForDraw", cond: { tag: "純人間" } });
-    abilities.push({ trigger: "onPlay", effect: "grantCounterArmor", armorValue: 2 });
+    abilities.push({ trigger: "onPlay", effect: "bloodlineCommitteePlay" });
   }
   if (card.id === "card_1782192967652") {
     abilities.length = 0;
@@ -3534,8 +3590,28 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1782610000000") {
     abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "permanentTactPlay" });
     abilities.push({ trigger: "onDestroyEnemyUnit", effect: "addCoreTermCounter", amount: 1 });
     abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource: "funds", amount: 1 });
+  }
+
+  if (card.id === "card_1782225519182") {
+    if (!abilities.some((a) => a.trigger === "onActivate" && a.effect === "gainStatBuff" && a.hpBuff)) {
+      abilities.push({
+        trigger: "onActivate",
+        effect: "gainStatBuff",
+        activationCost: { nature: 2 },
+        atkBuff: 0,
+        hpBuff: 5,
+        noRest: true,
+      });
+    }
+  }
+
+  if (card.id === "card_1782227664056") {
+    if (!abilities.some((a) => a.effect === "gainResource" && a.resource === "people")) {
+      abilities.push({ trigger: "onPlay", effect: "gainResource", resource: "people", amount: 10 });
+    }
   }
 
   if (card.id === "card_1782315551233" && !abilities.some((a) => a.effect === "drawCards")) {
@@ -3589,7 +3665,7 @@ function fromDeckmakerCard(card) {
     if (card.id === "card_1753664097092") removeKeywords(base, ["mobile"]);
   }
   if (localType === "core") {
-    base.hp = Number(card.defense || card.hp) || 20;
+    base.hp = Number(card.hp ?? card.defense) || 20;
     base.initialHand = Number(card.initialHand) || 4;
     base.draw = Number(card.draw ?? card.drawCount ?? card.drawPerTurn) || 1;
     base.handLimit = Number(card.handLimit ?? card.maxHandSize ?? card.handMax) || 7;
@@ -6800,14 +6876,7 @@ function completeAbilitySource(game, item) {
     c === item.card || (item.card?.instanceId != null && c.instanceId === item.card.instanceId));
   if (index >= 0) {
     const card = player.tactZone[index];
-    // 永続tactカード（text/description に「永続」や「５回目」など複数回の能力がある場合）は削除しない
-    const descText = card.description || card.text || "";
-    const isPermanent = card.permanentTact ||
-                        descText.includes("回目") ||
-                        descText.includes("永続") ||
-                        descText.includes("まで") ||
-                        (card.abilities || []).some((a) => a.isPermanent);
-    if (!isPermanent) {
+    if (!isPermanentTactCard(card)) {
       const [removed] = player.tactZone.splice(index, 1);
       player.dump.push(removed);
       notifyDumpChanged(game, item.playerId);
@@ -6850,6 +6919,11 @@ function startTurn(game, playerId, options = {}) {
       if (ability.trigger === "onTurnStart") {
         game.effectQueue.push({ playerId, card: unit, ability, source: {} });
       }
+    }
+  }
+  for (const ability of player.core.abilities || []) {
+    if (ability.trigger === "onTurnStart") {
+      game.effectQueue.push({ playerId, card: player.core, ability, source: { zone: "core" } });
     }
   }
   for (const tact of (player.tactZone || [])) {
@@ -6933,12 +7007,6 @@ function structPhaseActivatables(player) {
     ensureStructPhaseAbilities(card);
     if (cardHasStructPhaseActivation(card)) {
       items.push({ kind: "struct", index, card });
-    }
-  });
-  (player.tactZone || []).forEach((card, index) => {
-    ensureStructPhaseAbilities(card);
-    if ((card.abilities || []).some((a) => a.trigger === "onStructurePhase")) {
-      items.push({ kind: "tact", index, card });
     }
   });
   return items;
@@ -7025,26 +7093,22 @@ function activateStructInPhase(index) {
 }
 
 function activateTactInPhase(tactIndex) {
+  return activatePermanentTact(tactIndex);
+}
+
+function activatePermanentTact(tactIndex) {
   if (!canControlActivePlayer()) return false;
-  if (state.pendingChoice) return false;
-  const pending = state.pendingStructPhase;
-  if (!pending) return false;
-  if (pending.pendingResourceChoice) return false;
-  if (pending.pendingEnemyStructChoice) return false;
-  const player = state.players[pending.playerId];
+  if (state.phase !== "main") return fail("メインフェーズのみタクトを発動できます。");
+  if (state.pendingChoice || state.pendingTarget) return false;
+  const player = state.players[state.activePlayer];
   const tact = player.tactZone[tactIndex];
   if (!tact) return false;
-  if (tact.rested) return false;
-
-  const hasMultiActivate = (tact.abilities || []).some((a) => a.multiActivate);
-  if (!hasMultiActivate && pending.activatedTactIndexes.includes(tactIndex)) return false;
-
-  if (!canAffordStructActivation(tact, player)) return false;
-  if (!hasMultiActivate && !pending.activatedTactIndexes.includes(tactIndex)) {
-    pending.activatedTactIndexes.push(tactIndex);
-  }
-  triggerAbilities(state, pending.playerId, tact, "onStructurePhase");
-  syncOnlineAction("tactActivate");
+  if (!isPermanentTactCard(tact)) return fail("このタクトは常駐効果のみです。");
+  if (tact.rested) return fail("このタクトはレスト中です。");
+  const mainAbilities = (tact.abilities || []).filter((a) => MAIN_PHASE_TACT_TRIGGERS.includes(a.trigger));
+  if (!mainAbilities.length) return fail("メインフェーズで発動できる効果がありません。");
+  triggerAbilities(state, state.activePlayer, tact, "onMainPhase", { zone: "tact" });
+  syncOnlineAction("activatePermanentTact", state.activePlayer);
   render();
   return true;
 }
@@ -7475,6 +7539,8 @@ function resolveIntelAgencyCancel(useIntel) {
         owner.dump.push(cancelled);
         notifyDumpChanged(state, tactOwnerId);
       }
+      const intelStruct = (responder.structs || []).find((struct) => struct.id === "card_1753664241159");
+      if (intelStruct) intelStruct.rested = true;
       const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
       log(state, `${responder.name}: 諜報機関で「${tactCard.name}」を無効化（${costLabel}）`);
     }
@@ -8234,11 +8300,21 @@ function selectedPlayableCard() {
   return selectedHandCard() || selectedStructDeckCard();
 }
 
+function selectedFieldTact() {
+  const selected = state.selected;
+  if (selected?.kind !== "fieldTact") return null;
+  const player = state.players[selected.playerId];
+  const card = player?.tactZone?.[selected.index];
+  if (!card) return null;
+  return { card, playerId: selected.playerId, index: selected.index };
+}
+
 function selectedFieldCard() {
   const selected = state.selected;
   if (!selected?.detailOpen) return null;
   if (selected.kind === "unit") return state.board[selected.row]?.[selected.col] || null;
   if (selected.kind === "fieldStruct") return state.players[selected.playerId]?.structs[selected.index] || null;
+  if (selected.kind === "fieldTact") return state.players[selected.playerId]?.tactZone[selected.index] || null;
   return null;
 }
 
@@ -8530,6 +8606,7 @@ function render() {
   drawStructZoneRow(opp,    layout.oppStruct, true);
   drawBoard();
   drawBoardActionButtons();
+  drawTactZoneActionButtons();
   // 自分エリア (board → struct zone → hand)
   drawStructZoneRow(viewer, layout.playerStruct, false);
   drawHand();
@@ -9593,9 +9670,26 @@ function drawBoard() {
       ctx.strokeRect(cx + 2, cy + 2, cW - 4, cH - 4);
       ctx.restore();
 
-      // ゾーンラベル (空きセルのみ)
       const unit = state.board[row][col];
-      if (!unit) {
+      const tactOwnerId = isTactZone ? playerIdForTactZoneCell(row, col) : null;
+      const tactEntry = tactOwnerId ? tactAtZoneCell(tactOwnerId, row, col) : null;
+
+      // TACTゾーン常駐カード
+      if (tactEntry) {
+        const tactSelected = state.selected?.kind === "fieldTact"
+          && state.selected.playerId === tactOwnerId
+          && state.selected.index === tactEntry.index;
+        drawCard(cx + 2, cy + 2, cW - 4, cH - 4, tactEntry.card, {
+          selected: tactSelected,
+          small: true,
+          artOnly: true,
+          rested: tactEntry.card.rested,
+        });
+        if (tactEntry.card.rested) {
+          ctx.fillStyle = "rgba(0,0,0,0.42)";
+          ctx.fillRect(cx + 2, cy + 2, cW - 4, cH - 4);
+        }
+      } else if (!unit) {
         const label = (isGrandZone || isGrandSummon) ? "Grand Zone"
           : isTactZone ? "Tact Zone"
           : isSummon ? "Summon Field" : "";
@@ -9929,6 +10023,16 @@ function handleCellClick(row, col) {
   if (selected?.kind === "unit" && unit?.owner !== state.activePlayer) {
     if (!requireActivePlayerControl()) return;
     return attackWithSelectedUnit({ kind: "unit", row, col });
+  }
+  const tactOwnerId = playerIdForTactZoneCell(row, col);
+  if (!unit && tactOwnerId) {
+    const tactEntry = tactAtZoneCell(tactOwnerId, row, col);
+    if (tactEntry) {
+      const detailOpen = consumeFieldDoubleClick(`fieldTact:${tactOwnerId}:${tactEntry.index}`);
+      state.selected = { kind: "fieldTact", playerId: tactOwnerId, index: tactEntry.index, detailOpen };
+      state.message = detailOpen ? `${tactEntry.card.name}: 詳細` : `${tactEntry.card.name} を選択`;
+      return;
+    }
   }
   if (unit) {
     const detailOpen = consumeFieldDoubleClick(`unit:${row}:${col}`);
@@ -10355,6 +10459,36 @@ function drawBoardActionButtons() {
 
   drawRow(advBtns, panelY + 4);
   drawRow(retBtns, panelY + 4 + btnH + gap);
+}
+
+function drawTactZoneActionButtons() {
+  const sel = selectedFieldTact();
+  if (!sel) return;
+  if (sel.playerId !== state.activePlayer || !canControlActivePlayer()) return;
+  if (state.phase !== "main" || state.pendingChoice || state.pendingTarget) return;
+
+  const { card, index, playerId } = sel;
+  const hasMain = (card.abilities || []).some((a) => MAIN_PHASE_TACT_TRIGGERS.includes(a.trigger));
+  if (!hasMain || card.rested || !isPermanentTactCard(card)) return;
+
+  const slots = tactZoneSlotCoords(playerId);
+  const slot = slots[index];
+  if (!slot) return;
+
+  const visualRow = boardRowToVisualRow(slot.row);
+  const cellX = layout.board.x + slot.col * layout.cell.w;
+  const cellY = layout.board.y + visualRow * layout.cell.h;
+  const cW = layout.cell.w;
+  const cH = layout.cell.h;
+  const isViewerTact = playerId === viewerPlayerId();
+
+  const btnW = 72;
+  const btnH = 28;
+  let btnX = Math.round(cellX + (cW - btnW) / 2);
+  let btnY = isViewerTact ? cellY + cH + 4 : cellY - btnH - 4;
+  if (btnY < layout.board.y) btnY = cellY + cH + 4;
+
+  drawButton(btnX, btnY, btnW, btnH, "発動", () => activatePermanentTact(index), null, { accent: "p2" });
 }
 
 function drawTurnStartSummaryPanel() {
@@ -11325,7 +11459,7 @@ function drawStructPhaseOverlay() {
   ctx.fillText("ストラクトフェーズ", x + 24, y + 28);
   ctx.fillStyle = "rgba(130,200,160,0.75)";
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("発動するストラクト／タクトを選択（スキップ可）", x + 24, y + 50);
+  ctx.fillText("発動するストラクトを選択（スキップ可）", x + 24, y + 50);
 
   const cardsAreaX = x + Math.round((w - contentW) / 2);
   const cardsAreaY = y + headerH;
@@ -11349,11 +11483,9 @@ function drawStructPhaseOverlay() {
 
   const choice = pending.pendingResourceChoice;
   const waitingChoice = choice || enemyChoice;
-  visibleItems.forEach(({ kind, index, card: struct }, i) => {
+  visibleItems.forEach(({ index, card: struct }, i) => {
     const hasMultiActivate = (struct.abilities || []).some((a) => a.multiActivate);
-    const activated = kind === "struct"
-      ? !hasMultiActivate && pending.activatedIndexes.includes(index)
-      : !hasMultiActivate && pending.activatedTactIndexes.includes(index);
+    const activated = !hasMultiActivate && pending.activatedIndexes.includes(index);
     const affordable = canAffordStructActivation(struct, player) && !struct.rested;
     const cx = cardsAreaX + i * (cardW + cardGap);
     const cy = cardsAreaY;
@@ -11387,10 +11519,7 @@ function drawStructPhaseOverlay() {
     const btnY = cy + cardH + 22;
     if (isController && (!activated || hasMultiActivate)) {
       if (hasRestActivate && affordable && !waitingChoice) {
-        const activate = kind === "struct"
-          ? () => activateStructInPhase(index)
-          : () => activateTactInPhase(index);
-        drawButton(cx, btnY, cardW, btnH, hasMultiActivate ? "再発動" : "発動", activate);
+        drawButton(cx, btnY, cardW, btnH, hasMultiActivate ? "再発動" : "発動", () => activateStructInPhase(index));
       } else if (hasRestActivate) {
         drawButton(cx, btnY, cardW, btnH, affordable ? "選択中..." : "発動不可", null, null, { accent: "dim" });
       }
@@ -11405,7 +11534,7 @@ function drawStructPhaseOverlay() {
       const hpCanAfford = player.core.hp > hpAbility.hpCost;
       const hpLabel = `ライフ${hpAbility.hpCost}`;
       drawButton(cx, btnY + btnH + 4, cardW, 22, hpLabel,
-        kind === "struct" && hpCanAfford ? () => activateStructHPAbility(index) : null,
+        hpCanAfford ? () => activateStructHPAbility(index) : null,
         null, hpCanAfford ? { accent: "p2" } : { accent: "dim" });
     }
   });
@@ -11667,10 +11796,10 @@ function drawFieldCardDetailOverlay() {
   ctx.font = "700 24px 'Yu Gothic UI', sans-serif";
   ctx.fillText(card.name, x + 212, y + 40, w - 228);
 
-  const controller = card.owner ? state.players[card.owner]?.name : selected.kind === "fieldStruct" ? state.players[selected.playerId]?.name : "";
-  const typeLabel = { unit: "ユニット", struct: "施設" }[card.type] || card.type;
+  const controller = card.owner ? state.players[card.owner]?.name : (selected.kind === "fieldStruct" || selected.kind === "fieldTact") ? state.players[selected.playerId]?.name : "";
+  const typeLabel = { unit: "ユニット", struct: "施設", tact: "タクト" }[card.type] || card.type;
   const stats = card.type === "unit" ? ` / ATK ${card.atk} / HP ${card.currentHp}/${card.maxHp}` : "";
-  const status = card.type === "unit" ? ` / ${card.rested ? "レスト" : "非レスト"}` : "";
+  const status = (card.type === "unit" || selected.kind === "fieldTact") ? ` / ${card.rested ? "レスト" : "非レスト"}` : "";
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   ctx.fillStyle = theme.text;
   ctx.fillText(`${typeLabel} / ${controller || "場"} / ${card.faction || "ニュートラル"}${stats}${status}`, x + 212, y + 62, w - 228);
@@ -11732,10 +11861,29 @@ function drawFieldCardDetailOverlay() {
     drawWrappedText(text, x + 212, nextY, w - 228, 18, 8);
   }
 
+  const tactSel = selected.kind === "fieldTact" ? selectedFieldTact() : null;
+  const canActivateTact = tactSel
+    && tactSel.playerId === state.activePlayer
+    && state.phase === "main"
+    && canControlActivePlayer()
+    && !card.rested
+    && isPermanentTactCard(card)
+    && (card.abilities || []).some((a) => MAIN_PHASE_TACT_TRIGGERS.includes(a.trigger));
+
+  if (canActivateTact) {
+    drawButton(x + 28, y + h - 58, 120, 38, "発動", () => {
+      activatePermanentTact(tactSel.index);
+      render();
+    }, null, { accent: "p1" });
+  }
+
   drawButton(x + w - 146, y + h - 58, 120, 38, "閉じる", () => {
     if (selected.kind === "unit") {
       state.selected = { kind: "unit", row: selected.row, col: selected.col };
       state.message = `${card.name} selected`;
+    } else if (selected.kind === "fieldTact") {
+      state.selected = { kind: "fieldTact", playerId: selected.playerId, index: selected.index };
+      state.message = `${card.name} を選択`;
     } else {
       state.selected = null;
       state.message = "詳細を閉じました。";
@@ -12608,6 +12756,7 @@ const testing = {
   playStruct,
   activateStructInPhase,
   activateTactInPhase,
+  activatePermanentTact,
   resolveMarketChoice,
   resolveChooseGainResource,
   resolveLifeCounterPayment,
