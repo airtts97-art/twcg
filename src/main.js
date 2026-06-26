@@ -2989,14 +2989,30 @@ function applySupplementalCardFallbacks(firebaseIds = new Set()) {
   return count;
 }
 
+function ensureSoulPayKeyword(card) {
+  if (!card) return;
+  if (!card.keywords) card.keywords = [];
+  if (card.keywords.some((kw) => kw.id === "soulPay")) return;
+  const text = String(card.description || card.text || "");
+  if (
+    /\[魂\]/.test(text) ||
+    /魂によって.*支払/.test(text) ||
+    /魔は同数の\[魂\]/.test(text) ||
+    /墓地除外で支払/.test(text)
+  ) {
+    card.keywords.push({ id: "soulPay" });
+  }
+}
+
 function ensureAllCardKeywords() {
   for (const group of ["main", "structs"]) {
     for (const card of Object.values(cardCatalog[group] || {})) {
-      if (!card?.description) continue;
+      if (!card?.description && !card?.text) continue;
       // keywordsが設定されていない、または空の場合は自動生成
       if (!card.keywords || card.keywords.length === 0) {
         card.keywords = parseDeckmakerKeywords(card);
       }
+      ensureSoulPayKeyword(card);
     }
   }
 }
@@ -3145,6 +3161,15 @@ function parseDeckmakerKeywords(card) {
       if (id === "multiStrike" && value != null) value += 1;
       keywords.push(value ? { id, value } : { id });
     }
+  }
+  const fullDesc = String(card.description || card.text || "");
+  if (
+    /\[魂\]/.test(fullDesc) ||
+    /魂によって.*支払/.test(fullDesc) ||
+    /魔は同数の\[魂\]/.test(fullDesc) ||
+    /墓地除外で支払/.test(fullDesc)
+  ) {
+    if (!keywords.some((kw) => kw.id === "soulPay")) keywords.push({ id: "soulPay" });
   }
   return keywords;
 }
@@ -4253,6 +4278,7 @@ function fromDeckmakerCard(card) {
   if (localType === "tact") {
     if (card.tactSubType) base.tactSubType = String(card.tactSubType);
     if (card.tactSubType === "永続") base.permanentTact = true;
+    if (card.id === "card_1753681080997") ensureKeyword(base, "soulPay");
   }
   return applyCardCompatibility(normalizeCardResources(base));
 }
@@ -6110,12 +6136,55 @@ function drawCostIcons(cost = {}, x, y, options = {}) {
   return x + entries.length * (size + gap) - gap;
 }
 
+function cardAllowsSoulPay(card) {
+  if (!card) return false;
+  if (hasKeyword(card, "soulPay")) return true;
+  const text = String(card.text || card.description || "");
+  return /\[魂\]|魂によって.*支払|魔は同数の\[魂\]|墓地除外で支払/.test(text);
+}
+
+function soulPayRequiresUnitCards(card) {
+  const text = String(card.text || card.description || "");
+  return /墓地のユニットカードをその枚数だけ除外|ユニットカードをその枚数だけ除外/.test(text);
+}
+
+function availableSoulPayDumpCount(player, card) {
+  const dump = player.dump || [];
+  if (soulPayRequiresUnitCards(card)) return dump.filter((c) => c.type === "unit").length;
+  return dump.length;
+}
+
+function exileDumpCardsForSoulPay(player, count, card) {
+  const unitsOnly = soulPayRequiresUnitCards(card);
+  const exiled = [];
+  for (let i = 0; i < player.dump.length && exiled.length < count; ) {
+    const dumpCard = player.dump[i];
+    if (!unitsOnly || dumpCard.type === "unit") {
+      exiled.push(player.dump.splice(i, 1)[0]);
+    } else {
+      i++;
+    }
+  }
+  return exiled;
+}
+
+function canPayForCard(player, cost = {}, card = null) {
+  const effectiveCost = effectiveCostForCard(player, cost, card);
+  if (canPay(player, effectiveCost)) return true;
+  if (!cardAllowsSoulPay(card)) return false;
+  const missingMagic = Math.max(0, (effectiveCost.magic || 0) - (player.resources.magic || 0));
+  if (missingMagic === 0) return false;
+  const payable = { ...effectiveCost, magic: (effectiveCost.magic || 0) - missingMagic };
+  if (!canPay(player, payable)) return false;
+  return availableSoulPayDumpCount(player, card) >= missingMagic;
+}
+
 function cardIsAffordable(player, card) {
   if (!player || !card) return false;
   if (card.type === "unit" || card.type === "tact" || card.type === "wild" || card.type === "grand") {
-    return canPay(player, effectiveCostForCard(player, card.cost || {}, card));
+    return canPayForCard(player, card.cost || {}, card);
   }
-  if (card.type === "struct") return canPay(player, card.cost || {});
+  if (card.type === "struct") return canPayForCard(player, card.cost || {}, card);
   return false;
 }
 
@@ -6348,14 +6417,18 @@ function payForCard(player, cost = {}, card = null) {
     if (copperReduction) copperReduction.rested = true;
     return true;
   }
-  if (!card || !hasKeyword(card, "soulPay")) return false;
+  if (!cardAllowsSoulPay(card)) return false;
 
   const payable = { ...effectiveCost };
   const missingMagic = Math.max(0, (payable.magic || 0) - (player.resources.magic || 0));
-  if (missingMagic === 0 || player.dump.length < missingMagic) return false;
+  if (missingMagic === 0 || availableSoulPayDumpCount(player, card) < missingMagic) return false;
   payable.magic = (payable.magic || 0) - missingMagic;
   if (!pay(player, payable)) return false;
-  player.dump.splice(0, missingMagic);
+  const exiled = exileDumpCardsForSoulPay(player, missingMagic, card);
+  if (exiled.length < missingMagic) return false;
+  if (copperReduction) copperReduction.rested = true;
+  notifyDumpChanged(state, player.id);
+  log(state, `${player.name}: [魂]で魔${missingMagic}を支払い（墓地${exiled.length}枚除外）`);
   return true;
 }
 
