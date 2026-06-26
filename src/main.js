@@ -773,15 +773,13 @@ const abilityEffects = {
     let count = 0;
     for (const boardRow of game.board) {
       for (const cell of boardRow) {
-        if (cell && cell !== card && cell.owner === playerId && (cell.tags || []).includes(tag)) count++;
+        if (cell && cell !== card && cell.owner === playerId && matchesBracketRef(cell, tag)) count++;
       }
     }
-    if (count > 0) {
-      card.hp = (card.hp || 0) + count;
-      if (card.maxHp !== undefined) card.maxHp = (card.maxHp || 0) + count;
-      if (card.currentHp !== undefined) card.currentHp = (card.currentHp || 0) + count;
-      log(game, `${player.name}: 「${card.name}」±0/+${count}（[${tag}]×${count}）`);
-    }
+    card.hp = (card.hp || 0) + count;
+    if (card.maxHp !== undefined) card.maxHp = (card.maxHp || 0) + count;
+    if (card.currentHp !== undefined) card.currentHp = (card.currentHp || 0) + count;
+    log(game, `${player.name}: 「${card.name}」±0/+${count}（[${tag}]×${count}）`);
   },
   gainPerStructTag({ game, playerId, ability }) {
     const player = game.players[playerId];
@@ -3841,7 +3839,9 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   if (card.id === "card_1753716897980") {
-    abilities.push({ trigger: "onSummon", effect: "buffSelfHpFromTagCount", tag: "農民" });
+    if (!abilities.some((a) => a.effect === "buffSelfHpFromTagCount")) {
+      abilities.push({ trigger: "onSummon", effect: "buffSelfHpFromTagCount", tag: "農民" });
+    }
   }
 
   if (card.id === "card_1753760240197") {
@@ -6396,11 +6396,18 @@ function coreDeckRequirementIssues(core, mainIds = []) {
   return issues;
 }
 
-// 「name」→ 名前に含む、[tag] → タグに含む の条件チェック
+// 「name」→ 名前に含む、[tag] → タグまたは同名カード の条件チェック
+function matchesBracketRef(card, ref) {
+  if (!card || !ref) return false;
+  if ((card.tags || []).includes(ref)) return true;
+  const name = card.name || "";
+  return name === ref || name.includes(ref);
+}
+
 function matchesCond(card, cond) {
   if (!cond) return true;
-  if (typeof cond === "string") return (card.tags || []).includes(cond); // 旧形式互換
-  if (cond.tag) return (card.tags || []).includes(cond.tag);
+  if (typeof cond === "string") return matchesBracketRef(card, cond);
+  if (cond.tag) return matchesBracketRef(card, cond.tag);
   if (cond.nameContains) return (card.name || "").includes(cond.nameContains);
   return true;
 }
