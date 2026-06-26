@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node server.mjs",
     "test": "node tests/keyword-tests.mjs",
+    "test:cards": "node scripts/check-card-firebase-diff.mjs",
     "test:online": "node tests/online-server-tests.mjs && node tests/online-client-tests.mjs",
     "upload:cards": "node scripts/upload-deckmaker-cards-to-firebase.mjs"
   }

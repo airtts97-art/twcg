@@ -1,6 +1,9 @@
 import deckData from "./deck_data.js";
 import supplementalCards from "./supplemental_cards.js";
 import { fetchAllFirebaseCards } from "./firebase_cards.js";
+import { collectCardDrift } from "./card_firebase_sync.js";
+import { HARDCODED_TEXT_BASELINES, hasHardcodedTextChanged } from "./card_hardcoded_registry.js";
+import { IMPLEMENTED_CARD_IDS } from "./card_implemented_registry.js";
 import { applyCardCompatibility, buildIncompleteCardDataPayload, compatibilityWarningForCard, refreshCatalogCompatibility } from "./card_compatibility.js";
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -136,6 +139,7 @@ const MAIN_PHASE_TACT_TRIGGERS = ["onMainPhase"];
 function isPermanentTactCard(card) {
   if (!card) return false;
   if (card.permanentTact) return true;
+  if (card.tactSubType === "永続") return true;
   const descText = card.description || card.text || "";
   if (descText.includes("永続")) return true;
   if ((card.abilities || []).some((a) => a.isPermanent)) return true;
@@ -151,15 +155,15 @@ function markPermanentTactIfNeeded(card) {
   return card;
 }
 
+function bundledImageUrlFor(cardId) {
+  const entry = supplementalCards.find((card) => card.id === cardId);
+  return entry?.imageUrl || null;
+}
+
 function syncBundledRuntimeCard(card) {
   if (!card?.id || !FORCE_BUNDLED_CARD_IDS.has(card.id)) return card;
-  const bundled = catalogCardFor(card);
-  if (!bundled) return card;
-  if (bundled.imageUrl) card.imageUrl = bundled.imageUrl;
-  if (bundled.text) card.text = bundled.text;
-  if (bundled.abilities?.length) {
-    card.abilities = cloneCard({ abilities: bundled.abilities }).abilities;
-  }
+  const imageUrl = bundledImageUrlFor(card.id);
+  if (imageUrl) card.imageUrl = imageUrl;
   markPermanentTactIfNeeded(card);
   return card;
 }
@@ -284,6 +288,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782287759412",  // DTO前線指揮所
   "card_1782311181226",  // 壊滅怪異
   "card_1782237267608",  // 北東軍第27迫撃砲分隊
+  "card_1782236231218",  // 北東軍第11対戦車歩兵中隊
   "card_1782308723608",  // 特別計画
   "card_1782361783127",  // GNS Sovereign
   "card_1782225519182",  // 北東軍最高司令官
@@ -293,6 +298,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782610000000",  // 金準備を押収
   "card_1782463436621",  // 露出管理
   "card_1782464860185",  // 月下造山帯
+  "card_1782462481137",  // 展開命令
+  "card_1782419351598",  // 北東軍に栄光あれ！
   "card_1782212242238",  // 【正体判明】怪獣
   "card_1782211899987",  // 【正体不明】私
   "card_1782297782539",  // 【正体不明】虚空
@@ -824,6 +831,12 @@ const abilityEffects = {
       log(game, `${player.name}: 「${card.name}」5回発動後に破壊`);
       destroyTactFromZone(game, playerId, card);
     }
+  },
+  northeastGloryTactPlay({ game, playerId, card }) {
+    card.permanentTact = true;
+    card.rested = false;
+    log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに常駐`);
+    refreshContinuousEffects(game);
   },
   exposureManagementPlay({ game, playerId, card }) {
     card.permanentTact = true;
@@ -1439,7 +1452,14 @@ const abilityEffects = {
         i--;
       }
     }
-    if (found) log(game, `${player.name}: 「${ability.cardName || ability.tag}」を${found}枚手札に`);
+    if (found) {
+      const label = ability.cardName
+        ? `「${ability.cardName}」`
+        : ability.tag
+          ? `[${ability.tag}]タグのカード`
+          : "カード";
+      log(game, `${player.name}: ${label}を${found}枚手札に`);
+    }
   },
   searchDeckPick({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
@@ -2848,35 +2868,65 @@ function loadBundledDeckData() {
 
 async function loadFirebaseCardsIntoCatalog() {
   if (!app) return false;
-  app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null };
+  app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null, drift: [] };
   try {
     const cards = await fetchAllFirebaseCards();
+    const firebaseIds = new Set();
     let count = 0;
     for (const deckmakerCard of cards) {
       try {
         const card = fromDeckmakerCard(deckmakerCard);
         if (!card || card.fixture) continue;
+        if (deckmakerCard.description) {
+          card.text = String(deckmakerCard.description);
+          card.description = String(deckmakerCard.description);
+        }
         const group = catalogGroupForCard(card);
         cardCatalog[group][card.id] = card;
+        firebaseIds.add(card.id);
         count += 1;
       } catch (e) {
         console.warn("loadFirebaseCardsIntoCatalog: error processing card", deckmakerCard?.id, e);
       }
     }
+    applyBundledImageOverrides();
+    applySupplementalCardFallbacks(firebaseIds);
     ensureAllCardKeywords();
     refreshCatalogCompatibility(cardCatalog);
-    applySupplementalCardOverrides();
-    app.cardSync = { status: "ok", count, error: null, updatedAt: Date.now() };
+    const drift = collectCardDrift({
+      firebaseCards: cards,
+      supplementalCards,
+      deckmakerCards: [],
+      hardcodedBaselines: HARDCODED_TEXT_BASELINES,
+      watchIds: [...IMPLEMENTED_CARD_IDS],
+    });
+    const hardcodedDrift = Object.values(cardCatalog.main || {})
+      .concat(Object.values(cardCatalog.structs || {}))
+      .filter((card) => hasHardcodedTextChanged(card))
+      .map((card) => ({ id: card.id, name: card.name, field: "hardcodedImplementation" }));
+    app.cardSync = {
+      status: "ok",
+      count,
+      error: null,
+      updatedAt: Date.now(),
+      drift,
+      hardcodedDrift,
+    };
+    if (drift.length || hardcodedDrift.length) {
+      console.warn("Card catalog drift detected:", { drift, hardcodedDrift });
+    }
     if (app.screen === "deckBuilder") {
-      app.deckBuilder.message = `Firebaseからカード${count}枚を同期しました。`;
+      const driftNote = drift.length ? ` / 差分${drift.length}件` : "";
+      app.deckBuilder.message = `Firebaseからカード${count}枚を同期しました${driftNote}。`;
     }
     return true;
   } catch (error) {
     console.warn("loadFirebaseCardsIntoCatalog failed:", error);
-    applySupplementalCardOverrides();
+    applySupplementalCardFallbacks(new Set());
+    applyBundledImageOverrides();
     ensureAllCardKeywords();
     refreshCatalogCompatibility(cardCatalog);
-    app.cardSync = { status: "error", count: 0, error: String(error.message || error), updatedAt: Date.now() };
+    app.cardSync = { status: "error", count: 0, error: String(error.message || error), updatedAt: Date.now(), drift: [] };
     if (app.screen === "deckBuilder" && !app.deckBuilder.message?.includes("同期")) {
       app.deckBuilder.message = "Firebase同期に失敗しました。バンドルデータを使用しています。";
     }
@@ -2884,18 +2934,30 @@ async function loadFirebaseCardsIntoCatalog() {
   }
 }
 
-function applySupplementalCardOverrides() {
+function applyBundledImageOverrides() {
+  for (const cardId of FORCE_BUNDLED_CARD_IDS) {
+    const imageUrl = bundledImageUrlFor(cardId);
+    if (!imageUrl) continue;
+    for (const group of ["main", "structs", "core"]) {
+      const card = cardCatalog[group]?.[cardId];
+      if (card) card.imageUrl = imageUrl;
+    }
+  }
+}
+
+function applySupplementalCardFallbacks(firebaseIds = new Set()) {
   if (!Array.isArray(supplementalCards)) return 0;
   let count = 0;
   for (const deckmakerCard of supplementalCards) {
     if (!deckmakerCard?.id) continue;
+    if (firebaseIds.has(deckmakerCard.id)) continue;
     try {
       const card = fromDeckmakerCard(deckmakerCard);
       if (!card) continue;
       cardCatalog[catalogGroupForCard(card)][card.id] = card;
       count += 1;
     } catch (e) {
-      console.warn("applySupplementalCardOverrides:", deckmakerCard?.id, e);
+      console.warn("applySupplementalCardFallbacks:", deckmakerCard?.id, e);
     }
   }
   return count;
@@ -3065,6 +3127,32 @@ function parseDeckmakerAbilities(card, localType) {
   const abilities = [];
   const text = String(card.description || "");
   if (localType === "struct") {
+    const structResMap = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+    const structPayRestDrawGainMatch = text.match(
+      /((?:[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+(?:と)?)+)を支払いレストし[、,]?\s*(?:\n)?([0-9０-９一二三四五六七八九]+)枚ドローする[、,]?\s*(?:\n)?([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/,
+    );
+    if (structPayRestDrawGainMatch) {
+      const cost = {};
+      const costRe = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+      let costMatch;
+      while ((costMatch = costRe.exec(structPayRestDrawGainMatch[1].replace(/[と、]/g, "")))) {
+        const resource = structResMap[costMatch[1]];
+        if (!resource) continue;
+        cost[resource] = (cost[resource] || 0) + (parseDeckmakerKeywordValue(costMatch[2]) || 1);
+      }
+      const produceResource = structResMap[structPayRestDrawGainMatch[3]];
+      if (produceResource) {
+        abilities.push({
+          trigger: "onStructurePhase",
+          effect: "structPayDrawProduce",
+          cost,
+          draw: parseDeckmakerKeywordValue(structPayRestDrawGainMatch[2]) || 1,
+          produces: {
+            [produceResource]: parseDeckmakerKeywordValue(structPayRestDrawGainMatch[4]) || 1,
+          },
+        });
+      }
+    }
     const generates = fromDeckmakerCosts(card.generates || {});
     const negEntries = Object.entries(generates).filter(([, a]) => a < 0);
     const posEntries = Object.entries(generates).filter(([, a]) => a > 0);
@@ -3075,7 +3163,7 @@ function parseDeckmakerAbilities(card, localType) {
         costOptions: negEntries.map(([resource, amount]) => ({ resource, amount: Math.abs(amount) })),
         produces: Object.fromEntries(posEntries),
       });
-    } else {
+    } else if (!abilities.some((a) => a.effect === "structPayDrawProduce")) {
       for (const [resource, amount] of Object.entries(generates)) {
         if (Number(amount) > 0) {
           abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource, amount });
@@ -3146,9 +3234,10 @@ function parseDeckmakerAbilities(card, localType) {
   const baseTrigger = localType === "unit" ? "onSummon" : "onPlay";
 
   // Draw patterns: "カードをX枚引く", "デッキからX枚ドロー", "X枚ドロー"
+  const structPayRestDrawText = localType === "struct" && /を支払いレストし[^。\n]*\d+枚ドローする/.test(text);
   const drawMatch = text.match(/(?:カードを|デッキから)([0-9０-９一二三四五六七八九]+)枚(?:引く|ドロー)/)
     || text.match(/([0-9０-９一二三四五六七八九]+)枚ドロー/);
-  if (drawMatch) {
+  if (drawMatch && !structPayRestDrawText) {
     const amount = parseDeckmakerKeywordValue(drawMatch[1]) || 1;
     abilities.push({ trigger: baseTrigger, effect: "drawCards", amount });
   }
@@ -3339,6 +3428,17 @@ function parseDeckmakerAbilities(card, localType) {
   // [降臨]: treat as onSummon trigger + descentEffect
   if (/\[降臨\]/.test(text)) {
     abilities.push({ trigger: "onSummon", effect: "descentEffect" });
+  }
+
+  // Search by tag to hand: "[タグ]タグのカードをN枚デッキから手札に加える"
+  const tagDeckToHandMatch = text.match(/\[([^\]]+)\]タグのカードを([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚デッキから手札に加える/);
+  if (tagDeckToHandMatch) {
+    abilities.push({
+      trigger: baseTrigger,
+      effect: "searchCardToHand",
+      tag: tagDeckToHandMatch[1],
+      amount: parseDeckmakerKeywordValue(tagDeckToHandMatch[2]) || 1,
+    });
   }
 
   // Search other card by name to hand: "デッキから「X」を1枚まで手札に加える" (not self)
@@ -3922,6 +4022,12 @@ function parseDeckmakerAbilities(card, localType) {
     // vsTag damage + adjacent buff: parser + refreshContinuousEffects
   }
 
+  if (card.id === "card_1782236231218") {
+    if (!abilities.some((a) => a.effect === "vsArmorAtkBonus")) {
+      abilities.push({ effect: "vsArmorAtkBonus", atkBonus: 2 });
+    }
+  }
+
   if (card.id === "card_1782211899987") {
     abilities.length = 0;
     abilities.push({ trigger: "onSummon", effect: "identityPrivateOnSummon" });
@@ -3968,15 +4074,9 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onPlay", effect: "exposureManagementPlay" });
   }
 
-  if (card.id === "card_1782464860185") {
+  if (card.id === "card_1782419351598") {
     abilities.length = 0;
-    abilities.push({
-      trigger: "onStructurePhase",
-      effect: "structPayDrawProduce",
-      cost: { people: 1, magic: 1 },
-      draw: 1,
-      produces: { magic: 6 },
-    });
+    abilities.push({ trigger: "onPlay", effect: "northeastGloryTactPlay" });
   }
 
   if (card.id === "card_1782225519182") {
@@ -4122,6 +4222,10 @@ function fromDeckmakerCard(card) {
       }
     }
   }
+  if (localType === "tact") {
+    if (card.tactSubType) base.tactSubType = String(card.tactSubType);
+    if (card.tactSubType === "永続") base.permanentTact = true;
+  }
   return applyCardCompatibility(normalizeCardResources(base));
 }
 
@@ -4225,7 +4329,7 @@ function createAppState() {
     localCardPopup: null,
     lastFieldClick: null,
     structDeckScroll: 0,
-    cardSync: { status: "idle", count: 0, error: null, updatedAt: null },
+    cardSync: { status: "idle", count: 0, error: null, updatedAt: null, drift: [], hardcodedDrift: [] },
   };
 }
 
@@ -6041,6 +6145,42 @@ function applyConditionalBuff(unit, key, active, { atk = 0, hp = 0 } = {}) {
   }
 }
 
+function applyConditionalKeywordValue(unit, key, active, keywordId, value) {
+  if (!unit) return;
+  if (!unit.continuousKeywords) unit.continuousKeywords = {};
+  const applied = unit.continuousKeywords[key];
+  if (active && !applied) {
+    const before = keywordValue(unit, keywordId);
+    const target = Math.max(before, value);
+    const delta = target - before;
+    if (delta > 0) ensureKeyword(unit, keywordId, target);
+    unit.continuousKeywords[key] = { keywordId, delta };
+  } else if (!active && applied) {
+    const current = keywordValue(unit, applied.keywordId);
+    const next = current - (applied.delta || 0);
+    if (next <= 0) removeKeywords(unit, [applied.keywordId]);
+    else ensureKeyword(unit, applied.keywordId, next);
+    delete unit.continuousKeywords[key];
+  }
+}
+
+function parseAdjacentTagBuff(text) {
+  const match = String(text || "").match(
+    /隣接するユニットのうち([0-9０-９①②③④⑤⑥⑦⑧⑨]+)つが\[([^\]]+)\](?:のタグ)?のユニットの時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る[、,]?HP\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/,
+  );
+  if (!match) return null;
+  return {
+    count: parseDeckmakerKeywordValue(match[1]) || 2,
+    tag: match[2],
+    atk: parseDeckmakerKeywordValue(match[3]) || 1,
+    hp: parseDeckmakerKeywordValue(match[4]) || 1,
+  };
+}
+
+function unitCardTextForContinuousEffects(unit) {
+  return unit?.text || unit?.description || catalogCardFor(unit)?.text || "";
+}
+
 function refreshContinuousEffects(game = state) {
   for (const pid of ["p1", "p2"]) {
     const core = game.players[pid]?.core;
@@ -6069,13 +6209,18 @@ function refreshContinuousEffects(game = state) {
         }).length;
         applyConditionalBuff(unit, "108thBattalionBuff", adjacentPureHumans >= 2, { atk: 2, hp: 0 });
       }
-      if (unit.id === "card_1782500000000" || unit.id === "card_1782307790847") {
-        const adjacentAtlas = adjacentCells(unit.row, unit.col).filter(([row, col]) => {
+      const adjacentTagBuff = parseAdjacentTagBuff(unitCardTextForContinuousEffects(unit));
+      if (adjacentTagBuff) {
+        const adjacentTagged = adjacentCells(unit.row, unit.col).filter(([row, col]) => {
           const adjacent = game.board[row]?.[col];
-          return adjacent?.owner === pid && (adjacent.tags || []).includes("アトラス北東軍");
+          return adjacent?.owner === pid && (adjacent.tags || []).includes(adjacentTagBuff.tag);
         }).length;
-        const buffKey = unit.id === "card_1782500000000" ? "65thBattalionAtlasAdj" : "33rdArtilleryAtlasAdj";
-        applyConditionalBuff(unit, buffKey, adjacentAtlas >= 2, { atk: 1, hp: 1 });
+        applyConditionalBuff(
+          unit,
+          `adjTagBuff_${unit.id}_${adjacentTagBuff.tag}`,
+          adjacentTagged >= adjacentTagBuff.count,
+          { atk: adjacentTagBuff.atk, hp: adjacentTagBuff.hp },
+        );
       }
     }
     const hasRevealedKaiju = unitsOwnedBy(pid, game).some((u) => u.id === "card_1782212242238");
@@ -6098,6 +6243,16 @@ function refreshContinuousEffects(game = state) {
       for (const unit of unitsOwnedBy(pid, game)) {
         if (unit.id === commander.id) continue;
         applyConditionalBuff(unit, "northeastCommanderFieldAura", hasAtlasUnit, { atk: 3, hp: 0 });
+      }
+    }
+    const hasGloryTact = (game.players[pid]?.tactZone || []).some((tact) => tact.id === "card_1782419351598");
+    if (hasGloryTact) {
+      const hasAtlasUnit = unitsOwnedBy(pid, game).some((unit) =>
+        (unit.tags || []).includes("アトラス北東軍")
+      );
+      for (const unit of unitsOwnedBy(pid, game)) {
+        applyConditionalBuff(unit, "northeastGloryAura", hasAtlasUnit, { atk: 5, hp: 5 });
+        applyConditionalKeywordValue(unit, "northeastGloryArmor", hasAtlasUnit, "armor", 5);
       }
     }
   }
@@ -7708,6 +7863,7 @@ function destroyTactFromZone(game, playerId, card) {
   triggerAbilities(game, playerId, removed, "onDestroy");
   player.dump.push(removed);
   notifyDumpChanged(game, playerId);
+  refreshContinuousEffects(game);
   return true;
 }
 
@@ -7858,6 +8014,29 @@ function resolveEnemyStructChoice(enemyIndex) {
   render();
 }
 
+function restActivatedStructAfterChoice(pending, choice) {
+  if (choice?.multiActivate) return;
+  const player = state.players[pending.playerId];
+  const activatedIndexes = pending.activatedIndexes || [];
+  for (let i = activatedIndexes.length - 1; i >= 0; i--) {
+    const struct = player.structs[activatedIndexes[i]];
+    if (!struct) continue;
+    if (choice?.cardName && struct.name !== choice.cardName) continue;
+    if (!struct.rested) {
+      struct.rested = true;
+      log(state, `「${struct.name}」をレスト`);
+    }
+    return;
+  }
+  if (choice?.cardName) {
+    const struct = player.structs.find((s) => s.name === choice.cardName);
+    if (struct && !struct.rested) {
+      struct.rested = true;
+      log(state, `「${struct.name}」をレスト`);
+    }
+  }
+}
+
 function resolveMarketChoice(resource) {
   if (!canControlActivePlayer()) return;
   const pending = state.pendingStructPhase;
@@ -7880,6 +8059,7 @@ function resolveMarketChoice(resource) {
         ability: option.action,
       });
     }
+    restActivatedStructAfterChoice(pending, choice);
     pending.pendingResourceChoice = null;
     processEffectQueue(state);
     syncOnlineAction("marketChoice");
@@ -7894,6 +8074,7 @@ function resolveMarketChoice(resource) {
   for (const [res, amt] of Object.entries(choice.produces || {})) {
     addResources(player, res, amt);
   }
+  restActivatedStructAfterChoice(pending, choice);
   pending.pendingResourceChoice = null;
   processEffectQueue(state);
   syncOnlineAction("marketChoice");
@@ -8200,8 +8381,30 @@ function playTactFromHand(handIndex) {
   return true;
 }
 
+function disposeNonPermanentTactAfterPlay(game, tactOwnerId, tactCard) {
+  const player = game.players[tactOwnerId];
+  const index = player.tactZone.findIndex((c) =>
+    c === tactCard || (tactCard?.instanceId != null && c.instanceId === tactCard.instanceId));
+  if (index < 0) return;
+  const card = player.tactZone[index];
+  markPermanentTactIfNeeded(card);
+  if (!isPermanentTactCard(card)) {
+    const [removed] = player.tactZone.splice(index, 1);
+    player.dump.push(removed);
+    notifyDumpChanged(game, tactOwnerId);
+  }
+}
+
 function finishPlayTact(tactOwnerId, tactCard) {
-  triggerAbilities(state, tactOwnerId, tactCard, "onPlay", { zone: "tact" });
+  const pending = triggerAbilities(state, tactOwnerId, tactCard, "onPlay", { zone: "tact" });
+  if (!pending
+      && !state.pendingChoice
+      && !state.pendingTarget
+      && !state.effectQueue.length
+      && !state.pendingStructPhase?.pendingResourceChoice) {
+    disposeNonPermanentTactAfterPlay(state, tactOwnerId, tactCard);
+  }
+  refreshContinuousEffects(state);
   log(state, `${state.players[tactOwnerId].name}: 「${tactCard.name}」を使用`);
 }
 
@@ -9604,7 +9807,7 @@ function drawDeckBuilderScreen() {
   const syncStatus = app.cardSync?.status === "loading"
     ? "カード同期中…"
     : app.cardSync?.status === "ok"
-      ? `Firebase同期済 (${app.cardSync.count}枚)`
+      ? `Firebase同期済 (${app.cardSync.count}枚${(app.cardSync.drift?.length || 0) + (app.cardSync.hardcodedDrift?.length || 0) ? ` / 差分${(app.cardSync.drift?.length || 0) + (app.cardSync.hardcodedDrift?.length || 0)}` : ""})`
       : app.cardSync?.status === "error"
         ? "Firebase同期失敗"
         : "";

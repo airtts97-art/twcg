@@ -1,0 +1,47 @@
+{
+  "id": "card_1782419351598",
+  "name": "北東軍に栄光あれ！",
+  "type": "タクト",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["アトラス北東軍", "戦術.永続"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 15,
+      "human": 0,
+      "magic": 0,
+      "nature": 5,
+      "mineral": 5,
+      "fuel": 5,
+      "electric": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "magic": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 0,
+  "defense": 0,
+  "description": "フィールド上に[アトラス北東軍]タグのユニットが存在する時：相手側のユニットを除く対象ユニット全員が[装甲⑤]を得る、HP+⑤の修正を得る、ATK+⑤の修正を得る",
+  "flavorText": "栄光は、前線に立つ者のものだ。",
+  "limit": 4,
+  "tactSubType": "永続",
+  "imageUrl": "assets/cards/card_1782419351598.jpeg"
+}

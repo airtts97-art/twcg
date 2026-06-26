@@ -1,19 +1,19 @@
 {
-  "id": "card_1782464860185",
-  "name": "月下造山帯",
-  "type": "ストラクト",
+  "id": "card_1782462481137",
+  "name": "展開命令",
+  "type": "タクト",
   "rarity": "通常",
   "world": "ユニフォール",
-  "tags": ["産業", "鉱山"],
+  "tags": ["アトラス北東軍", "命令"],
   "roles": [],
   "costs": {
     "play": {
-      "gold": 3,
-      "human": 3,
-      "magic": 1,
+      "gold": 5,
+      "human": 0,
+      "magic": 0,
       "nature": 0,
-      "mineral": 0,
-      "fuel": 0,
+      "mineral": 2,
+      "fuel": 2,
       "electric": 0
     },
     "act": {
@@ -35,13 +35,13 @@
     "mineral": 0,
     "fuel": 0,
     "electric": 0,
-    "magic": 2
+    "magic": 0
   },
   "attack": 0,
   "defense": 0,
-  "description": "人①燃①を支払いレストし、\n1枚ドローする、魔②を得る",
-  "flavorText": "致命的な点を除けば、最高の地域だ",
+  "description": "[アトラス北東軍]タグのカードを4枚デッキから手札に加える",
+  "flavorText": "前線へ、一斉展開。",
   "limit": 4,
-  "tactSubType": null,
-  "imageUrl": "assets/cards/card_1782464860185.jpeg"
+  "tactSubType": "通常",
+  "imageUrl": "assets/cards/card_1782462481137.jpeg"
 }

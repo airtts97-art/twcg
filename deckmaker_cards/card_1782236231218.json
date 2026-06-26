@@ -1,0 +1,47 @@
+{
+  "id": "card_1782236231218",
+  "name": "北東軍第11対戦車歩兵中隊",
+  "type": "ユニット",
+  "rarity": "通常",
+  "world": "ユニフォール",
+  "tags": ["アトラス北東軍", "純人間", "歩兵"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 1,
+      "human": 2,
+      "magic": 0,
+      "nature": 0,
+      "mineral": 1,
+      "fuel": 0,
+      "electric": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "magic": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 1,
+  "defense": 4,
+  "description": "[貫通③][警戒]\n[装甲]効果を持っているユニットに対し与攻撃時：ATK+2の修正を得る\n隣接するユニットのうち2つが[アトラス北東軍]のタグのユニットの時：ATK+１の修正を得る、HP+１の修正を得る",
+  "flavorText": "対装甲戦術の精鋭。",
+  "limit": 4,
+  "tactSubType": null,
+  "imageUrl": "assets/cards/card_1782236231218.jpeg"
+}
