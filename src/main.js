@@ -3451,6 +3451,33 @@ function parseDeckmakerAbilities(card, localType) {
         });
       }
     }
+    const structRestOrMagicMatch = text.match(/レストする[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)か魔([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/);
+    if (structRestOrMagicMatch) {
+      const primaryChar = structRestOrMagicMatch[1];
+      const primaryResource = structResMap[primaryChar];
+      if (primaryResource) {
+        const primaryAmount = parseDeckmakerKeywordValue(structRestOrMagicMatch[2]) || 1;
+        const magicAmount = parseDeckmakerKeywordValue(structRestOrMagicMatch[3]) || 1;
+        abilities.push({
+          trigger: "onStructurePhase",
+          effect: "chooseProduceResource",
+          options: [
+            {
+              id: primaryResource,
+              label: `${primaryChar}${structRestOrMagicMatch[2]}`,
+              cost: {},
+              produces: { [primaryResource]: primaryAmount },
+            },
+            {
+              id: "magic",
+              label: `魔${structRestOrMagicMatch[3]}`,
+              cost: {},
+              produces: { magic: magicAmount },
+            },
+          ],
+        });
+      }
+    }
     const generates = fromDeckmakerCosts(card.generates || {});
     const negEntries = Object.entries(generates).filter(([, a]) => a < 0);
     const posEntries = Object.entries(generates).filter(([, a]) => a > 0);
@@ -4027,19 +4054,6 @@ function parseDeckmakerAbilities(card, localType) {
     }
   }
 
-  if (card.id === "card_1755655012242") {
-    abilities.length = 0;
-    abilities.push({
-      trigger: "onStructurePhase",
-      effect: "chooseProduceResource",
-      options: [
-        { id: "magic", label: "\u9b541", cost: {}, produces: { magic: 1 } },
-        { id: "ore", label: "\u92712", cost: {}, produces: { ore: 2 } },
-        { id: "funds", label: "\u91d12", cost: {}, produces: { funds: 2 } },
-      ],
-    });
-  }
-
   if (card.id === "card_1753660736818") {
     abilities.push({
       trigger: "onPlay",
@@ -4196,29 +4210,6 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onFriendlyUnitDestroyed", effect: "healSelfAndRemoveCounter", amount: 1 });
   }
 
-  if (card.id === "card_1755612018710") {
-    abilities.length = 0;
-    abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
-    abilities.push({ trigger: "onStructurePhaseHP", effect: "produceResourceCostHP", resource: "nature", amount: 1, hpCost: 3 });
-  }
-
-  if (card.id === "card_1755654825932") {
-    abilities.length = 0;
-    abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
-    abilities.push({ trigger: "onStructurePhaseHP", effect: "produceResourceCostHP", resource: "people", amount: 2, hpCost: 3 });
-  }
-
-  if (card.id === "card_1755655390809") {
-    abilities.length = 0;
-    abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
-    abilities.push({ trigger: "onStructurePhaseHP", effect: "produceResourceCostHP", resource: "electric", amount: 1, hpCost: 3 });
-  }
-
-  if (card.id === "card_1755656642598") {
-    abilities.length = 0;
-    abilities.push({ trigger: "onStructurePhase", effect: "reviveStructFromDump", fallback: { effect: "produceResource", resource: "magic", amount: 2 } });
-  }
-
   if (card.id === "card_1755648239499") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "grantKeywordsToAllMagicMachines", keywords: [{ id: "shock" }, { id: "pierce", value: 2 }] });
@@ -4323,12 +4314,6 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1753970684315") {
     abilities.push({ trigger: "onSummon", effect: "payDestroyUpToEnemyCards", cost: { fuel: 1, magic: 3 }, amount: 3 });
-  }
-
-  if (card.id === "card_1755657552300") {
-    abilities.length = 0;
-    abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 1 });
-    abilities.push({ trigger: "onPlay", effect: "registerDumpLifeGain" });
   }
 
   if (card.id === "card_1755701443493") {
