@@ -238,7 +238,7 @@ const SAVED_DECK_KEY = "twcg.savedDeck.v1";
 const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
 const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
 const FIREBASE_CARDS_CACHE_KEY = "twcg.firebaseCards.v1";
-const FIREBASE_CARDS_REFRESH_MIN_MS = 2 * 60 * 1000;
+const FIREBASE_CARDS_REFRESH_MIN_MS = 5 * 60 * 1000;
 let firebaseCardsLoadPromise = null;
 const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1753611167885", // クリスタヴィアゴーレム
@@ -2738,7 +2738,7 @@ cardCatalog.main.disruptionEngineer = {
   hp: 3,
   text: "このユニットに隣接する味方ユニットは[効果保護①]を得る。",
   keywords: [],
-  abilities: [{ trigger: "onSummon", effect: "grantEffectProtectToAdjacent", value: 1 }],
+  abilities: [{ effect: "grantEffectProtectToAdjacent", value: 1 }],
   imageUrl: "assets/cards/disruptionEngineer.jpeg",
 };
 
@@ -2932,6 +2932,9 @@ async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
   if (!app) return false;
   if (firebaseCardsLoadPromise && !force) return firebaseCardsLoadPromise;
   firebaseCardsLoadPromise = (async () => {
+    const warmCache = !force ? readFirebaseCardsCache() : null;
+    const cacheAgeMs = warmCache?.savedAt ? Date.now() - warmCache.savedAt : Infinity;
+
     if (
       !force
       && app.cardSync?.status === "ok"
@@ -2940,28 +2943,45 @@ async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
     ) {
       return true;
     }
+    if (
+      !force
+      && warmCache?.cards?.length
+      && cacheAgeMs < FIREBASE_CARDS_REFRESH_MIN_MS
+    ) {
+      return applyFirebaseDeckmakerCards(warmCache.cards, {
+        source: "cache",
+        cachedAt: warmCache.savedAt,
+        cacheReason: "fresh",
+      });
+    }
+
     app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null, drift: [] };
     try {
-      if (!force) {
-        const warmCache = readFirebaseCardsCache();
-        if (warmCache?.cards?.length) {
-          applyFirebaseDeckmakerCards(warmCache.cards, { source: "cache", cachedAt: warmCache.savedAt });
-        }
+      if (!force && warmCache?.cards?.length) {
+        applyFirebaseDeckmakerCards(warmCache.cards, {
+          source: "cache",
+          cachedAt: warmCache.savedAt,
+          cacheReason: "warm-start",
+        });
       }
       const cards = await fetchAllFirebaseCards();
       writeFirebaseCardsCache(cards);
       return applyFirebaseDeckmakerCards(cards, { source: "live" });
     } catch (error) {
-      console.warn("loadFirebaseCardsIntoCatalog failed:", error);
       const cached = readFirebaseCardsCache();
       if (cached?.cards?.length) {
         const applied = applyFirebaseDeckmakerCards(cached.cards, {
           source: "cache",
           cachedAt: cached.savedAt,
           fetchError: String(error.message || error),
+          cacheReason: "fetch-failed",
         });
-        if (applied) return true;
+        if (applied) {
+          console.info("loadFirebaseCardsIntoCatalog: using cache after fetch failure:", error.message || error);
+          return true;
+        }
       }
+      console.warn("loadFirebaseCardsIntoCatalog failed:", error);
       applySupplementalCardFallbacks(new Set());
       applyBundledImageFallbacks();
       ensureAllCardKeywords();
@@ -3020,7 +3040,12 @@ function writeFirebaseCardsCache(cards) {
   }
 }
 
-function applyFirebaseDeckmakerCards(cards, { source = "live", cachedAt = null, fetchError = null } = {}) {
+function applyFirebaseDeckmakerCards(cards, {
+  source = "live",
+  cachedAt = null,
+  fetchError = null,
+  cacheReason = null,
+} = {}) {
   const firebaseIds = new Set();
   let count = 0;
   for (const deckmakerCard of cards) {
@@ -3056,12 +3081,12 @@ function applyFirebaseDeckmakerCards(cards, { source = "live", cachedAt = null, 
     .concat(Object.values(cardCatalog.structs || {}))
     .filter((card) => hasHardcodedTextChanged(card))
     .map((card) => ({ id: card.id, name: card.name, field: "hardcodedImplementation" }));
-  const syncStatus = source === "cache" ? "cached" : "ok";
+  const syncStatus = source === "live" || cacheReason === "fresh" ? "ok" : "cached";
   app.cardSync = {
     status: syncStatus,
     count,
     error: fetchError,
-    updatedAt: cachedAt || Date.now(),
+    updatedAt: cacheReason === "fresh" ? Date.now() : (cachedAt || Date.now()),
     drift,
     hardcodedDrift,
   };
@@ -3069,10 +3094,10 @@ function applyFirebaseDeckmakerCards(cards, { source = "live", cachedAt = null, 
     console.warn("Card catalog drift detected:", { drift, hardcodedDrift });
   }
   if (app.screen === "deckBuilder") {
-    if (syncStatus === "cached") {
+    if (syncStatus === "cached" && fetchError) {
       const ageMin = cachedAt ? Math.max(1, Math.round((Date.now() - cachedAt) / 60000)) : "?";
       app.deckBuilder.message = `Firebase取得失敗のためキャッシュを使用（${ageMin}分前・${count}枚）。`;
-    } else {
+    } else if (syncStatus === "ok") {
       const driftNote = drift.length ? ` / 差分${drift.length}件` : "";
       app.deckBuilder.message = `Firebaseからカード${count}枚を同期しました${driftNote}。`;
     }
@@ -3489,6 +3514,16 @@ function parseDeckmakerAbilities(card, localType) {
   if (buffTagMatch) {
     const amount = parseDeckmakerKeywordValue(buffTagMatch[2]) || 1;
     abilities.push({ trigger: baseTrigger, effect: "buffTagUnitsAtk", tag: buffTagMatch[1], amount });
+  }
+
+  const adjacentEffectProtectMatch = text.match(
+    /(?:このユニットに)?隣接する(?:味方)?ユニット(?:は|に)\[効果保護([①②③④⑤⑥⑦⑧⑨0-9０-９]*)\](?:を得る|を与える)/,
+  );
+  if (adjacentEffectProtectMatch && !abilities.some((a) => a.effect === "grantEffectProtectToAdjacent")) {
+    abilities.push({
+      effect: "grantEffectProtectToAdjacent",
+      value: parseDeckmakerKeywordValue(adjacentEffectProtectMatch[1]) || 1,
+    });
   }
 
   // "「破壊された時：金③を得る」を与える" → grant onDestroy gainResource to target unit
@@ -7829,8 +7864,8 @@ function resolveKaijuAwakenChoice() {
 function effectProtectLevel(game, unit) {
   let level = keywordValue(unit, "effectProtect");
   if (unit.row === undefined || unit.col === undefined) return level;
-  for (const dc of [-1, 1]) {
-    const adj = game.board[unit.row]?.[unit.col + dc];
+  for (const [row, col] of adjacentCells(unit.row, unit.col)) {
+    const adj = game.board[row]?.[col];
     if (adj && adj.owner === unit.owner) {
       const aura = (adj.abilities || []).find((a) => a.effect === "grantEffectProtectToAdjacent");
       if (aura) level = Math.max(level, aura.value || 1);

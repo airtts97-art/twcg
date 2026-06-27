@@ -11,26 +11,67 @@ const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseC
 
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
+/** Minimum spacing between consecutive Firestore REST requests. */
+export const FIRESTORE_MIN_REQUEST_INTERVAL_MS = 900;
+
+/** Extra pause between paginated list requests (in addition to the limiter). */
+export const FIRESTORE_PAGE_DELAY_MS = 400;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchFirestoreJson(url, { signal, maxRetries = 5 } = {}) {
-  let attempt = 0;
-  while (true) {
-    attempt += 1;
-    const response = await fetch(url, { signal });
-    if (response.ok) return response.json();
-    if (RETRYABLE_STATUSES.has(response.status) && attempt < maxRetries) {
-      const retryAfterHeader = Number(response.headers.get("Retry-After"));
-      const waitMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
-        ? retryAfterHeader * 1000
-        : Math.min(30000, 1000 * 2 ** (attempt - 1));
-      await sleep(waitMs);
-      continue;
-    }
-    throw new Error(`Firestore cards fetch failed (${response.status})`);
+function jitterMs(maxMs = 400) {
+  return Math.floor(Math.random() * maxMs);
+}
+
+class FirestoreRequestLimiter {
+  constructor({ minIntervalMs = FIRESTORE_MIN_REQUEST_INTERVAL_MS } = {}) {
+    this.minIntervalMs = minIntervalMs;
+    this.lastRequestAt = 0;
+    this.chain = Promise.resolve();
   }
+
+  schedule(fn) {
+    const run = this.chain.then(async () => {
+      const now = Date.now();
+      const wait = Math.max(0, this.minIntervalMs - (now - this.lastRequestAt));
+      if (wait > 0) await sleep(wait);
+      this.lastRequestAt = Date.now();
+      return fn();
+    });
+    this.chain = run.catch(() => {});
+    return run;
+  }
+}
+
+const firestoreLimiter = new FirestoreRequestLimiter();
+
+function retryWaitMs(status, attempt, response) {
+  const retryAfterHeader = Number(response?.headers?.get?.("Retry-After"));
+  if (Number.isFinite(retryAfterHeader) && retryAfterHeader > 0) {
+    return retryAfterHeader * 1000 + jitterMs(500);
+  }
+  if (status === 429) {
+    return Math.min(60000, 2500 * 2 ** (attempt - 1)) + jitterMs(800);
+  }
+  return Math.min(30000, 1000 * 2 ** (attempt - 1)) + jitterMs(400);
+}
+
+async function fetchFirestoreJson(url, { signal, maxRetries = 8 } = {}) {
+  return firestoreLimiter.schedule(async () => {
+    let attempt = 0;
+    while (true) {
+      attempt += 1;
+      const response = await fetch(url, { signal });
+      if (response.ok) return response.json();
+      if (RETRYABLE_STATUSES.has(response.status) && attempt < maxRetries) {
+        await sleep(retryWaitMs(response.status, attempt, response));
+        continue;
+      }
+      throw new Error(`Firestore cards fetch failed (${response.status})`);
+    }
+  });
 }
 
 function firestoreValueToJs(value) {
@@ -66,7 +107,15 @@ function firestoreDocToCard(doc) {
   return card;
 }
 
-export async function fetchAllFirebaseCards({ pageSize = 300, signal, pageDelayMs = 200 } = {}) {
+export async function fetchAllFirebaseCards({
+  pageSize = 300,
+  signal,
+  pageDelayMs = FIRESTORE_PAGE_DELAY_MS,
+  minRequestIntervalMs = FIRESTORE_MIN_REQUEST_INTERVAL_MS,
+} = {}) {
+  if (minRequestIntervalMs !== firestoreLimiter.minIntervalMs) {
+    firestoreLimiter.minIntervalMs = minRequestIntervalMs;
+  }
   const cards = [];
   let pageToken = "";
   let pageIndex = 0;
