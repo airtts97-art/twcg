@@ -324,6 +324,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782600000000",  // 戦時国債
   "card_1782610000000",  // 金準備を押収
   "card_1782463436621",  // 露出管理
+  "card_1782526025475",  // 近接航空支援
   "card_1782464860185",  // 月下造山帯
   "card_1782462481137",  // 展開命令
   "card_1782419351598",  // 北東軍に栄光あれ！
@@ -889,6 +890,33 @@ const abilityEffects = {
     };
     game.selected = { kind: "choice", choice: "exposureManagement" };
     game.message = "露出管理: レスト中の【機動】ユニットを選択";
+    return "pending";
+  },
+  closeAirSupportPlay({ game, playerId, card }) {
+    card.permanentTact = true;
+    card.rested = false;
+    card.abilities = [
+      { trigger: "onMainPhase", effect: "closeAirSupportActivate", isPermanent: true },
+    ];
+    log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
+  },
+  closeAirSupportActivate({ game, playerId, card, ability, source }) {
+    if (source?.zone === "tact" && card.permanentTact) card.rested = true;
+    const candidates = closeAirSupportUnitCandidates(game, playerId);
+    if (!candidates.length) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 隣接【航空】を支援できる味方ユニットがいない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "closeAirSupport",
+      step: "chooseUnit",
+      playerId,
+      tactName: card.name,
+      candidates,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "closeAirSupport" };
+    game.message = "近接航空支援: 支援する味方ユニットを選択";
     return "pending";
   },
   defeatIfNamedUnitDestroyed({ game, playerId, ability, source }) {
@@ -4137,6 +4165,11 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782463436621") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "exposureManagementPlay" });
+  }
+
+  if (card.id === "card_1782526025475") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "closeAirSupportPlay" });
   }
 
   if (card.id === "card_1782419351598") {
@@ -8265,6 +8298,10 @@ function endTurn() {
   }
   for (const unit of unitsOwnedBy(endingPlayer)) {
     if (hasKeyword(unit, "alert")) unit.rested = false;
+    if (unit.closeAirSupportTurnBuff?.untilPlayerTurnEnd === endingPlayer) {
+      unit.atk = Math.max(0, (unit.atk || 0) - (unit.closeAirSupportTurnBuff.atkBonus || 0));
+      delete unit.closeAirSupportTurnBuff;
+    }
   }
   // [降臨] healingHealOnTurnEnd: each friendly unit heals (count of 治療-tagged cards on board) × 2
   if ((state.globalEffects || []).some((e) => e.type === "healingHealOnTurnEnd" && e.playerId === endingPlayer)) {
@@ -8674,6 +8711,108 @@ function exposureManagementUnitCandidates(game, playerId) {
     }
   }
   return candidates;
+}
+
+function closeAirSupportFlyingCandidates(game, playerId, unitRow, unitCol) {
+  const player = game.players[playerId];
+  const candidates = [];
+  for (const [row, col] of adjacentCells(unitRow, unitCol)) {
+    const unit = game.board[row]?.[col];
+    if (!unit || unit.owner !== playerId || !hasKeyword(unit, "flying")) continue;
+    if (!canPayForCard(player, unit.actCost || {}, unit)) continue;
+    candidates.push({ row, col });
+  }
+  return candidates;
+}
+
+function closeAirSupportUnitCandidates(game, playerId) {
+  const candidates = [];
+  for (const unit of unitsOwnedBy(playerId, game)) {
+    if (closeAirSupportFlyingCandidates(game, playerId, unit.row, unit.col).length) {
+      candidates.push({ row: unit.row, col: unit.col });
+    }
+  }
+  return candidates;
+}
+
+function finishCloseAirSupport(pending, flyingRow, flyingCol) {
+  const supported = state.board[pending.unitRow]?.[pending.unitCol];
+  const flying = state.board[flyingRow]?.[flyingCol];
+  const player = state.players[pending.playerId];
+  if (!supported || supported.owner !== pending.playerId) {
+    state.message = "支援対象が無効です。";
+    return;
+  }
+  if (!flying || flying.owner !== pending.playerId || !hasKeyword(flying, "flying")) {
+    state.message = "【航空】ユニットを選択できません。";
+    return;
+  }
+  if (!canPayForCard(player, flying.actCost || {}, flying)) {
+    state.message = "アクトコストが不足しています。";
+    return;
+  }
+  if (!payForCard(player, flying.actCost || {}, flying)) {
+    state.message = "アクトコストの支払いに失敗しました。";
+    return;
+  }
+  flying.rested = true;
+  const atkBonus = flying.atk || 0;
+  if (supported.closeAirSupportTurnBuff?.untilPlayerTurnEnd === pending.playerId) {
+    supported.atk = Math.max(0, (supported.atk || 0) - (supported.closeAirSupportTurnBuff.atkBonus || 0));
+  }
+  supported.atk = (supported.atk || 0) + atkBonus;
+  supported.closeAirSupportTurnBuff = {
+    atkBonus,
+    damageReduction: atkBonus,
+    untilPlayerTurnEnd: pending.playerId,
+  };
+  log(
+    state,
+    `${player.name}: 「${pending.tactName}」—「${supported.name}」ATK+${atkBonus}・被ダメ-${atkBonus}（「${flying.name}」をレスト）`,
+  );
+  state.pendingChoice = null;
+  state.selected = null;
+  finishPendingEffectQueue(state);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+}
+
+function resolveCloseAirSupportUnit(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "closeAirSupport" || pending.step !== "chooseUnit") return false;
+  const unit = state.board[row]?.[col];
+  if (!unit || unit.owner !== pending.playerId) {
+    state.message = "対象にできません。";
+    render();
+    return false;
+  }
+  const flyingCandidates = closeAirSupportFlyingCandidates(state, pending.playerId, row, col);
+  if (!flyingCandidates.length) {
+    state.message = "隣接する【航空】ユニットがいません。";
+    render();
+    return false;
+  }
+  pending.unitRow = row;
+  pending.unitCol = col;
+  pending.flyingCandidates = flyingCandidates;
+  pending.step = "chooseFlying";
+  state.message = "近接航空支援: 隣接する【航空】ユニットを選択";
+  render();
+  return true;
+}
+
+function resolveCloseAirSupportFlying(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "closeAirSupport" || pending.step !== "chooseFlying") return false;
+  const isEligible = (pending.flyingCandidates || []).some((c) => c.row === row && c.col === col);
+  if (!isEligible) {
+    state.message = "その【航空】ユニットは選択できません。";
+    render();
+    return false;
+  }
+  finishCloseAirSupport(pending, row, col);
+  return true;
 }
 
 function exposureRetreatTargets(unit, game = state) {
@@ -9151,7 +9290,12 @@ function applyCleave(attacker, defender, fromDeltaIndex = 0) {
 }
 
 function capUnitDamage(target, amount) {
-  return hasKeyword(target, "oneDamage") ? Math.min(amount, 1) : amount;
+  let reduced = amount;
+  const airBuff = target?.closeAirSupportTurnBuff;
+  if (airBuff?.damageReduction) {
+    reduced = Math.max(0, reduced - airBuff.damageReduction);
+  }
+  return hasKeyword(target, "oneDamage") ? Math.min(reduced, 1) : reduced;
 }
 
 function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
@@ -11154,6 +11298,17 @@ function handleCellClick(row, col) {
       return;
     }
   }
+  if (state.pendingChoice?.type === "closeAirSupport") {
+    if (!requireActivePlayerControl()) return;
+    if (state.pendingChoice.step === "chooseUnit") {
+      resolveCloseAirSupportUnit(row, col);
+      return;
+    }
+    if (state.pendingChoice.step === "chooseFlying") {
+      resolveCloseAirSupportFlying(row, col);
+      return;
+    }
+  }
   if (state.pendingTarget) {
     if (!requireActivePlayerControl()) return;
     resolvePendingTarget(row, col);
@@ -11689,6 +11844,10 @@ function drawChoiceOverlay() {
     drawExposureManagementPanel(pending);
     return;
   }
+  if (pending.type === "closeAirSupport" && (pending.step === "chooseUnit" || pending.step === "chooseFlying")) {
+    drawCloseAirSupportPanel(pending);
+    return;
+  }
   ctx.fillStyle = "rgba(0, 0, 8, 0.75)";
   ctx.fillRect(0, 0, W, H);
   if (pending.type === "mysticCapture") drawMysticCapturePanel(pending);
@@ -11778,6 +11937,77 @@ function drawExposureManagementPanel(pending) {
     ctx.textAlign = "left";
     if (isController) {
       drawButton(W / 2 - 70, H - 56, 140, 34, "移動しない", () => finishExposureManagement(pending), null, { accent: "p2" });
+    }
+  }
+}
+
+function drawCloseAirSupportPanel(pending) {
+  const isController = canControlActivePlayer() && pending.playerId === state.activePlayer;
+  if (pending.step === "chooseUnit") {
+    for (const { row, col } of pending.candidates || []) {
+      const visualRow = boardRowToVisualRow(row);
+      const cx2 = layout.board.x + col * layout.cell.w;
+      const cy2 = layout.board.y + visualRow * layout.cell.h;
+      const cw2 = layout.cell.w;
+      const ch2 = layout.cell.h;
+      ctx.save();
+      ctx.shadowColor = "#ffd060";
+      ctx.shadowBlur = 8;
+      roundRect(cx2 + 2, cy2 + 2, cw2 - 4, ch2 - 4, 4, "rgba(255,180,40,0.18)", "#ffb040", 3);
+      ctx.restore();
+      if (isController) addHit(cx2, cy2, cw2, ch2, () => resolveCloseAirSupportUnit(row, col));
+    }
+    const px = W / 2 - 220;
+    const py = 20;
+    roundRect(px, py, 440, 36, 6, "rgba(8,16,40,0.92)", "#ffb040", 1.5);
+    ctx.fillStyle = "#ffe0a0";
+    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("近接航空支援: 支援する味方ユニットをクリック", W / 2, py + 24);
+    ctx.textAlign = "left";
+    if (isController) {
+      drawButton(W / 2 - 55, H - 56, 110, 34, "キャンセル", () => {
+        state.pendingChoice = null;
+        state.selected = null;
+        finishPendingEffectQueue(state);
+        processEffectQueue(state);
+        syncOnlineAction("resolveChoice", pending.playerId);
+        render();
+      }, null, { accent: "dim" });
+    }
+    return;
+  }
+  if (pending.step === "chooseFlying") {
+    for (const { row, col } of pending.flyingCandidates || []) {
+      const visualRow = boardRowToVisualRow(row);
+      const cx2 = layout.board.x + col * layout.cell.w;
+      const cy2 = layout.board.y + visualRow * layout.cell.h;
+      const cw2 = layout.cell.w;
+      const ch2 = layout.cell.h;
+      ctx.save();
+      ctx.shadowColor = "#80e0ff";
+      ctx.shadowBlur = 8;
+      roundRect(cx2 + 2, cy2 + 2, cw2 - 4, ch2 - 4, 4, "rgba(80,200,255,0.2)", "#60c0ff", 3);
+      ctx.restore();
+      if (isController) addHit(cx2, cy2, cw2, ch2, () => resolveCloseAirSupportFlying(row, col));
+    }
+    const px = W / 2 - 240;
+    const py = 20;
+    roundRect(px, py, 480, 36, 6, "rgba(8,16,40,0.92)", "#60c0ff", 1.5);
+    ctx.fillStyle = "#b0e8ff";
+    ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("隣接する【航空】ユニットをクリック", W / 2, py + 24);
+    ctx.textAlign = "left";
+    if (isController) {
+      drawButton(W / 2 - 55, H - 56, 110, 34, "キャンセル", () => {
+        state.pendingChoice = null;
+        state.selected = null;
+        finishPendingEffectQueue(state);
+        processEffectQueue(state);
+        syncOnlineAction("resolveChoice", pending.playerId);
+        render();
+      }, null, { accent: "dim" });
     }
   }
 }
