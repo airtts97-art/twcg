@@ -237,6 +237,9 @@ function tactAtZoneCell(playerId, row, col) {
 const SAVED_DECK_KEY = "twcg.savedDeck.v1";
 const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
 const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
+const FIREBASE_CARDS_CACHE_KEY = "twcg.firebaseCards.v1";
+const FIREBASE_CARDS_REFRESH_MIN_MS = 2 * 60 * 1000;
+let firebaseCardsLoadPromise = null;
 const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1753611167885", // クリスタヴィアゴーレム
   "card_1753660736818", // 覆没の大暴走
@@ -2925,74 +2928,156 @@ function loadBundledDeckData() {
   refreshCatalogCompatibility(cardCatalog);
 }
 
-async function loadFirebaseCardsIntoCatalog() {
+async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
   if (!app) return false;
-  app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null, drift: [] };
-  try {
-    const cards = await fetchAllFirebaseCards();
-    const firebaseIds = new Set();
-    let count = 0;
-    for (const deckmakerCard of cards) {
-      try {
-        const card = fromDeckmakerCard(deckmakerCard);
-        if (!card || card.fixture) continue;
-        const firebaseImage = deckmakerImageUrl(deckmakerCard);
-        if (isUsableImageUrl(firebaseImage)) card.imageUrl = firebaseImage;
-        if (deckmakerCard.description) {
-          card.text = String(deckmakerCard.description);
-          card.description = String(deckmakerCard.description);
+  if (firebaseCardsLoadPromise && !force) return firebaseCardsLoadPromise;
+  firebaseCardsLoadPromise = (async () => {
+    if (
+      !force
+      && app.cardSync?.status === "ok"
+      && app.cardSync?.updatedAt
+      && Date.now() - app.cardSync.updatedAt < FIREBASE_CARDS_REFRESH_MIN_MS
+    ) {
+      return true;
+    }
+    app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null, drift: [] };
+    try {
+      if (!force) {
+        const warmCache = readFirebaseCardsCache();
+        if (warmCache?.cards?.length) {
+          applyFirebaseDeckmakerCards(warmCache.cards, { source: "cache", cachedAt: warmCache.savedAt });
         }
-        const group = catalogGroupForCard(card);
-        cardCatalog[group][card.id] = card;
-        firebaseIds.add(card.id);
-        count += 1;
-      } catch (e) {
-        console.warn("loadFirebaseCardsIntoCatalog: error processing card", deckmakerCard?.id, e);
       }
+      const cards = await fetchAllFirebaseCards();
+      writeFirebaseCardsCache(cards);
+      return applyFirebaseDeckmakerCards(cards, { source: "live" });
+    } catch (error) {
+      console.warn("loadFirebaseCardsIntoCatalog failed:", error);
+      const cached = readFirebaseCardsCache();
+      if (cached?.cards?.length) {
+        const applied = applyFirebaseDeckmakerCards(cached.cards, {
+          source: "cache",
+          cachedAt: cached.savedAt,
+          fetchError: String(error.message || error),
+        });
+        if (applied) return true;
+      }
+      applySupplementalCardFallbacks(new Set());
+      applyBundledImageFallbacks();
+      ensureAllCardKeywords();
+      refreshCatalogCompatibility(cardCatalog);
+      app.cardSync = {
+        status: "error",
+        count: 0,
+        error: String(error.message || error),
+        updatedAt: Date.now(),
+        drift: [],
+      };
+      if (app.screen === "deckBuilder" && !app.deckBuilder.message?.includes("同期")) {
+        const isRateLimit = /429/.test(String(error.message || error));
+        app.deckBuilder.message = isRateLimit
+          ? "Firebaseが混雑しています（429）。しばらく待って「カード再同期」を押してください。"
+          : "Firebase同期に失敗しました。バンドルデータを使用しています。";
+      }
+      return false;
+    } finally {
+      firebaseCardsLoadPromise = null;
     }
-    applyBundledImageFallbacks();
-    applySupplementalCardFallbacks(firebaseIds);
-    ensureAllCardKeywords();
-    refreshCatalogCompatibility(cardCatalog);
-    const drift = collectCardDrift({
-      firebaseCards: cards,
-      supplementalCards,
-      deckmakerCards: [],
-      hardcodedBaselines: HARDCODED_TEXT_BASELINES,
-      watchIds: [...IMPLEMENTED_CARD_IDS],
-    });
-    const hardcodedDrift = Object.values(cardCatalog.main || {})
-      .concat(Object.values(cardCatalog.structs || {}))
-      .filter((card) => hasHardcodedTextChanged(card))
-      .map((card) => ({ id: card.id, name: card.name, field: "hardcodedImplementation" }));
-    app.cardSync = {
-      status: "ok",
-      count,
-      error: null,
-      updatedAt: Date.now(),
-      drift,
-      hardcodedDrift,
-    };
-    if (drift.length || hardcodedDrift.length) {
-      console.warn("Card catalog drift detected:", { drift, hardcodedDrift });
+  })();
+  return firebaseCardsLoadPromise;
+}
+
+function stripFirebaseCardForCache(card) {
+  if (!card || typeof card !== "object") return card;
+  const next = { ...card };
+  for (const key of ["imageUrl", "image"]) {
+    const val = next[key];
+    if (typeof val === "string" && val.startsWith("data:")) delete next[key];
+  }
+  return next;
+}
+
+function readFirebaseCardsCache() {
+  try {
+    const raw = localStorage.getItem(FIREBASE_CARDS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.cards)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeFirebaseCardsCache(cards) {
+  try {
+    localStorage.setItem(
+      FIREBASE_CARDS_CACHE_KEY,
+      JSON.stringify({ savedAt: Date.now(), cards: cards.map(stripFirebaseCardForCache) }),
+    );
+  } catch (e) {
+    console.warn("writeFirebaseCardsCache:", e);
+  }
+}
+
+function applyFirebaseDeckmakerCards(cards, { source = "live", cachedAt = null, fetchError = null } = {}) {
+  const firebaseIds = new Set();
+  let count = 0;
+  for (const deckmakerCard of cards) {
+    try {
+      const card = fromDeckmakerCard(deckmakerCard);
+      if (!card || card.fixture) continue;
+      const firebaseImage = deckmakerImageUrl(deckmakerCard);
+      if (isUsableImageUrl(firebaseImage)) card.imageUrl = firebaseImage;
+      if (deckmakerCard.description) {
+        card.text = String(deckmakerCard.description);
+        card.description = String(deckmakerCard.description);
+      }
+      const group = catalogGroupForCard(card);
+      cardCatalog[group][card.id] = card;
+      firebaseIds.add(card.id);
+      count += 1;
+    } catch (e) {
+      console.warn("loadFirebaseCardsIntoCatalog: error processing card", deckmakerCard?.id, e);
     }
-    if (app.screen === "deckBuilder") {
+  }
+  applyBundledImageFallbacks();
+  applySupplementalCardFallbacks(firebaseIds);
+  ensureAllCardKeywords();
+  refreshCatalogCompatibility(cardCatalog);
+  const drift = collectCardDrift({
+    firebaseCards: cards,
+    supplementalCards,
+    deckmakerCards: [],
+    hardcodedBaselines: HARDCODED_TEXT_BASELINES,
+    watchIds: [...IMPLEMENTED_CARD_IDS],
+  });
+  const hardcodedDrift = Object.values(cardCatalog.main || {})
+    .concat(Object.values(cardCatalog.structs || {}))
+    .filter((card) => hasHardcodedTextChanged(card))
+    .map((card) => ({ id: card.id, name: card.name, field: "hardcodedImplementation" }));
+  const syncStatus = source === "cache" ? "cached" : "ok";
+  app.cardSync = {
+    status: syncStatus,
+    count,
+    error: fetchError,
+    updatedAt: cachedAt || Date.now(),
+    drift,
+    hardcodedDrift,
+  };
+  if (drift.length || hardcodedDrift.length) {
+    console.warn("Card catalog drift detected:", { drift, hardcodedDrift });
+  }
+  if (app.screen === "deckBuilder") {
+    if (syncStatus === "cached") {
+      const ageMin = cachedAt ? Math.max(1, Math.round((Date.now() - cachedAt) / 60000)) : "?";
+      app.deckBuilder.message = `Firebase取得失敗のためキャッシュを使用（${ageMin}分前・${count}枚）。`;
+    } else {
       const driftNote = drift.length ? ` / 差分${drift.length}件` : "";
       app.deckBuilder.message = `Firebaseからカード${count}枚を同期しました${driftNote}。`;
     }
-    return true;
-  } catch (error) {
-    console.warn("loadFirebaseCardsIntoCatalog failed:", error);
-    applySupplementalCardFallbacks(new Set());
-    applyBundledImageFallbacks();
-    ensureAllCardKeywords();
-    refreshCatalogCompatibility(cardCatalog);
-    app.cardSync = { status: "error", count: 0, error: String(error.message || error), updatedAt: Date.now(), drift: [] };
-    if (app.screen === "deckBuilder" && !app.deckBuilder.message?.includes("同期")) {
-      app.deckBuilder.message = "Firebase同期に失敗しました。バンドルデータを使用しています。";
-    }
-    return false;
   }
+  return true;
 }
 
 function applyBundledImageFallbacks() {
@@ -10087,18 +10172,24 @@ function drawDeckBuilderScreen() {
   drawButton(1120, btnY, 154, 32, "画像なし出力", exportNoImageCustomCards);
   drawButton(74, btnY + 38, 150, 32, "不足データDL", exportIncompleteCardData);
   drawButton(234, btnY + 38, 118, 32, "カード再同期", () => {
-    loadFirebaseCardsIntoCatalog().then(() => render());
+    loadFirebaseCardsIntoCatalog({ force: true }).then(() => render());
   });
 
   const syncStatus = app.cardSync?.status === "loading"
     ? "カード同期中…"
     : app.cardSync?.status === "ok"
       ? `Firebase同期済 (${app.cardSync.count}枚${(app.cardSync.drift?.length || 0) + (app.cardSync.hardcodedDrift?.length || 0) ? ` / 差分${(app.cardSync.drift?.length || 0) + (app.cardSync.hardcodedDrift?.length || 0)}` : ""})`
-      : app.cardSync?.status === "error"
-        ? "Firebase同期失敗"
-        : "";
+      : app.cardSync?.status === "cached"
+        ? `Firebaseキャッシュ (${app.cardSync.count}枚)`
+        : app.cardSync?.status === "error"
+          ? "Firebase同期失敗"
+          : "";
   if (syncStatus) {
-    ctx.fillStyle = app.cardSync?.status === "error" ? "#ff9090" : "rgba(140,180,240,0.75)";
+    ctx.fillStyle = app.cardSync?.status === "error"
+      ? "#ff9090"
+      : app.cardSync?.status === "cached"
+        ? "#ffd080"
+        : "rgba(140,180,240,0.75)";
     ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
     ctx.fillText(syncStatus, 360, btnY + 58, 1060);
   }
