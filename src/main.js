@@ -1,6 +1,6 @@
 import deckData from "./deck_data.js";
 import supplementalCards from "./supplemental_cards.js";
-import { fetchAllFirebaseCards, FIRESTORE_DEFAULT_PAGE_SIZE } from "./firebase_cards.js";
+import { fetchAllFirebaseCards, FirestoreFetchError } from "./firebase_cards.js";
 import { collectCardDrift } from "./card_firebase_sync.js";
 import { HARDCODED_TEXT_BASELINES, hasHardcodedTextChanged } from "./card_hardcoded_registry.js";
 import { IMPLEMENTED_CARD_IDS } from "./card_implemented_registry.js";
@@ -239,7 +239,6 @@ const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
 const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
 const FIREBASE_CARDS_CACHE_KEY = "twcg.firebaseCards.v1";
 const FIREBASE_CARDS_BACKOFF_KEY = "twcg.firebaseFetchBackoff.v1";
-const FIREBASE_CARDS_PAGE_SIZE_KEY = "twcg.firebasePageSize.v1";
 const FIREBASE_CARDS_429_BACKOFF_MS = 20 * 60 * 1000;
 let firebaseCardsLoadPromise = null;
 const FORCE_BUNDLED_CARD_IDS = new Set([
@@ -2962,28 +2961,10 @@ function firebaseFetchBackoffRemainingMs() {
   return until > 0 ? until - Date.now() : 0;
 }
 
-function readFirebasePreferredPageSize() {
-  try {
-    const size = Number(localStorage.getItem(FIREBASE_CARDS_PAGE_SIZE_KEY));
-    if (!Number.isFinite(size) || size < 5) return FIRESTORE_DEFAULT_PAGE_SIZE;
-    return Math.floor(size);
-  } catch {
-    return FIRESTORE_DEFAULT_PAGE_SIZE;
-  }
-}
-
-function writeFirebasePreferredPageSize(pageSize) {
-  try {
-    localStorage.setItem(FIREBASE_CARDS_PAGE_SIZE_KEY, String(Math.floor(pageSize)));
-  } catch {
-    /* ignore */
-  }
-}
-
 function formatFirebaseFetchMeta(meta) {
-  if (!meta?.rateLimitEvents?.length) return "";
-  const last = meta.rateLimitEvents[meta.rateLimitEvents.length - 1];
-  return ` / 429: ${last.stuckAtPage}ページ目(pageSize${last.pageSize})→${meta.finalPageSize}枚`;
+  if (!meta?.source) return "";
+  if (meta.source === "sdk") return " / SDK同期";
+  return "";
 }
 
 async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
@@ -3015,11 +2996,7 @@ async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
 
     app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null, drift: [] };
     try {
-      const pageSize = readFirebasePreferredPageSize();
-      const cards = await fetchAllFirebaseCards({ pageSize, initialDelayMs: 2000 });
-      if (cards.fetchMeta?.finalPageSize) {
-        writeFirebasePreferredPageSize(cards.fetchMeta.finalPageSize);
-      }
+      const cards = await fetchAllFirebaseCards({ initialDelayMs: 500 });
       clearFirebaseFetchBackoff();
       writeFirebaseCardsCache(cards);
       return applyFirebaseDeckmakerCards(cards, {
@@ -3027,17 +3004,11 @@ async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
         fetchMeta: cards.fetchMeta,
       });
     } catch (error) {
-      const isRateLimit = /429/.test(String(error.message || error));
+      const isRateLimit = error instanceof FirestoreFetchError && error.status === 429
+        || /429|resource-exhausted|quota exceeded/i.test(String(error.message || error));
       if (isRateLimit) {
         setFirebaseFetchBackoff();
-        const stuck = error.fetchMeta?.rateLimitEvents?.at(-1);
-        if (stuck?.nextPageSize) writeFirebasePreferredPageSize(stuck.nextPageSize);
-        if (stuck) {
-          console.warn(
-            `loadFirebaseCardsIntoCatalog: stuck at page ${stuck.stuckAtPage} `
-            + `(pageSize=${stuck.pageSize}), next try ${stuck.nextPageSize} cards/page`,
-          );
-        }
+        console.warn("loadFirebaseCardsIntoCatalog: Firestore SDK quota exceeded (429)");
       }
       const cached = readFirebaseCardsCache();
       if (cached?.cards?.length) {

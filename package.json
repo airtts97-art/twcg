@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "firebase": "^10.14.1"
+  },
   "scripts": {
     "dev": "node server.mjs",
     "test": "node tests/keyword-tests.mjs",
