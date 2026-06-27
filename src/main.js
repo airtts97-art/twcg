@@ -579,8 +579,38 @@ const abilityEffects = {
     const gainLabel = Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("、");
     log(game, `${player.name}: 「${card.name}」${costLabel}支払い → ドロー${drawAmount}、${gainLabel}`);
   },
-  drawCards({ game, playerId, ability }) {
+  drawCards({ game, playerId, card, ability }) {
     drawCards(game, playerId, ability.amount);
+    if (card?.type === "struct" && !ability.multiActivate) card.rested = true;
+  },
+  discardHandToMillOpponentDeck({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const discardAmount = ability.discardAmount || 2;
+    const millAmount = ability.millAmount || 5;
+    if (player.hand.length < discardAmount) {
+      log(game, `${player.name}: 「${card.name}」— 手札${discardAmount}枚がないため効果なし`);
+      return;
+    }
+    if (player.hand.length === discardAmount) {
+      const discarded = player.hand.splice(0);
+      player.dump.push(...discarded);
+      notifyDumpChanged(game, playerId);
+      millOpponentDeckCards(game, playerId, millAmount);
+      log(game, `${player.name}: 「${card.name}」— 手札${discarded.length}枚捨て → 相手デッキ${millAmount}枚墓地`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "discardHandToMill",
+      playerId,
+      remaining: discardAmount,
+      millAmount,
+      selectedHandIndexes: [],
+      cardName: card.name,
+      queueItem: { playerId, card, ability, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "discardHandToMill" };
+    game.message = `「${card.name}」: 手札${discardAmount}枚捨て → 相手デッキ${millAmount}枚墓地`;
+    return "pending";
   },
   gainResource({ game, playerId, ability, target }) {
     if (ability.vsTag) {
@@ -3463,6 +3493,14 @@ function parseDeckmakerAbilities(card, localType) {
         }
       }
     }
+    const structRestDrawMatch = text.match(/レストする[：:]([0-9０-９一二三四五六七八九]+)枚ドローする/);
+    if (structRestDrawMatch) {
+      abilities.push({
+        trigger: "onStructurePhase",
+        effect: "drawCards",
+        amount: parseDeckmakerKeywordValue(structRestDrawMatch[1]) || 1,
+      });
+    }
     const structDestroyEnemyMatch = text.match(/燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を支払[^。\n]*相手のストラクト(?:カード)?を([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚破壊/);
     if (structDestroyEnemyMatch && !abilities.some((a) => a.effect === "destroyEnemyStructs")) {
       abilities.push({
@@ -3503,9 +3541,10 @@ function parseDeckmakerAbilities(card, localType) {
 
   // Draw patterns: "カードをX枚引く", "デッキからX枚ドロー", "X枚ドロー"
   const structPayRestDrawText = localType === "struct" && /を支払いレストし[^。\n]*\d+枚ドローする/.test(text);
+  const structRestDrawText = localType === "struct" && /レストする[：:].*枚ドロー/.test(text);
   const drawMatch = text.match(/(?:カードを|デッキから)([0-9０-９一二三四五六七八九]+)枚(?:引く|ドロー)/)
     || text.match(/([0-9０-９一二三四五六七八九]+)枚ドロー/);
-  if (drawMatch && !structPayRestDrawText) {
+  if (drawMatch && !structPayRestDrawText && !structRestDrawText) {
     const amount = parseDeckmakerKeywordValue(drawMatch[1]) || 1;
     abilities.push({ trigger: baseTrigger, effect: "drawCards", amount });
   }
@@ -3667,6 +3706,18 @@ function parseDeckmakerAbilities(card, localType) {
       const amount = parseDeckmakerKeywordValue(match[1]) || 1;
       abilities.push({ trigger: "onDamageDealt", effect: "gainResource", resource, amount });
     }
+  }
+
+  const discardMillOnDamageMatch = text.match(
+    /与ダメージ時[^。\n]*手札([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚を捨てる[^。\n]*相手の山札を([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚墓地/,
+  );
+  if (discardMillOnDamageMatch) {
+    abilities.push({
+      trigger: "onDamageDealt",
+      effect: "discardHandToMillOpponentDeck",
+      discardAmount: parseDeckmakerKeywordValue(discardMillOnDamageMatch[1]) || 2,
+      millAmount: parseDeckmakerKeywordValue(discardMillOnDamageMatch[2]) || 5,
+    });
   }
 
   // 手札の[tag]/「name」を見せて発動 + タグカードを見せて人・金×N
@@ -4255,6 +4306,21 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onPlay", effect: "expandDataLinkRange" });
   }
 
+  if (card.id === "card_1782545511296") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onStructurePhase", effect: "drawCards", amount: 1 });
+  }
+
+  if (card.id === "card_1782545233380") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onDamageDealt",
+      effect: "discardHandToMillOpponentDeck",
+      discardAmount: 2,
+      millAmount: 5,
+    });
+  }
+
   if (card.id === "card_1753970684315") {
     abilities.push({ trigger: "onSummon", effect: "payDestroyUpToEnemyCards", cost: { fuel: 1, magic: 3 }, amount: 3 });
   }
@@ -4470,6 +4536,14 @@ function fromDeckmakerCard(card) {
     if (card.id === "card_1753611167885") {
       base.requiredStructId = "card_1753660736818";
       base.requiredStructName = "\u8986\u6ca1\u306e\u5927\u66b4\u8d70";
+    }
+    if (card.id === "card_1782545233380") {
+      base.requiredStructId = "card_1782545511296";
+      base.requiredStructName = "ロケット発射施設";
+    }
+    const requireStructMatch = (base.text || "").match(/このカードは(.+?)がないと出撃できない/);
+    if (requireStructMatch && !base.requiredStructName) {
+      base.requiredStructName = requireStructMatch[1].trim();
     }
     if (card.id === "card_1753905404273") base.requiredSacrificeName = "炎使いの剣士";
     if (card.id === "card_1753968998785") base.requiredSacrificeName = "炎使いの騎士";
@@ -7557,19 +7631,37 @@ function resolveIdentityCopyAbility(optionIndex) {
   return true;
 }
 
+function millOpponentDeckCards(game, playerId, amount = 1) {
+  const opponent = opponentOf(playerId);
+  const opponentPlayer = game.players[opponent];
+  let milled = 0;
+  for (let i = 0; i < amount; i++) {
+    const card = opponentPlayer.mainDeck.shift();
+    if (!card) break;
+    opponentPlayer.dump.push(card);
+    notifyDumpChanged(game, opponent);
+    milled += 1;
+  }
+  if (milled > 0) {
+    log(game, `${game.players[playerId].name}: 相手のデッキ上${milled}枚を墓地へ`);
+  }
+}
+
 function toggleColorfulDiscardChoice(handIndex) {
   const pending = state.pendingChoice;
-  if (pending?.type !== "colorfulDiscard") return;
+  if (pending?.type !== "colorfulDiscard" && pending?.type !== "discardHandToMill") return;
   const selected = new Set(pending.selectedHandIndexes);
   if (selected.has(handIndex)) selected.delete(handIndex);
   else if (selected.size < pending.remaining) selected.add(handIndex);
   pending.selectedHandIndexes = [...selected];
-  state.message = `色彩: ${pending.selectedHandIndexes.length}/${pending.remaining}枚選択`;
+  state.message = pending.type === "discardHandToMill"
+    ? `「${pending.cardName}」: ${pending.selectedHandIndexes.length}/${pending.remaining}枚選択`
+    : `色彩: ${pending.selectedHandIndexes.length}/${pending.remaining}枚選択`;
 }
 
 function resolveColorfulDiscardConfirm() {
   const pending = state.pendingChoice;
-  if (pending?.type !== "colorfulDiscard") return false;
+  if (pending?.type !== "colorfulDiscard" && pending?.type !== "discardHandToMill") return false;
   if (pending.selectedHandIndexes.length !== pending.remaining) return false;
   const player = state.players[pending.playerId];
   const indexes = [...pending.selectedHandIndexes].sort((a, b) => b - a);
@@ -7579,6 +7671,9 @@ function resolveColorfulDiscardConfirm() {
   }
   notifyDumpChanged(state, pending.playerId);
   log(state, `${player.name}: 「${pending.cardName}」— 手札${indexes.length}枚を捨てた`);
+  if (pending.type === "discardHandToMill") {
+    millOpponentDeckCards(state, pending.playerId, pending.millAmount || 5);
+  }
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
@@ -12161,7 +12256,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "discardForDraw") drawDiscardForDrawPanel(pending);
   else if (pending.type === "coreStructStartDiscard") drawCoreStructStartDiscardPanel(pending);
   else if (pending.type === "identityCopyAbility") drawIdentityCopyAbilityPanel(pending);
-  else if (pending.type === "colorfulDiscard") drawColorfulDiscardPanel(pending);
+  else if (pending.type === "colorfulDiscard" || pending.type === "discardHandToMill") drawColorfulDiscardPanel(pending);
   else if (pending.type === "colorfulRemapCost") drawColorfulRemapPanel(pending);
   else if (pending.type === "sheriffRemoveKeywords") drawSheriffRemoveKeywordsPanel(pending);
   else if (pending.type === "imposterTact") drawImposterTactPanel(pending);

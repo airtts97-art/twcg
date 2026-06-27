@@ -1,0 +1,45 @@
+{
+  "id": "card_1782545233380",
+  "name": "軌道爆撃衛星",
+  "type": "ユニット",
+  "rarity": "伝説",
+  "world": "ユニフォール",
+  "tags": ["ルディワ公国"],
+  "roles": [],
+  "costs": {
+    "play": {
+      "gold": 10,
+      "human": 6,
+      "nature": 0,
+      "mineral": 4,
+      "fuel": 4,
+      "electric": 0,
+      "magic": 0
+    },
+    "act": {
+      "gold": 0,
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": {
+    "gold": 4,
+    "human": 0,
+    "nature": 0,
+    "mineral": 9,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0
+  },
+  "attack": 8,
+  "defense": 1,
+  "description": "[曲射②] [奇襲]  [航空⑥] \n与ダメージ時手札2枚を捨てるそうした場合相手の山札を5枚墓地におくる\n　このカードはロケット発射施設がないと出撃できない\n",
+  "flavorText": "今日から毎日地上焼こうぜ",
+  "imageUrl": ""
+}

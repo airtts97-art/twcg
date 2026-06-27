@@ -37,6 +37,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "redirectDamageToOther", "revealTagsForResources", "surviveDamageAndOptionalBuff",
   "vsTagAtkBonus", "spendCountersForBuff", "selfCounterDeathShield",
   "buffSelfAtkThisAttack", "destroyAllUnits", "expandDataLinkRange",
+  "discardHandToMillOpponentDeck",
 ]);
 
 const STRUCT_PRODUCTION_EFFECTS = new Set([
