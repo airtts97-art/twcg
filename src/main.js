@@ -111,7 +111,7 @@ const KEYWORD_DEFINITIONS = {
   suppression: { label: "制圧", description: "攻撃した対象に-[制圧]/±0の補正を与える（ATKを制圧値だけ永続的に減らす）。" },
   dataLink: { label: "データリンク", description: "隣接するユニットの数だけACTの電コストを1軽減する。" },
   oneDamage: { label: "一傷防御", description: "Can only receive 1 damage per hit from any source." },
-  structTaunt: { label: "構造挑発", description: "Opponents must target structs with the highest struct taunt value first. This struct gains effect protection equal to its taunt value." },
+  structTaunt: { label: "構造挑発", description: "Opponents must target structs with the highest struct taunt value first when choosing a struct." },
   effectProtect: { label: "効果保護", description: "カード効果の影響を受けない（効果攻撃を含む。通常攻撃・曲射などの戦闘ダメージは対象外）。[効果貫通]がこの値以上のカードのみ影響できる。" },
   effectPenetrate: { label: "効果貫通", description: "Bypasses effect protection up to this value." },
 };
@@ -2779,8 +2779,8 @@ const cardCatalog = {
       faction: "ニュートラル",
       tags: ["要塞"],
       cost: { ore: 2 },
-      keywords: [{ id: "structTaunt", value: 1 }, { id: "effectProtect", value: 1 }],
-      text: "[構造挑発①] 相手がストラクトを選ぶ時、[構造挑発]値が最も高いカードの中から選ぶ必要がある。このカードは[効果保護①]を得る。（[効果貫通①]以上を持つカード以外から効果を受けない）",
+      keywords: [{ id: "structTaunt", value: 1 }],
+      text: "[構造挑発①] 相手がストラクトを選ぶ時、[構造挑発]値が最も高いカードの中から選ぶ必要がある。",
       abilities: [],
     },
   },
@@ -7249,6 +7249,7 @@ function resolveDestroyEnemyStructChoice(enemyIndex) {
   }
   pending.remaining -= 1;
   if (pending.remaining > 0 && getDestroyableEnemyStructEntries(state, opponent, sourceCard).length > 0) {
+    enemyStructChoiceScroll = 0;
     state.message = `${pending.cardName}: 破壊する相手ストラクトを選択してください（残り${pending.remaining}枚）`;
     render();
     return true;
@@ -8119,7 +8120,55 @@ function enemyStructChoicePool(structs) {
 }
 
 function structEffectProtectLevel(struct) {
-  return Math.max(keywordValue(struct, "effectProtect"), keywordValue(struct, "structTaunt"));
+  return keywordValue(struct, "effectProtect");
+}
+
+function getPendingEnemyStructDestroyContext() {
+  const controllerId = controlledPlayerId();
+  const pendingChoice = state.pendingChoice;
+  if (pendingChoice?.type === "destroyEnemyStruct" && pendingChoice.playerId === controllerId) {
+    return {
+      opponentId: opponentOf(pendingChoice.playerId),
+      sourceCard: pendingChoice.queueItem?.card,
+      canPay: !pendingChoice.fuelCost || (state.players[pendingChoice.playerId].resources.fuel || 0) >= pendingChoice.fuelCost,
+      resolve: (index) => resolveDestroyEnemyStructChoice(index),
+    };
+  }
+  const pendingStruct = state.pendingStructPhase;
+  const enemyChoice = pendingStruct?.pendingEnemyStructChoice;
+  if (enemyChoice && pendingStruct.playerId === controllerId) {
+    return {
+      opponentId: opponentOf(pendingStruct.playerId),
+      sourceCard: enemyChoice.sourceCard || { name: enemyChoice.cardName },
+      canPay: (state.players[pendingStruct.playerId].resources.fuel || 0) >= (enemyChoice.fuelCost || 0),
+      resolve: (index) => resolveEnemyStructChoice(index),
+    };
+  }
+  return null;
+}
+
+function drawFieldStructCard(playerId, cx2, y, cardW, cardH, card, index) {
+  const destroyCtx = getPendingEnemyStructDestroyContext();
+  const destroySelectable = destroyCtx
+    && playerId === destroyCtx.opponentId
+    && destroyCtx.canPay
+    && isValidEnemyStructDestroyIndex(state, destroyCtx.opponentId, index, destroyCtx.sourceCard);
+  const selected = state.selected?.kind === "fieldStruct" && state.selected.playerId === playerId && state.selected.index === index;
+  drawCard(cx2, y, cardW, cardH, card, {
+    selected: selected || destroySelectable,
+    small: true,
+    artOnly: true,
+  });
+  addHit(cx2, y, cardW, cardH, () => {
+    if (destroySelectable) {
+      destroyCtx.resolve(index);
+      render();
+      return;
+    }
+    const detailOpen = consumeFieldDoubleClick(`fieldStruct:${playerId}:${index}`);
+    state.selected = { kind: "fieldStruct", playerId, index, detailOpen };
+    state.message = detailOpen ? `${card.name}: detail` : `${card.name} を選択`;
+  });
 }
 
 function canDestroyEnemyStructByEffect(sourceCard, struct) {
@@ -8522,6 +8571,7 @@ function resolveEnemyStructChoice(enemyIndex) {
   }
   choice.remaining -= 1;
   if (choice.remaining > 0 && getDestroyableEnemyStructEntries(state, opponent, sourceCard).length > 0) {
+    enemyStructChoiceScroll = 0;
     pending.pendingEnemyStructChoice = choice;
   } else {
     if (choice.remaining > 0) {
@@ -11614,13 +11664,7 @@ function drawStructZoneRow(playerId, box, mirrored) {
   player.structs.forEach((card, i) => {
     const cx2 = structStartX + i * stride;
     if (cx2 + cardW > structEndX) return;
-    const selected = state.selected?.kind === "fieldStruct" && state.selected.playerId === playerId && state.selected.index === i;
-    drawCard(cx2, y + 3, cardW, cardH, card, { selected, small: true, artOnly: true });
-    addHit(cx2, y + 3, cardW, cardH, () => {
-      const detailOpen = consumeFieldDoubleClick(`fieldStruct:${playerId}:${i}`);
-      state.selected = { kind: "fieldStruct", playerId, index: i, detailOpen };
-      state.message = detailOpen ? `${card.name}: detail` : `${card.name} を選択`;
-    });
+    drawFieldStructCard(playerId, cx2, y + 3, cardW, cardH, card, i);
   });
 
   // Struct zone label (empty area)
@@ -12072,13 +12116,7 @@ function drawStructBar(playerId, x, y, w, h) {
   player.structs.forEach((card, i) => {
     const cx2 = structStartX + i * stride;
     if (cx2 + cardW > structEndX) return;
-    const selected = state.selected?.kind === "fieldStruct" && state.selected.playerId === playerId && state.selected.index === i;
-    drawCard(cx2, y + 3, cardW, cardH, card, { selected, small: true, artOnly: true });
-    addHit(cx2, y + 3, cardW, cardH, () => {
-      const detailOpen = consumeFieldDoubleClick(`fieldStruct:${playerId}:${i}`);
-      state.selected = { kind: "fieldStruct", playerId, index: i, detailOpen };
-      state.message = detailOpen ? `${card.name}: detail` : `${card.name} を選択`;
-    });
+    drawFieldStructCard(playerId, cx2, y + 3, cardW, cardH, card, i);
   });
 }
 
