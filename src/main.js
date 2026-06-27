@@ -3221,9 +3221,9 @@ function ensureAllCardKeywords() {
   for (const group of ["main", "structs"]) {
     for (const card of Object.values(cardCatalog[group] || {})) {
       if (!card?.description && !card?.text) continue;
-      // keywordsが設定されていない、または空の場合は自動生成
-      if (!card.keywords || card.keywords.length === 0) {
-        card.keywords = parseDeckmakerKeywords(card);
+      if (!card.keywords) card.keywords = [];
+      for (const keyword of parseDeckmakerKeywords(card)) {
+        ensureKeyword(card, keyword.id, keyword.value ?? null);
       }
       ensureSoulPayKeyword(card);
     }
@@ -3363,6 +3363,8 @@ function parseDeckmakerKeywords(card) {
     ["dataLink", /データリンク/g],
     ["oneDamage", /ダメージを1[づず]つしか受けない/g],
     ["effectProtect", numRe("効果保護")],
+    ["structTaunt", numRe("構造挑発")],
+    ["effectPenetrate", numRe("効果貫通")],
   ];
   const keywords = [];
   const seen = new Set();
@@ -8007,8 +8009,12 @@ function enemyStructChoicePool(structs) {
   return entries;
 }
 
+function structEffectProtectLevel(struct) {
+  return Math.max(keywordValue(struct, "effectProtect"), keywordValue(struct, "structTaunt"));
+}
+
 function canDestroyEnemyStructByEffect(sourceCard, struct) {
-  const protection = keywordValue(struct, "effectProtect");
+  const protection = structEffectProtectLevel(struct);
   if (protection <= 0) return true;
   const penetration = keywordValue(sourceCard, "effectPenetrate");
   return penetration >= protection;
@@ -12637,7 +12643,7 @@ function drawDestroyEnemyStructPanel(pending) {
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
   let hint = "クリックで破壊するストラクトを選んでください。";
   if (tauntRequired) hint += " [構造挑発]があるストラクトのみ選択可。";
-  if (structs.some((s) => keywordValue(s, "effectProtect") > 0)) hint += " [効果保護]は[効果貫通]以上が必要。";
+  if (structs.some((s) => structEffectProtectLevel(s) > 0)) hint += " [効果保護]は[効果貫通]以上が必要。";
   ctx.fillText(hint, x + 24, y + 56, panelW - 48);
   const isController = canControlChoicePlayer(pending.playerId);
   const canPayFuel = !pending.fuelCost || (state.players[pending.playerId].resources.fuel || 0) >= pending.fuelCost;
