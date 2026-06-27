@@ -1,6 +1,6 @@
 import deckData from "./deck_data.js";
 import supplementalCards from "./supplemental_cards.js";
-import { fetchAllFirebaseCards } from "./firebase_cards.js";
+import { fetchAllFirebaseCards, FIRESTORE_DEFAULT_PAGE_SIZE } from "./firebase_cards.js";
 import { collectCardDrift } from "./card_firebase_sync.js";
 import { HARDCODED_TEXT_BASELINES, hasHardcodedTextChanged } from "./card_hardcoded_registry.js";
 import { IMPLEMENTED_CARD_IDS } from "./card_implemented_registry.js";
@@ -239,6 +239,7 @@ const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
 const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
 const FIREBASE_CARDS_CACHE_KEY = "twcg.firebaseCards.v1";
 const FIREBASE_CARDS_BACKOFF_KEY = "twcg.firebaseFetchBackoff.v1";
+const FIREBASE_CARDS_PAGE_SIZE_KEY = "twcg.firebasePageSize.v1";
 const FIREBASE_CARDS_429_BACKOFF_MS = 20 * 60 * 1000;
 let firebaseCardsLoadPromise = null;
 const FORCE_BUNDLED_CARD_IDS = new Set([
@@ -2961,6 +2962,30 @@ function firebaseFetchBackoffRemainingMs() {
   return until > 0 ? until - Date.now() : 0;
 }
 
+function readFirebasePreferredPageSize() {
+  try {
+    const size = Number(localStorage.getItem(FIREBASE_CARDS_PAGE_SIZE_KEY));
+    if (!Number.isFinite(size) || size < 5) return FIRESTORE_DEFAULT_PAGE_SIZE;
+    return Math.floor(size);
+  } catch {
+    return FIRESTORE_DEFAULT_PAGE_SIZE;
+  }
+}
+
+function writeFirebasePreferredPageSize(pageSize) {
+  try {
+    localStorage.setItem(FIREBASE_CARDS_PAGE_SIZE_KEY, String(Math.floor(pageSize)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatFirebaseFetchMeta(meta) {
+  if (!meta?.rateLimitEvents?.length) return "";
+  const last = meta.rateLimitEvents[meta.rateLimitEvents.length - 1];
+  return ` / 429: ${last.stuckAtPage}ページ目(pageSize${last.pageSize})→${meta.finalPageSize}枚`;
+}
+
 async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
   if (!app) return false;
   if (firebaseCardsLoadPromise && !force) return firebaseCardsLoadPromise;
@@ -2990,13 +3015,30 @@ async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
 
     app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null, drift: [] };
     try {
-      const cards = await fetchAllFirebaseCards({ pageSize: 100, initialDelayMs: 2000 });
+      const pageSize = readFirebasePreferredPageSize();
+      const cards = await fetchAllFirebaseCards({ pageSize, initialDelayMs: 2000 });
+      if (cards.fetchMeta?.finalPageSize) {
+        writeFirebasePreferredPageSize(cards.fetchMeta.finalPageSize);
+      }
       clearFirebaseFetchBackoff();
       writeFirebaseCardsCache(cards);
-      return applyFirebaseDeckmakerCards(cards, { source: "live" });
+      return applyFirebaseDeckmakerCards(cards, {
+        source: "live",
+        fetchMeta: cards.fetchMeta,
+      });
     } catch (error) {
       const isRateLimit = /429/.test(String(error.message || error));
-      if (isRateLimit) setFirebaseFetchBackoff();
+      if (isRateLimit) {
+        setFirebaseFetchBackoff();
+        const stuck = error.fetchMeta?.rateLimitEvents?.at(-1);
+        if (stuck?.nextPageSize) writeFirebasePreferredPageSize(stuck.nextPageSize);
+        if (stuck) {
+          console.warn(
+            `loadFirebaseCardsIntoCatalog: stuck at page ${stuck.stuckAtPage} `
+            + `(pageSize=${stuck.pageSize}), next try ${stuck.nextPageSize} cards/page`,
+          );
+        }
+      }
       const cached = readFirebaseCardsCache();
       if (cached?.cards?.length) {
         const applied = applyFirebaseDeckmakerCards(cached.cards, {
@@ -3073,6 +3115,7 @@ function applyFirebaseDeckmakerCards(cards, {
   cachedAt = null,
   fetchError = null,
   cacheReason = null,
+  fetchMeta = null,
 } = {}) {
   const firebaseIds = new Set();
   let count = 0;
@@ -3127,7 +3170,8 @@ function applyFirebaseDeckmakerCards(cards, {
       app.deckBuilder.message = `Firebase取得失敗のためキャッシュを使用（${ageMin}分前・${count}枚）。`;
     } else if (syncStatus === "ok" && source === "live") {
       const driftNote = drift.length ? ` / 差分${drift.length}件` : "";
-      app.deckBuilder.message = `Firebaseからカード${count}枚を同期しました${driftNote}。`;
+      const fetchNote = formatFirebaseFetchMeta(fetchMeta);
+      app.deckBuilder.message = `Firebaseからカード${count}枚を同期しました${driftNote}${fetchNote}。`;
     } else if (syncStatus === "ok" && cacheReason === "cache-only" && cachedAt) {
       const ageMin = Math.max(1, Math.round((Date.now() - cachedAt) / 60000));
       app.deckBuilder.message = `キャッシュ使用中（${ageMin}分前・${count}枚）。更新は「カード再同期」。`;
