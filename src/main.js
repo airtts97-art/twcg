@@ -1595,6 +1595,14 @@ const abilityEffects = {
     game.message = "デッキから1枚選んで手札に加えてください。";
     return "pending";
   },
+  summonGolemFromDeck({ game, playerId, card, ability }) {
+    summonGolemFromZones(game, playerId, {
+      maxCost: ability.maxCost || 3,
+      row: ability.row,
+      sourceCardName: card.name,
+      deckOnly: true,
+    });
+  },
   summonGolemFromDeckOrDump({ game, playerId, card, ability }) {
     summonGolemFromZones(game, playerId, {
       maxCost: ability.maxCost || 3,
@@ -1720,7 +1728,7 @@ const abilityEffects = {
         id: opt.resource,
         label: `${RESOURCE_LABELS[opt.resource] || opt.resource}${opt.amount}`,
         cost: { [opt.resource]: opt.amount },
-        action: { effect: "summonGolemFromDeckOrDump", maxCost: ability.maxCost || 3 },
+        action: { effect: "summonGolemFromDeck", maxCost: ability.maxCost || 3 },
       })),
       cardName: card.name,
     };
@@ -2259,7 +2267,7 @@ function isGolemCard(card, maxCost = 3) {
   return card?.type === "unit" && (card.tags || []).includes("ゴーレム") && totalCostAmount(card.cost || {}) <= maxCost;
 }
 
-function summonGolemFromZones(game, playerId, { maxCost = 3, row = null, sourceCardName = "効果" } = {}) {
+function summonGolemFromZones(game, playerId, { maxCost = 3, row = null, sourceCardName = "効果", deckOnly = false } = {}) {
   const player = game.players[playerId];
   const targetRow = Number.isInteger(row) ? row : player.summonRow;
   const col = findFirstEmptyColInRow(game, targetRow);
@@ -2270,7 +2278,7 @@ function summonGolemFromZones(game, playerId, { maxCost = 3, row = null, sourceC
 
   let zone = "mainDeck";
   let index = player.mainDeck.findIndex((card) => isGolemCard(card, maxCost));
-  if (index < 0) {
+  if (!deckOnly && index < 0) {
     zone = "dump";
     index = player.dump.findIndex((card) => isGolemCard(card, maxCost));
   }
@@ -7150,6 +7158,17 @@ function resumePendingAttackContinuation() {
     state.pendingAttackContinuation = null;
     return;
   }
+  if (cont.preDamage) {
+    state.pendingAttackContinuation = null;
+    if (cont.attackCore) {
+      continueCoreAttackAfterOnAttack(unit, cont.defenderId);
+      return;
+    }
+    const defender = state.board[cont.defenderRow]?.[cont.defenderCol];
+    if (!defender || defender.owner === unit.owner) return;
+    continueUnitAttackAfterOnAttack(unit, defender, { useCharge: cont.useCharge || false });
+    return;
+  }
   const defender = state.board[cont.defenderRow]?.[cont.defenderCol];
   const defenderAlive = defender && defender.owner !== unit.owner;
 
@@ -7357,6 +7376,21 @@ function resolveRevealTagsForResources(selectedByTag) {
   return true;
 }
 
+function finishDeployHeroFromAttack() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "deployHeroFromAttack") return false;
+  const qi = pending.queueItem;
+  const playerId = pending.playerId;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", playerId);
+  render();
+  return true;
+}
+
 function resolveDeployHeroChooseHero(heroIdx) {
   const pending = state.pendingChoice;
   if (pending?.type !== "deployHeroFromAttack" || pending.step !== "chooseHero") return false;
@@ -7405,12 +7439,7 @@ function resolveDeployHeroCell(row, col) {
   commitUnitToBoard(state, unit, row, col);
   triggerAbilities(state, pending.playerId, unit, "onSummon");
   log(state, `${player.name}: 「${unit.name}」を金${goldNeeded}で出撃（次の${player.name}のフェーズ終わりに手札へ戻る）`);
-  state.pendingChoice = null;
-  state.selected = null;
-  processEffectQueue(state);
-  syncOnlineAction("resolveChoice", pending.playerId);
-  render();
-  return true;
+  return finishDeployHeroFromAttack();
 }
 
 function resolveDiscardForDraw(index) {
@@ -9355,24 +9384,18 @@ function attackWithSelectedUnit(target, options = {}) {
     if (isCoreGuardedFrom(unit, defenderId)) return fail("守護によりコアを攻撃できません。");
     if (!payAttackCosts(player, unit)) return fail("アクトコストが不足しています。");
     triggerAttackAbilities(unit);
-    const defender = state.players[defenderId];
-    const coreArmor = defender.core.armor || 0;
-    const coreDmg = Math.max(0, unit.atk - coreArmor);
-    defender.core.hp -= coreDmg;
-    if (coreDmg > 0) {
-      unit.dealtDamageThisTurn = true;
-      for (const ability of (unit.abilities || [])) {
-        if (ability.trigger === "onDamageDealt") {
-          state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" } });
-        }
-      }
-      processEffectQueue(state);
+    if (state.pendingChoice || state.pendingTarget) {
+      state.pendingAttackContinuation = {
+        preDamage: true,
+        attackCore: true,
+        attackerRow: unit.row,
+        attackerCol: unit.col,
+        defenderId,
+      };
+      render();
+      return true;
     }
-    afterAttack(unit);
-    log(state, `${player.name}: 「${unit.name}」がコアに${coreDmg}ダメージ${coreArmor > 0 ? `（装甲${coreArmor}軽減）` : ""}`);
-    checkWinner(state);
-    syncOnlineAction("attackCore", unit.owner);
-    return true;
+    return continueCoreAttackAfterOnAttack(unit, defenderId);
   }
 
   const defender = state.board[target.row]?.[target.col];
@@ -9383,11 +9406,30 @@ function attackWithSelectedUnit(target, options = {}) {
   return executeUnitAttack(unit, defender, target, { useCharge: options.useCharge });
 }
 
-function executeUnitAttack(unit, defender, target, { useCharge = false } = {}) {
+function continueCoreAttackAfterOnAttack(unit, defenderId) {
   const player = state.players[unit.owner];
-  if (!payAttackCosts(player, unit, { useCharge })) return fail("アクトコストが不足しています。");
+  const defender = state.players[defenderId];
+  const coreArmor = defender.core.armor || 0;
+  const coreDmg = Math.max(0, unit.atk - coreArmor);
+  defender.core.hp -= coreDmg;
+  if (coreDmg > 0) {
+    unit.dealtDamageThisTurn = true;
+    for (const ability of (unit.abilities || [])) {
+      if (ability.trigger === "onDamageDealt") {
+        state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" } });
+      }
+    }
+    processEffectQueue(state);
+    if (state.pendingChoice || state.pendingTarget) return true;
+  }
+  afterAttack(unit);
+  log(state, `${player.name}: 「${unit.name}」がコアに${coreDmg}ダメージ${coreArmor > 0 ? `（装甲${coreArmor}軽減）` : ""}`);
+  checkWinner(state);
+  syncOnlineAction("attackCore", unit.owner);
+  return true;
+}
 
-  triggerAttackAbilities(unit);
+function continueUnitAttackAfterOnAttack(unit, defender, { useCharge = false } = {}) {
   const rawDamage = calculateAttackDamage(unit, defender, { useCharge });
   const { damage, pending } = dealDamageToUnit(state, defender, rawDamage, { source: unit }, { cleanup: false });
   applySuppressionToTarget(unit, defender);
@@ -9458,6 +9500,26 @@ function executeUnitAttack(unit, defender, target, { useCharge = false } = {}) {
   cleanupAllDestroyed(unit);
   syncOnlineAction("attackUnit", unit.owner);
   return true;
+}
+
+function executeUnitAttack(unit, defender, target, { useCharge = false } = {}) {
+  const player = state.players[unit.owner];
+  if (!payAttackCosts(player, unit, { useCharge })) return fail("アクトコストが不足しています。");
+
+  triggerAttackAbilities(unit);
+  if (state.pendingChoice || state.pendingTarget) {
+    state.pendingAttackContinuation = {
+      preDamage: true,
+      attackerRow: unit.row,
+      attackerCol: unit.col,
+      defenderRow: defender.row,
+      defenderCol: defender.col,
+      useCharge,
+    };
+    render();
+    return true;
+  }
+  return continueUnitAttackAfterOnAttack(unit, defender, { useCharge });
 }
 
 function chargeAttackElectricCost(unit) {
@@ -12883,6 +12945,9 @@ function drawDeployHeroFromAttackPanel(pending) {
         drawButton(btnX, btnY, btnW, btnH, `${g}`, null, null, {});
       }
     }
+    if (isController) {
+      drawButton(px + pw - 130, py + ph - 48, 110, 34, "スキップ", () => finishDeployHeroFromAttack());
+    }
     return;
   }
   if (pending.step === "chooseCell") {
@@ -12944,13 +13009,7 @@ function drawDeployHeroFromAttackPanel(pending) {
   if (isController) {
     const hasSelected = pending.selectedHeroIdx != null;
     drawButton(px + 20, py + ph - 48, 110, 34, "決定", hasSelected ? () => resolveDeployHeroChooseHero(pending.selectedHeroIdx) : null, null, hasSelected ? { accent: "p1" } : { accent: "dim" });
-    drawButton(px + pw - 130, py + ph - 48, 110, 34, "スキップ", () => {
-      state.pendingChoice = null;
-      state.selected = null;
-      processEffectQueue(state);
-      syncOnlineAction("resolveChoice", pending.playerId);
-      render();
-    });
+    drawButton(px + pw - 130, py + ph - 48, 110, 34, "スキップ", () => finishDeployHeroFromAttack());
   }
 }
 
@@ -14387,8 +14446,9 @@ function abilityText(card) {
         grantDestroyGain: `味方ユニット1体に「破壊時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}」を付与`,
         chooseExchange: `${(ability.costOptions || []).map((o) => `${RESOURCE_LABELS[o.resource] || o.resource}${o.amount}`).join("または")}を支払い → ${Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("/")}`,
         chooseProduceResource: `${(ability.options || []).map((o) => o.label || o.id).join("か")}を得る`,
-        chooseSummonGolem: `${(ability.costOptions || []).map((o) => `${RESOURCE_LABELS[o.resource] || o.resource}${o.amount}`).join("または")}→コスト${ability.maxCost || 3}以下の[ゴーレム]を出す`,
+        chooseSummonGolem: `${(ability.costOptions || []).map((o) => `${RESOURCE_LABELS[o.resource] || o.resource}${o.amount}`).join("または")}→デッキからコスト${ability.maxCost || 3}以下の[ゴーレム]を出す`,
         tactToStructOverStruct: `「${ability.requiredStructName || "覆没の迷宮"}」があればストラクト化`,
+        summonGolemFromDeck: `デッキからコスト${ability.maxCost || 3}以下の[ゴーレム]を出す`,
         summonGolemFromDeckOrDump: `デッキ・墓地からコスト${ability.maxCost || 3}以下の[ゴーレム]を出す`,
         summonGolemToSameRow: `デッキ・墓地からコスト${ability.maxCost || 3}以下の[ゴーレム]を同じ行に出す`,
         destroySelf: "自壊",

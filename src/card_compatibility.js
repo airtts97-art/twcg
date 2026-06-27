@@ -21,7 +21,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "damageRestedTarget", "exileTargetNonNeutralNonUnifall", "exileAllNonNeutralNonUnifall", "reviveFromExile",
   "grantKeywordsToAllMagicMachines", "damageAllEnemiesAndPushBack", "reviveStructFromDump",
   "buffFriendlyUnitsAtk", "descentEffect", "searchUnitToCostHand", "searchCardToHand",
-  "summonGolemFromDeckOrDump", "summonGolemToSameRow", "tactToStructOverStruct", "summonSelfFromDumpMobile",
+  "summonGolemFromDeck", "summonGolemFromDeckOrDump", "summonGolemToSameRow", "tactToStructOverStruct", "summonSelfFromDumpMobile",
   "mysticCapture", "damageEnemyCore", "damageTargetUnit", "grantDestroyGain", "chooseExchange",
   "structPayRestChooseResource", "structPayDrawProduce", "identityPrivateOnSummon", "identityKaijuSummonFromDump",
   "stripNeutralUnitAbilities", "discardEqualToFieldUnits", "colorfulTurnEndRemap", "sheriffOnSummon",
