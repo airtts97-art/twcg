@@ -12,10 +12,13 @@ const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseC
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
 /** Minimum spacing between consecutive Firestore REST requests. */
-export const FIRESTORE_MIN_REQUEST_INTERVAL_MS = 900;
+export const FIRESTORE_MIN_REQUEST_INTERVAL_MS = 1500;
 
 /** Extra pause between paginated list requests (in addition to the limiter). */
-export const FIRESTORE_PAGE_DELAY_MS = 400;
+export const FIRESTORE_PAGE_DELAY_MS = 800;
+
+/** Wait before the first request in a fetch session (avoids hammering after reload). */
+export const FIRESTORE_INITIAL_DELAY_MS = 1200;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -53,12 +56,12 @@ function retryWaitMs(status, attempt, response) {
     return retryAfterHeader * 1000 + jitterMs(500);
   }
   if (status === 429) {
-    return Math.min(60000, 2500 * 2 ** (attempt - 1)) + jitterMs(800);
+    return Math.min(120000, 5000 * 2 ** (attempt - 1)) + jitterMs(1200);
   }
   return Math.min(30000, 1000 * 2 ** (attempt - 1)) + jitterMs(400);
 }
 
-async function fetchFirestoreJson(url, { signal, maxRetries = 8 } = {}) {
+async function fetchFirestoreJson(url, { signal, maxRetries = 6 } = {}) {
   return firestoreLimiter.schedule(async () => {
     let attempt = 0;
     while (true) {
@@ -108,14 +111,16 @@ function firestoreDocToCard(doc) {
 }
 
 export async function fetchAllFirebaseCards({
-  pageSize = 300,
+  pageSize = 100,
   signal,
   pageDelayMs = FIRESTORE_PAGE_DELAY_MS,
   minRequestIntervalMs = FIRESTORE_MIN_REQUEST_INTERVAL_MS,
+  initialDelayMs = FIRESTORE_INITIAL_DELAY_MS,
 } = {}) {
   if (minRequestIntervalMs !== firestoreLimiter.minIntervalMs) {
     firestoreLimiter.minIntervalMs = minRequestIntervalMs;
   }
+  if (initialDelayMs > 0) await sleep(initialDelayMs);
   const cards = [];
   let pageToken = "";
   let pageIndex = 0;

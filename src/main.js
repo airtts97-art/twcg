@@ -238,7 +238,8 @@ const SAVED_DECK_KEY = "twcg.savedDeck.v1";
 const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
 const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
 const FIREBASE_CARDS_CACHE_KEY = "twcg.firebaseCards.v1";
-const FIREBASE_CARDS_REFRESH_MIN_MS = 5 * 60 * 1000;
+const FIREBASE_CARDS_BACKOFF_KEY = "twcg.firebaseFetchBackoff.v1";
+const FIREBASE_CARDS_429_BACKOFF_MS = 20 * 60 * 1000;
 let firebaseCardsLoadPromise = null;
 const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1753611167885", // クリスタヴィアゴーレム
@@ -2928,46 +2929,73 @@ function loadBundledDeckData() {
   refreshCatalogCompatibility(cardCatalog);
 }
 
+function readFirebaseFetchBackoffUntil() {
+  try {
+    const raw = localStorage.getItem(FIREBASE_CARDS_BACKOFF_KEY);
+    const until = Number(raw);
+    if (!Number.isFinite(until) || until <= Date.now()) return 0;
+    return until;
+  } catch {
+    return 0;
+  }
+}
+
+function setFirebaseFetchBackoff(ms = FIREBASE_CARDS_429_BACKOFF_MS) {
+  try {
+    localStorage.setItem(FIREBASE_CARDS_BACKOFF_KEY, String(Date.now() + ms));
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearFirebaseFetchBackoff() {
+  try {
+    localStorage.removeItem(FIREBASE_CARDS_BACKOFF_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function firebaseFetchBackoffRemainingMs() {
+  const until = readFirebaseFetchBackoffUntil();
+  return until > 0 ? until - Date.now() : 0;
+}
+
 async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
   if (!app) return false;
   if (firebaseCardsLoadPromise && !force) return firebaseCardsLoadPromise;
   firebaseCardsLoadPromise = (async () => {
-    const warmCache = !force ? readFirebaseCardsCache() : null;
-    const cacheAgeMs = warmCache?.savedAt ? Date.now() - warmCache.savedAt : Infinity;
+    const warmCache = readFirebaseCardsCache();
 
-    if (
-      !force
-      && app.cardSync?.status === "ok"
-      && app.cardSync?.updatedAt
-      && Date.now() - app.cardSync.updatedAt < FIREBASE_CARDS_REFRESH_MIN_MS
-    ) {
-      return true;
-    }
-    if (
-      !force
-      && warmCache?.cards?.length
-      && cacheAgeMs < FIREBASE_CARDS_REFRESH_MIN_MS
-    ) {
+    // 起動時: キャッシュがあればネットワーク取得しない（429回避）
+    if (!force && warmCache?.cards?.length) {
       return applyFirebaseDeckmakerCards(warmCache.cards, {
         source: "cache",
         cachedAt: warmCache.savedAt,
-        cacheReason: "fresh",
+        cacheReason: "cache-only",
       });
+    }
+
+    if (force) {
+      clearFirebaseFetchBackoff();
+    } else {
+      const backoffRemainingMs = firebaseFetchBackoffRemainingMs();
+      if (backoffRemainingMs > 0) {
+        const waitMin = Math.max(1, Math.ceil(backoffRemainingMs / 60000));
+        console.info(`loadFirebaseCardsIntoCatalog: skipping fetch during 429 backoff (${waitMin} min left)`);
+        return false;
+      }
     }
 
     app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null, drift: [] };
     try {
-      if (!force && warmCache?.cards?.length) {
-        applyFirebaseDeckmakerCards(warmCache.cards, {
-          source: "cache",
-          cachedAt: warmCache.savedAt,
-          cacheReason: "warm-start",
-        });
-      }
-      const cards = await fetchAllFirebaseCards();
+      const cards = await fetchAllFirebaseCards({ pageSize: 100 });
+      clearFirebaseFetchBackoff();
       writeFirebaseCardsCache(cards);
       return applyFirebaseDeckmakerCards(cards, { source: "live" });
     } catch (error) {
+      const isRateLimit = /429/.test(String(error.message || error));
+      if (isRateLimit) setFirebaseFetchBackoff();
       const cached = readFirebaseCardsCache();
       if (cached?.cards?.length) {
         const applied = applyFirebaseDeckmakerCards(cached.cards, {
@@ -2981,22 +3009,21 @@ async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
           return true;
         }
       }
-      console.warn("loadFirebaseCardsIntoCatalog failed:", error);
+      console.info("loadFirebaseCardsIntoCatalog: fetch failed, using bundled cards:", error.message || error);
       applySupplementalCardFallbacks(new Set());
       applyBundledImageFallbacks();
       ensureAllCardKeywords();
       refreshCatalogCompatibility(cardCatalog);
       app.cardSync = {
-        status: "error",
+        status: isRateLimit ? "cached" : "error",
         count: 0,
         error: String(error.message || error),
         updatedAt: Date.now(),
         drift: [],
       };
       if (app.screen === "deckBuilder" && !app.deckBuilder.message?.includes("同期")) {
-        const isRateLimit = /429/.test(String(error.message || error));
         app.deckBuilder.message = isRateLimit
-          ? "Firebaseが混雑しています（429）。しばらく待って「カード再同期」を押してください。"
+          ? "Firebaseが混雑しています（429）。20分後に「カード再同期」を試してください。"
           : "Firebase同期に失敗しました。バンドルデータを使用しています。";
       }
       return false;
@@ -3081,12 +3108,12 @@ function applyFirebaseDeckmakerCards(cards, {
     .concat(Object.values(cardCatalog.structs || {}))
     .filter((card) => hasHardcodedTextChanged(card))
     .map((card) => ({ id: card.id, name: card.name, field: "hardcodedImplementation" }));
-  const syncStatus = source === "live" || cacheReason === "fresh" ? "ok" : "cached";
+  const syncStatus = source === "live" || cacheReason === "cache-only" ? "ok" : "cached";
   app.cardSync = {
     status: syncStatus,
     count,
     error: fetchError,
-    updatedAt: cacheReason === "fresh" ? Date.now() : (cachedAt || Date.now()),
+    updatedAt: cachedAt || Date.now(),
     drift,
     hardcodedDrift,
   };
@@ -3097,9 +3124,12 @@ function applyFirebaseDeckmakerCards(cards, {
     if (syncStatus === "cached" && fetchError) {
       const ageMin = cachedAt ? Math.max(1, Math.round((Date.now() - cachedAt) / 60000)) : "?";
       app.deckBuilder.message = `Firebase取得失敗のためキャッシュを使用（${ageMin}分前・${count}枚）。`;
-    } else if (syncStatus === "ok") {
+    } else if (syncStatus === "ok" && source === "live") {
       const driftNote = drift.length ? ` / 差分${drift.length}件` : "";
       app.deckBuilder.message = `Firebaseからカード${count}枚を同期しました${driftNote}。`;
+    } else if (syncStatus === "ok" && cacheReason === "cache-only" && cachedAt) {
+      const ageMin = Math.max(1, Math.round((Date.now() - cachedAt) / 60000));
+      app.deckBuilder.message = `キャッシュ使用中（${ageMin}分前・${count}枚）。更新は「カード再同期」。`;
     }
   }
   return true;
@@ -10207,6 +10237,7 @@ function drawDeckBuilderScreen() {
   drawButton(1120, btnY, 154, 32, "画像なし出力", exportNoImageCustomCards);
   drawButton(74, btnY + 38, 150, 32, "不足データDL", exportIncompleteCardData);
   drawButton(234, btnY + 38, 118, 32, "カード再同期", () => {
+    app.deckBuilder.message = "Firebaseから強制同期中…";
     loadFirebaseCardsIntoCatalog({ force: true }).then(() => render());
   });
 
