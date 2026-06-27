@@ -2967,29 +2967,30 @@ async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
   firebaseCardsLoadPromise = (async () => {
     const warmCache = readFirebaseCardsCache();
 
-    // 起動時: キャッシュがあればネットワーク取得しない（429回避）
-    if (!force && warmCache?.cards?.length) {
-      return applyFirebaseDeckmakerCards(warmCache.cards, {
-        source: "cache",
-        cachedAt: warmCache.savedAt,
-        cacheReason: "cache-only",
-      });
+    // 起動時はネットワーク取得しない（キャッシュ or バンドルのみ）
+    if (!force) {
+      if (warmCache?.cards?.length) {
+        return applyFirebaseDeckmakerCards(warmCache.cards, {
+          source: "cache",
+          cachedAt: warmCache.savedAt,
+          cacheReason: "cache-only",
+        });
+      }
+      app.cardSync = {
+        status: "cached",
+        count: 0,
+        error: null,
+        updatedAt: Date.now(),
+        drift: [],
+      };
+      return false;
     }
 
-    if (force) {
-      clearFirebaseFetchBackoff();
-    } else {
-      const backoffRemainingMs = firebaseFetchBackoffRemainingMs();
-      if (backoffRemainingMs > 0) {
-        const waitMin = Math.max(1, Math.ceil(backoffRemainingMs / 60000));
-        console.info(`loadFirebaseCardsIntoCatalog: skipping fetch during 429 backoff (${waitMin} min left)`);
-        return false;
-      }
-    }
+    clearFirebaseFetchBackoff();
 
     app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null, drift: [] };
     try {
-      const cards = await fetchAllFirebaseCards({ pageSize: 100 });
+      const cards = await fetchAllFirebaseCards({ pageSize: 100, initialDelayMs: 2000 });
       clearFirebaseFetchBackoff();
       writeFirebaseCardsCache(cards);
       return applyFirebaseDeckmakerCards(cards, { source: "live" });

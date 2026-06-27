@@ -9,6 +9,14 @@ export const firebaseConfig = {
 
 const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`;
 
+function buildFirestoreListUrl(collection, { pageSize, pageToken } = {}) {
+  const params = new URLSearchParams();
+  params.set("key", firebaseConfig.apiKey);
+  if (pageSize) params.set("pageSize", String(pageSize));
+  if (pageToken) params.set("pageToken", pageToken);
+  return `${FIRESTORE_BASE}/${collection}?${params.toString()}`;
+}
+
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
 /** Minimum spacing between consecutive Firestore REST requests. */
@@ -127,7 +135,7 @@ export async function fetchAllFirebaseCards({
   do {
     if (pageIndex > 0 && pageDelayMs > 0) await sleep(pageDelayMs);
     pageIndex += 1;
-    const url = `${FIRESTORE_BASE}/cards?pageSize=${pageSize}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
+    const url = buildFirestoreListUrl("cards", { pageSize, pageToken: pageToken || undefined });
     const payload = await fetchFirestoreJson(url, { signal });
     for (const doc of payload.documents || []) {
       const card = firestoreDocToCard(doc);
