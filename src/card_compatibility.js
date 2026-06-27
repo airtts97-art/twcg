@@ -4,7 +4,7 @@ import { isImplementedCard } from "./card_implemented_registry.js";
 const KNOWN_KEYWORD_LABELS = [
   "装甲", "貫通", "衝撃", "帯電", "機動", "連撃", "航空", "対空", "曲射", "伝説",
   "警戒", "守護", "自爆", "奇襲", "不動", "不攻", "魂", "魂支払", "巨撃", "効果保護",
-  "効果貫通", "構造挑発", "降臨", "一傷防御", "制圧",
+  "効果貫通", "構造挑発", "降臨", "一傷防御", "制圧", "データリンク",
 ];
 
 const KNOWN_ABILITY_EFFECTS = new Set([
@@ -36,7 +36,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "summonTagFromDumpAndRest", "summonHandUnitToOpponent", "kaijuAwaken", "damageOwnCore",
   "redirectDamageToOther", "revealTagsForResources", "surviveDamageAndOptionalBuff",
   "vsTagAtkBonus", "spendCountersForBuff", "selfCounterDeathShield",
-  "buffSelfAtkThisAttack", "destroyAllUnits",
+  "buffSelfAtkThisAttack", "destroyAllUnits", "expandDataLinkRange",
 ]);
 
 const STRUCT_PRODUCTION_EFFECTS = new Set([

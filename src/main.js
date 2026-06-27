@@ -109,6 +109,7 @@ const KEYWORD_DEFINITIONS = {
   soulPay: { label: "魂支払", description: "May exile dump cards to pay missing magic costs." },
   cleave: { label: "巨撃", description: "Also damages units horizontally adjacent to the attack target." },
   suppression: { label: "制圧", description: "攻撃した対象に-[制圧]/±0の補正を与える（ATKを制圧値だけ永続的に減らす）。" },
+  dataLink: { label: "データリンク", description: "隣接するユニットの数だけACTの電コストを1軽減する。" },
   oneDamage: { label: "一傷防御", description: "Can only receive 1 damage per hit from any source." },
   structTaunt: { label: "構造挑発", description: "Opponents must target structs with the highest struct taunt value first. This struct gains effect protection equal to its taunt value." },
   effectProtect: { label: "効果保護", description: "カード効果の影響を受けない（効果攻撃を含む。通常攻撃・曲射などの戦闘ダメージは対象外）。[効果貫通]がこの値以上のカードのみ影響できる。" },
@@ -2035,6 +2036,13 @@ const abilityEffects = {
     }
     log(game, `${game.players[playerId].name}: ${card.name} watches dump changes`);
   },
+  expandDataLinkRange({ game, playerId, card }) {
+    if (!game.globalEffects) game.globalEffects = [];
+    if (!game.globalEffects.some((e) => e.type === "dataLinkSurroundRange" && e.playerId === playerId)) {
+      game.globalEffects.push({ type: "dataLinkSurroundRange", playerId });
+    }
+    log(game, `${game.players[playerId].name}: 「${card.name}」— [データリンク]の参照範囲が周囲に拡張`);
+  },
   enterRestedLocked({ game, playerId, card, ability }) {
     card.rested = true;
     card.lockedRestTurns = ability.turns ?? 999;
@@ -3352,6 +3360,7 @@ function parseDeckmakerKeywords(card) {
     ["soulPay", /魂/g],
     ["cleave", numRe("巨撃")],
     ["suppression", numRe("制圧")],
+    ["dataLink", /データリンク/g],
     ["oneDamage", /ダメージを1[づず]つしか受けない/g],
     ["effectProtect", numRe("効果保護")],
   ];
@@ -3814,6 +3823,21 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: baseTrigger, effect: "revealTopNPick", amount, tagFilter });
   }
 
+  // Reveal top N and pick 1: "自身のデッキをN枚めくり1枚を手札に加える"
+  const deckMillPickMatch = text.match(/(?:自身の)?デッキ(?:の上)?(?:を|から)([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚(?:を)?(?:めくり|めくって).*(?:1枚|一枚).*手札に加える/s);
+  if (deckMillPickMatch && !abilities.some((a) => a.effect === "revealTopNPick")) {
+    abilities.push({
+      trigger: baseTrigger,
+      effect: "revealTopNPick",
+      amount: parseDeckmakerKeywordValue(deckMillPickMatch[1]) || 3,
+    });
+  }
+
+  // Expand dataLink range: "自分の[データリンク]の参照範囲は隣接から周囲に拡張される"
+  if (/自分の\[データリンク\]の参照範囲は隣接から周囲に拡張/.test(text)) {
+    abilities.push({ trigger: "onPlay", effect: "expandDataLinkRange" });
+  }
+
   // Search deck by card type: "デッキからタクトカードを手札に加える" (without quotes, not already matched, not in activation block)
   if (!/デッキから「/.test(text) && !/デッキからコスト総量/.test(text) && !/レストする[：:].*デッキから/.test(text)) {
     const searchTypeMatch = text.match(/デッキから([^「\n(（]+?)カードを手札に加える/);
@@ -4222,6 +4246,11 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1753775442028") {
     abilities.push({ trigger: "onSummon", effect: "grantConditionalKeywordsByCounter", keywords: [{ id: "immobile" }, { id: "noAttack" }] });
     abilities.push({ trigger: "onTurnStart", effect: "grantConditionalKeywordsByCounter", keywords: [{ id: "immobile" }, { id: "noAttack" }] });
+  }
+
+  if (card.id === "card_1782543182447") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "expandDataLinkRange" });
   }
 
   if (card.id === "card_1753970684315") {
@@ -6669,6 +6698,10 @@ function effectiveCostForCard(player, cost = {}, card = null) {
   }
   if (findCopperMineReduction(player, card, effective)) {
     effective.ore = Math.max(0, (effective.ore || 0) - 1);
+  }
+  if (card.row != null && card.col != null && hasKeyword(card, "dataLink") && (effective.electric || 0) > 0) {
+    const reduction = dataLinkReductionCount(card);
+    if (reduction > 0) effective.electric = Math.max(0, (effective.electric || 0) - reduction);
   }
   return effective;
 }
@@ -9757,6 +9790,46 @@ function adjacentCells(row, col) {
     [row, col - 1],
     [row, col + 1],
   ].filter(([r, c]) => r >= 0 && r < ROWS && c >= 0 && c < COLS);
+}
+
+function countAdjacentUnits(row, col, game = state) {
+  if (row == null || col == null) return 0;
+  let count = 0;
+  for (const [r, c] of adjacentCells(row, col)) {
+    if (game.board[r]?.[c]) count++;
+  }
+  return count;
+}
+
+function surroundingCells(row, col) {
+  const cells = [];
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue;
+      const r = row + dr;
+      const c = col + dc;
+      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) cells.push([r, c]);
+    }
+  }
+  return cells;
+}
+
+function playerHasDataLinkSurroundRange(playerId, game = state) {
+  return (game.globalEffects || []).some(
+    (effect) => effect.type === "dataLinkSurroundRange" && effect.playerId === playerId,
+  );
+}
+
+function dataLinkReductionCount(unit, game = state) {
+  if (!unit || unit.row == null || unit.col == null) return 0;
+  const cells = playerHasDataLinkSurroundRange(unit.owner, game)
+    ? surroundingCells(unit.row, unit.col)
+    : adjacentCells(unit.row, unit.col);
+  let count = 0;
+  for (const [r, c] of cells) {
+    if (game.board[r]?.[c]) count++;
+  }
+  return count;
 }
 
 function stripRuntime(unit) {
