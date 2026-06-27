@@ -626,4 +626,20 @@ export default [
     rarity: "通常",
     imageUrl: "assets/cards/card_1782561876492.jpeg",
   },
+  {
+    id: "card_1782560224044",
+    name: "唯一無二にして大儀な。",
+    type: "タクト",
+    world: "ヘルメネアの大地",
+    description:
+      "デッキの上から1枚を墓地に送る\n\nこのカードが墓地にある時、このカードを除外し人1を支払い以下の効果を発動する\n・墓地から[唯字論]タグを持つカードを手札に加える\n・唯字論カウンターを任意のユニットに1載せる\n・任意の[純人間]ユニットから任意の回数だけ唯字論カウンターを取り除き、\n　その回数だけ０/＋１の補正を与える\n",
+    flavorText: "唯一なる高貴な血を流し、唯一儀義を持つ儀式を",
+    tags: ["唯字論", "通常"],
+    costs: { play: { human: 2 }, act: {}, choice: [], choiceAct: [] },
+    generates: {},
+    limit: 4,
+    tactSubType: "通常",
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782560224044.jpeg",
+  },
 ];

@@ -341,6 +341,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782211496085",  // 【正体不明】保安官
   "card_1782208333313",  // 正体隠匿(インポスター)
   "card_1782561876492",  // 異界で見た同胞
+  "card_1782560224044",  // 唯一無二にして大儀な。
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -4471,6 +4472,11 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782561876492") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "otherworldKinTactPlay" });
+  }
+
+  if (card.id === "card_1782560224044") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "millCards", amount: 1 });
   }
 
   if (card.id === "card_1782225519182") {
@@ -9209,6 +9215,196 @@ function resolveOtherworldKinPureHumanConfirm() {
   return true;
 }
 
+const UNIQUE_RITE_CARD_ID = "card_1782560224044";
+
+function allUnitsOnField(game) {
+  const units = [];
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const unit = game.board[row][col];
+      if (unit) units.push({ unit, row, col });
+    }
+  }
+  return units;
+}
+
+function uniqueRiteYujironDumpCards(playerId, game = state) {
+  const player = game.players[playerId];
+  return (player.dump || [])
+    .map((card, dumpIdx) => ({ card, dumpIdx }))
+    .filter(({ card }) => matchesCond(card, { tag: "唯字論" }));
+}
+
+function uniqueRitePureHumanCounterUnits(game = state) {
+  return allUnitsOnField(game).filter(
+    ({ unit }) => matchesCond(unit, { tag: "純人間" }) && (unit.counters || 0) > 0,
+  );
+}
+
+function uniqueRiteAvailableModes(game, playerId) {
+  const modes = [];
+  if (uniqueRiteYujironDumpCards(playerId, game).length) modes.push("retrieveYujiron");
+  if (allUnitsOnField(game).length) modes.push("addCounter");
+  if (uniqueRitePureHumanCounterUnits(game).length) modes.push("removeCounters");
+  return modes;
+}
+
+function canActivateUniqueRiteFromDump(playerId, absIdx) {
+  if (state.phase !== "main") return false;
+  if (state.activePlayer !== playerId) return false;
+  if (!canControlActivePlayer()) return false;
+  if (state.pendingChoice || state.pendingTarget) return false;
+  const player = state.players[playerId];
+  if ((player.resources.people || 0) < 1) return false;
+  const card = player.dump[absIdx];
+  if (card?.id !== UNIQUE_RITE_CARD_ID) return false;
+  return uniqueRiteAvailableModes(state, playerId).length > 0;
+}
+
+function finishUniqueRiteDumpChoice() {
+  state.pendingChoice = null;
+  state.selected = null;
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", state.activePlayer);
+  render();
+}
+
+function beginUniqueRiteDumpActivate(playerId, absIdx) {
+  if (!canActivateUniqueRiteFromDump(playerId, absIdx)) {
+    if ((state.players[playerId]?.resources.people || 0) < 1) {
+      state.message = "人①が不足しています。";
+    } else if (!uniqueRiteAvailableModes(state, playerId).length) {
+      state.message = "発動できる効果がありません。";
+    } else {
+      state.message = "今は発動できません（メインフェイズ中のみ）。";
+    }
+    render();
+    return;
+  }
+  const player = state.players[playerId];
+  const [exiled] = player.dump.splice(absIdx, 1);
+  player.exileZone.push(exiled);
+  notifyDumpChanged(state, playerId);
+  addResources(player, "people", -1);
+  log(state, `${player.name}: 墓地の「${exiled.name}」を除外し人①を支払う`);
+  zoneViewerState = null;
+  state.pendingChoice = {
+    type: "uniqueRiteDump",
+    playerId,
+    cardName: exiled.name,
+    step: "chooseMode",
+    modes: uniqueRiteAvailableModes(state, playerId),
+  };
+  state.selected = { kind: "choice", choice: "uniqueRiteDump" };
+  state.message = `${exiled.name}: 効果を選んでください`;
+  syncOnlineAction("resolveChoice", playerId);
+  render();
+}
+
+function resolveUniqueRiteMode(mode) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "uniqueRiteDump" || pending.step !== "chooseMode") return;
+  if (!canControlActivePlayer() || pending.playerId !== state.activePlayer) return;
+  if (!pending.modes?.includes(mode)) return;
+  if (mode === "retrieveYujiron") {
+    pending.step = "chooseDumpCard";
+    pending.dumpCandidates = uniqueRiteYujironDumpCards(pending.playerId);
+    state.message = `${pending.cardName}: 墓地から[唯字論]を手札に`;
+  } else if (mode === "addCounter") {
+    pending.step = "chooseUnit";
+    pending.effectMode = "addCounter";
+    pending.unitCandidates = allUnitsOnField(state);
+    state.message = `${pending.cardName}: カウンターを載せるユニットを選択`;
+  } else if (mode === "removeCounters") {
+    pending.step = "chooseUnit";
+    pending.effectMode = "removeCounters";
+    pending.unitCandidates = uniqueRitePureHumanCounterUnits(state);
+    state.message = `${pending.cardName}: カウンターを取り除く[純人間]を選択`;
+  }
+  render();
+}
+
+function resolveUniqueRiteDumpCard(candidateIdx) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "uniqueRiteDump" || pending.step !== "chooseDumpCard") return false;
+  const entry = pending.dumpCandidates?.[candidateIdx];
+  if (!entry) return false;
+  const player = state.players[pending.playerId];
+  const card = player.dump[entry.dumpIdx];
+  if (!card || !matchesCond(card, { tag: "唯字論" })) {
+    state.message = "選択したカードは墓地にありません。";
+    render();
+    return false;
+  }
+  player.dump.splice(entry.dumpIdx, 1);
+  player.hand.push(card);
+  notifyDumpChanged(state, pending.playerId);
+  log(state, `${player.name}: 「${pending.cardName}」→ 墓地の「${card.name}」を手札に`);
+  finishUniqueRiteDumpChoice();
+  return true;
+}
+
+function resolveUniqueRiteUnit(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "uniqueRiteDump" || pending.step !== "chooseUnit") return false;
+  const unit = state.board[row]?.[col];
+  if (!unit) return false;
+  const player = state.players[pending.playerId];
+  if (pending.effectMode === "addCounter") {
+    unit.counters = (unit.counters || 0) + 1;
+    refreshCounterConditionalKeywords(unit);
+    log(state, `${player.name}: 「${pending.cardName}」→ 「${unit.name}」に唯字論カウンター①`);
+    finishUniqueRiteDumpChoice();
+    return true;
+  }
+  if (pending.effectMode === "removeCounters") {
+    if (!matchesCond(unit, { tag: "純人間" }) || (unit.counters || 0) <= 0) {
+      state.message = "[純人間]でカウンターがあるユニットを選んでください。";
+      render();
+      return false;
+    }
+    pending.step = "chooseRemoveCount";
+    pending.unitRow = row;
+    pending.unitCol = col;
+    pending.removeCount = 1;
+    pending.maxRemove = unit.counters || 0;
+    state.message = `${unit.name}: 取り除くカウンター数を選択`;
+    render();
+    return true;
+  }
+  return false;
+}
+
+function resolveUniqueRiteRemoveCount(count) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "uniqueRiteDump" || pending.step !== "chooseRemoveCount") return false;
+  const unit = state.board[pending.unitRow]?.[pending.unitCol];
+  const maxRemove = pending.maxRemove || 0;
+  const removeCount = Math.max(1, Math.min(maxRemove, count || 1));
+  if (!unit || !matchesCond(unit, { tag: "純人間" }) || (unit.counters || 0) < removeCount) {
+    state.message = "カウンター数が不足しています。";
+    render();
+    return false;
+  }
+  const player = state.players[pending.playerId];
+  unit.counters -= removeCount;
+  refreshCounterConditionalKeywords(unit);
+  unit.currentHp = (unit.currentHp || 0) + removeCount;
+  unit.maxHp = (unit.maxHp || unit.hp || 0) + removeCount;
+  refreshContinuousEffects(state);
+  log(state, `${player.name}: 「${pending.cardName}」→ 「${unit.name}」カウンター${removeCount}除去 → +0/+${removeCount}`);
+  finishUniqueRiteDumpChoice();
+  return true;
+}
+
+function adjustUniqueRiteRemoveCount(delta) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "uniqueRiteDump" || pending.step !== "chooseRemoveCount") return;
+  const maxRemove = pending.maxRemove || 1;
+  pending.removeCount = Math.max(1, Math.min(maxRemove, (pending.removeCount || 1) + delta));
+  render();
+}
+
 function exposureManagementUnitCandidates(game, playerId) {
   const candidates = [];
   for (let row = 0; row < ROWS; row += 1) {
@@ -12436,6 +12632,10 @@ function drawChoiceOverlay() {
     drawCloseAirSupportPanel(pending);
     return;
   }
+  if (pending.type === "uniqueRiteDump" && pending.step === "chooseUnit") {
+    drawUniqueRiteDumpUnitPanel(pending);
+    return;
+  }
   ctx.fillStyle = "rgba(0, 0, 8, 0.75)";
   ctx.fillRect(0, 0, W, H);
   if (pending.type === "mysticCapture") drawMysticCapturePanel(pending);
@@ -12460,6 +12660,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "sheriffRemoveKeywords") drawSheriffRemoveKeywordsPanel(pending);
   else if (pending.type === "imposterTact") drawImposterTactPanel(pending);
   else if (pending.type === "otherworldKin") drawOtherworldKinPanel(pending);
+  else if (pending.type === "uniqueRiteDump") drawUniqueRiteDumpPanel(pending);
   else if (pending.type === "imposterSummon") drawImposterSummonPanel(pending);
   else if (pending.type === "deployHeroFromAttack") drawDeployHeroFromAttackPanel(pending);
   else if (pending.type === "intelAgencyCancel") drawIntelAgencyCancelPanel(pending);
@@ -12746,6 +12947,95 @@ function drawOtherworldKinPanel(pending) {
   });
   if (isController) {
     drawButton(x + w - 180, y + h - 48, 150, 32, "確定", resolveOtherworldKinPureHumanConfirm, null, { accent: "p1" });
+  }
+}
+
+function drawUniqueRiteDumpUnitPanel(pending) {
+  const isController = canControlActivePlayer() && pending.playerId === state.activePlayer;
+  for (const { row, col } of pending.unitCandidates || []) {
+    const visualRow = boardRowToVisualRow(row);
+    const cx2 = layout.board.x + col * layout.cell.w;
+    const cy2 = layout.board.y + visualRow * layout.cell.h;
+    const cw2 = layout.cell.w;
+    const ch2 = layout.cell.h;
+    ctx.save();
+    ctx.shadowColor = "#c080ff";
+    ctx.shadowBlur = 8;
+    roundRect(cx2 + 2, cy2 + 2, cw2 - 4, ch2 - 4, 4, "rgba(120,80,180,0.18)", "#a060e0", 3);
+    ctx.restore();
+    if (isController) addHit(cx2, cy2, cw2, ch2, () => resolveUniqueRiteUnit(row, col));
+  }
+  const label = pending.effectMode === "removeCounters"
+    ? "唯一無二にして大儀な。: [純人間]ユニットをクリック"
+    : "唯一無二にして大儀な。: ユニットをクリック";
+  const px = W / 2 - 240;
+  const py = 20;
+  roundRect(px, py, 480, 36, 6, "rgba(8,16,40,0.92)", "#a060e0", 1.5);
+  ctx.fillStyle = "#dcc8ff";
+  ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(label, W / 2, py + 24);
+  ctx.textAlign = "left";
+}
+
+function drawUniqueRiteDumpPanel(pending) {
+  const isController = canControlActivePlayer() && pending.playerId === state.activePlayer;
+  if (pending.step === "chooseUnit") return;
+  const x = 360, y = 220, w = 720, h = pending.step === "chooseDumpCard" ? 340 : 280;
+  drawChoicePanelBase(x, y, w, h, "rgba(70,40,110,0.85)", "#b080ff");
+  ctx.fillStyle = "#ecd8ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(220,200,255,0.9)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  if (pending.step === "chooseMode") {
+    ctx.fillText("効果を1つ選んでください。", x + 28, y + 64);
+    const modeButtons = [
+      { id: "retrieveYujiron", label: "墓地の[唯字論]を手札に", yOff: 96 },
+      { id: "addCounter", label: "任意ユニットにカウンター①", yOff: 146 },
+      { id: "removeCounters", label: "[純人間]からカウンター除去→+0/+1", yOff: 196 },
+    ];
+    modeButtons.forEach(({ id, label, yOff }) => {
+      const enabled = pending.modes?.includes(id);
+      drawButton(
+        x + 28,
+        y + yOff,
+        w - 56,
+        38,
+        label,
+        isController && enabled ? () => resolveUniqueRiteMode(id) : null,
+        null,
+        enabled ? { accent: "p1" } : { accent: "dim" },
+      );
+    });
+    return;
+  }
+  if (pending.step === "chooseDumpCard") {
+    ctx.fillText("手札に加える[唯字論]カードを選んでください。", x + 28, y + 64);
+    const candidates = pending.dumpCandidates || [];
+    candidates.forEach((entry, i) => {
+      drawSelectableChoiceCard(x + 28 + (i % 4) * 168, y + 88 + Math.floor(i / 4) * 150, 150, 196, entry.card, {
+        label: entry.card.name,
+        onClick: isController ? () => resolveUniqueRiteDumpCard(i) : null,
+      });
+    });
+    return;
+  }
+  if (pending.step === "chooseRemoveCount") {
+    const unit = state.board[pending.unitRow]?.[pending.unitCol];
+    ctx.fillText(`「${unit?.name || "ユニット"}」から取り除くカウンター数`, x + 28, y + 64);
+    ctx.fillStyle = "rgba(200,180,240,0.85)";
+    ctx.font = "700 28px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(String(pending.removeCount || 1), W / 2, y + 130);
+    ctx.textAlign = "left";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`最大 ${pending.maxRemove || 1}`, x + 28, y + 156);
+    if (isController) {
+      drawButton(x + 28, y + h - 52, 80, 38, "−", () => adjustUniqueRiteRemoveCount(-1));
+      drawButton(x + 120, y + h - 52, 80, 38, "＋", () => adjustUniqueRiteRemoveCount(1));
+      drawButton(x + w - 180, y + h - 52, 150, 38, "確定", () => resolveUniqueRiteRemoveCount(pending.removeCount || 1), null, { accent: "p1" });
+    }
   }
 }
 
@@ -14215,18 +14505,33 @@ function drawZoneViewerOverlay() {
     const absIdx = startIdx + i;
     const isSelSD = zone === "structDeck" && state.selected?.kind === "structDeck" && state.selected.index === absIdx;
     const isViewerSD = zone === "structDeck" && playerId === viewerPlayerId();
+    const isUniqueRiteDump = zone === "dump"
+      && card.id === UNIQUE_RITE_CARD_ID
+      && playerId === state.activePlayer
+      && canActivateUniqueRiteFromDump(playerId, absIdx);
     const sdAffordable = isViewerSD && cardIsAffordable(player, card);
-    drawCard(cx, cy, CARD_W, CARD_H, card, { small: true, selected: isSelSD, affordable: sdAffordable });
+    drawCard(cx, cy, CARD_W, CARD_H, card, { small: true, selected: isSelSD, affordable: sdAffordable || isUniqueRiteDump });
     if (isViewerSD && sdAffordable && !isSelSD) {
       ctx.save();
       ctx.shadowColor = "#ffd84a"; ctx.shadowBlur = 14;
       roundRect(cx, cy, CARD_W, CARD_H, 6, null, "rgba(255,220,50,0.9)", 2.5);
       ctx.shadowBlur = 0;
       ctx.restore();
+    } else if (isUniqueRiteDump) {
+      ctx.save();
+      ctx.shadowColor = "#c080ff"; ctx.shadowBlur = 14;
+      roundRect(cx, cy, CARD_W, CARD_H, 6, null, "rgba(180,100,255,0.9)", 2.5);
+      ctx.shadowBlur = 0;
+      ctx.restore();
     } else if (isViewerSD && !sdAffordable && !isSelSD) {
       ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(cx, cy, CARD_W, CARD_H);
     }
     addHit(cx, cy, CARD_W, CARD_H, () => {
+      if (zone === "dump" && card.id === UNIQUE_RITE_CARD_ID && playerId === state.activePlayer) {
+        if (!requireActivePlayerControl()) return;
+        beginUniqueRiteDumpActivate(playerId, absIdx);
+        return;
+      }
       if (zone === "structDeck" && playerId === viewerPlayerId()) {
         if (!requireActivePlayerControl()) return;
         zoneViewerState = null;
