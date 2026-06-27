@@ -108,6 +108,7 @@ const KEYWORD_DEFINITIONS = {
   noAttack: { label: "不攻", description: "Cannot attack." },
   soulPay: { label: "魂支払", description: "May exile dump cards to pay missing magic costs." },
   cleave: { label: "巨撃", description: "Also damages units horizontally adjacent to the attack target." },
+  suppression: { label: "制圧", description: "攻撃した対象に-[制圧]/±0の補正を与える（ATKを制圧値だけ永続的に減らす）。" },
   oneDamage: { label: "一傷防御", description: "Can only receive 1 damage per hit from any source." },
   structTaunt: { label: "構造挑発", description: "Opponents must target structs with the highest struct taunt value first. This struct gains effect protection equal to its taunt value." },
   effectProtect: { label: "効果保護", description: "カード効果の影響を受けない（効果攻撃を含む。通常攻撃・曲射などの戦闘ダメージは対象外）。[効果貫通]がこの値以上のカードのみ影響できる。" },
@@ -653,6 +654,16 @@ const abilityEffects = {
     }
     log(game, "全ユニット・タクト・ストラクトを破壊");
   },
+  destroyAllUnits({ game, playerId, card }) {
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        const unit = game.board[row][col];
+        if (unit) unit.currentHp = 0;
+      }
+    }
+    cleanupAllDestroyed(null, game);
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 全ユニットを破壊`);
+  },
   destroyAllEnemyUnits({ game, playerId, card }) {
     const opponent = opponentOf(playerId);
     let count = 0;
@@ -771,6 +782,10 @@ const abilityEffects = {
   buffSelfAtk({ game, playerId, card, ability }) {
     card.atk = (card.atk || 0) + (ability.amount || 1);
     log(game, `${game.players[playerId].name}: 「${card.name}」+${ability.amount || 1}/0 補正`);
+  },
+  buffSelfAtkThisAttack({ game, playerId, card, ability }) {
+    card.attackStrikeBonus = (card.attackStrikeBonus || 0) + (ability.amount || 1);
+    log(game, `${game.players[playerId].name}: 「${card.name}」この攻撃+${ability.amount || 1}/0`);
   },
   buffSelfHpFromTagCount({ game, playerId, card, ability }) {
     const player = game.players[playerId];
@@ -3336,6 +3351,7 @@ function parseDeckmakerKeywords(card) {
     ["noAttack", /不攻/g],
     ["soulPay", /魂/g],
     ["cleave", numRe("巨撃")],
+    ["suppression", numRe("制圧")],
     ["oneDamage", /ダメージを1[づず]つしか受けない/g],
     ["effectProtect", numRe("効果保護")],
   ];
@@ -3899,8 +3915,19 @@ function parseDeckmakerAbilities(card, localType) {
         if (m2) {
           abilities.push({ trigger: "onActivate", effect: "searchUnitToCostHand", maxCost: parseDeckmakerKeywordValue(m2[1]) || 3, tag: m2[2] || null, amount: 1, activationCost });
         }
+      } else if (/全(?:て)?のユニットを破壊/.test(effectText)) {
+        abilities.push({ trigger: "onActivate", effect: "destroyAllUnits", activationCost });
       }
     }
+  }
+
+  const onAttackSelfAtkMatch = text.match(/攻撃する(?:とき|と|時)[：:][＋+]?(\d+|[①②③④⑤⑥⑦⑧⑨0-9０-９]+)\/[±＋+]?0/u);
+  if (onAttackSelfAtkMatch && localType === "unit" && !abilities.some((a) => a.effect === "buffSelfAtkThisAttack")) {
+    abilities.push({
+      trigger: "onAttack",
+      effect: "buffSelfAtkThisAttack",
+      amount: parseDeckmakerKeywordValue(onAttackSelfAtkMatch[1]) || 1,
+    });
   }
 
   // onActivate (no rest): "X(cost) を支払い、レストせずに：effect" (unit cards only)
@@ -3951,7 +3978,10 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   if (card.id === "card_1753611167885") {
+    abilities.length = 0;
     abilities.push({ trigger: "onAttack", effect: "summonGolemToSameRow", maxCost: 3 });
+    abilities.push({ trigger: "onAttack", effect: "buffSelfAtkThisAttack", amount: 2 });
+    abilities.push({ trigger: "onActivate", effect: "destroyAllUnits", activationCost: { magic: 10 } });
   }
 
   // 農業協同組合: 建設時に農民・農場を合計3枚まで場に出す
@@ -7051,6 +7081,7 @@ function resumePendingAttackContinuation() {
         { source: defender },
         { cleanup: false }
       );
+      applySuppressionToTarget(defender, unit, state);
       if (counterResult.pending) {
         state.pendingAttackContinuation = {
           ...cont,
@@ -9240,6 +9271,7 @@ function executeUnitAttack(unit, defender, target, { useCharge = false } = {}) {
   triggerAttackAbilities(unit);
   const rawDamage = calculateAttackDamage(unit, defender, { useCharge });
   const { damage, pending } = dealDamageToUnit(state, defender, rawDamage, { source: unit }, { cleanup: false });
+  applySuppressionToTarget(unit, defender);
   if (pending) {
     state.pendingAttackContinuation = {
       attackerRow: unit.row,
@@ -9276,6 +9308,7 @@ function executeUnitAttack(unit, defender, target, { useCharge = false } = {}) {
       { source: defender },
       { cleanup: false }
     );
+    applySuppressionToTarget(defender, unit);
     if (counterResult.pending) {
       state.pendingAttackContinuation = {
         attackerRow: unit.row,
@@ -9363,6 +9396,7 @@ function triggerAttackAbilities(unit) {
 }
 
 function afterAttack(unit) {
+  unit.attackStrikeBonus = 0;
   unit.attacksThisTurn = (unit.attacksThisTurn || 0) + 1;
   const attackLimit = keywordValue(unit, "multiStrike", 1);
   if (unit.attacksThisTurn >= attackLimit) unit.rested = true;
@@ -9418,8 +9452,16 @@ function unitHasArmorEffect(unit) {
   return keywordValue(unit, "armor") > 0 || Number(unit.armor) > 0;
 }
 
+function applySuppressionToTarget(attacker, target, game = state) {
+  const amount = keywordValue(attacker, "suppression");
+  if (amount <= 0 || !target || target.owner === attacker.owner) return;
+  const before = target.atk || 0;
+  target.atk = Math.max(0, before - amount);
+  log(game, `「${attacker.name}」の制圧：「${target.name}」-${amount}/±0（ATK ${before}→${target.atk}）`);
+}
+
 function calculateAttackDamage(attacker, defender, { useCharge = false } = {}) {
-  let atk = attacker.atk || 0;
+  let atk = (attacker.atk || 0) + (attacker.attackStrikeBonus || 0);
   for (const ability of attacker.abilities || []) {
     if (ability.effect === "vsTagAtkBonus" && ability.vsTag && (defender?.tags || []).includes(ability.vsTag)) {
       atk += ability.atkBonus || 1;

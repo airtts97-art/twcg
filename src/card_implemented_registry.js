@@ -21,6 +21,8 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "mobilizationCore", // 動員司令部
   "card_1753664991902", // 農民
   "card_1753660736818", // 覆没の大暴走
+  "card_1753611167885", // クリスタヴィアゴーレム
+  "card_1782490167906", // 唯雷怪異
   "card_1782520000000", // 北東軍総司令部
   "card_1782237267608", // 北東軍第27迫撃砲分隊
   "arcaneReactorCore", // 魔導炉心
