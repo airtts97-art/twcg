@@ -609,4 +609,19 @@ export default [
     tactSubType: "通常",
     rarity: "通常",
   },
+  {
+    id: "card_1782561876492",
+    name: "異界で見た同胞",
+    type: "タクト",
+    world: "ユニフォール",
+    description:
+      "フィールドの自分の[純人間]タグを持つユニットを2枚まで除外する\n\n世界《ユニフォール》の[勇者]タグを持つユニットを除外\nそのユニットのステータスの合計を自身の[純人間]ユニットに補正する\n\n\n世界《ヘルメネアの大地》の[純人間]タグを持つユニットを除外したなら\nそのユニットのカウンターを自身の[勇者]ユニットに移す。",
+    tags: ["リ・サンティウ連合王国", "リッサジオール連合王国", "唯字論", "王国勇者主義", "通常"],
+    costs: { play: { gold: 1, magic: 1 }, act: {}, choice: [], choiceAct: [] },
+    generates: {},
+    limit: 4,
+    tactSubType: "通常",
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782561876492.jpeg",
+  },
 ];

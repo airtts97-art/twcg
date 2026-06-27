@@ -55,6 +55,7 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782208064951", // 【正体不明】色彩
   "card_1782211496085", // 【正体不明】保安官
   "card_1782208333313", // 正体隠匿(インポスター)
+  "card_1782561876492", // 異界で見た同胞
 ]);
 
 export function isImplementedCard(cardId) {

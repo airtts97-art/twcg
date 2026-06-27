@@ -26,6 +26,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "structPayRestChooseResource", "structPayDrawProduce", "identityPrivateOnSummon", "identityKaijuSummonFromDump",
   "stripNeutralUnitAbilities", "discardEqualToFieldUnits", "colorfulTurnEndRemap", "sheriffOnSummon",
   "imposterTactPlay", "imposterDestroyNeutral",
+  "otherworldKinTactPlay",
   "northeastGloryTactPlay",
   "chooseProduceResource", "chooseSummonGolem", "destroySelf", "searchDeckByType", "searchDeckMinCostToHand",
   "revealTopNPick", "payResourceOrCoreDamage", "gainShockOrAlert", "grantKeywordsToEnemyRelativeRow",

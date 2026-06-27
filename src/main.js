@@ -340,6 +340,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782208064951",  // 【正体不明】色彩
   "card_1782211496085",  // 【正体不明】保安官
   "card_1782208333313",  // 正体隠匿(インポスター)
+  "card_1782561876492",  // 異界で見た同胞
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -1277,6 +1278,10 @@ const abilityEffects = {
     game.selected = { kind: "choice", choice: "sheriffRemoveKeywords" };
     game.message = "保安官: [不動][不攻]を消す味方ユニットを選択";
     return "pending";
+  },
+  otherworldKinTactPlay({ game, playerId, card }) {
+    beginOtherworldKinChoice(game, playerId, card);
+    if (game.pendingChoice?.type === "otherworldKin") return "pending";
   },
   imposterTactPlay({ game, playerId, card }) {
     const neutrals = unitsOwnedBy(playerId, game).filter((u) => isNeutralUnit(u));
@@ -4461,6 +4466,11 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782419351598") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "northeastGloryTactPlay" });
+  }
+
+  if (card.id === "card_1782561876492") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "otherworldKinTactPlay" });
   }
 
   if (card.id === "card_1782225519182") {
@@ -8932,6 +8942,12 @@ function playTactFromHand(handIndex) {
         return fail(`${card.name}: 対象がいないため使用できません。`);
       }
     }
+    if (ability.trigger === "onPlay" && ability.effect === "otherworldKinTactPlay") {
+      const hasHero = unitsOwnedBy(state.activePlayer, state).some(
+        (u) => matchesCond(u, { tag: "勇者" }) && unitWorld(u) === "ユニフォール",
+      );
+      if (!hasHero) return fail(`${card.name}: 世界《ユニフォール》の[勇者]がフィールドに必要です。`);
+    }
     if (ability.trigger === "onPlay" && (ability.requireTagInHand || ability.cond)) {
       const playCond = ability.cond || { tag: ability.requireTagInHand };
       const hasMatch = player.hand.some((c) => c !== card && matchesCond(c, playCond));
@@ -9092,6 +9108,179 @@ function playStruct(index) {
   } else {
     app.localCardPopup = buildCardRevealPayload(state.activePlayer, card, "build", `local-build-${Date.now()}`);
   }
+  return true;
+}
+
+function unitWorld(unit) {
+  return unit?.faction || unit?.world || "";
+}
+
+function otherworldKinPureHumanCandidates(game, playerId) {
+  return unitsOwnedBy(playerId, game).filter(
+    (u) => matchesCond(u, { tag: "純人間" })
+      && !(matchesCond(u, { tag: "勇者" }) && unitWorld(u) === "ユニフォール"),
+  );
+}
+
+function otherworldKinHeroCandidates(game, playerId, excludeInstanceIds = []) {
+  const excluded = new Set(excludeInstanceIds);
+  return unitsOwnedBy(playerId, game).filter(
+    (u) => !excluded.has(u.instanceId)
+      && matchesCond(u, { tag: "勇者" })
+      && unitWorld(u) === "ユニフォール",
+  );
+}
+
+function exileBoardUnitToZone(game, unit) {
+  if (!unit) return;
+  game.board[unit.row][unit.col] = null;
+  game.players[unit.owner].exileZone.push(stripRuntime(unit));
+  log(game, `「${unit.name}」を除外`);
+}
+
+function beginOtherworldKinChoice(game, playerId, card) {
+  const pureHumans = otherworldKinPureHumanCandidates(game, playerId);
+  if (!pureHumans.length) {
+    beginOtherworldKinHeroStep(game, playerId, card, []);
+    return;
+  }
+  game.pendingChoice = {
+    type: "otherworldKin",
+    step: "choosePureHuman",
+    playerId,
+    cardName: card.name,
+    pureHumanCandidates: pureHumans,
+    selectedInstanceIds: [],
+    maxPureHuman: 2,
+    queueItem: { playerId, card, ability: { effect: "otherworldKinTactPlay" }, source: { zone: "tact" } },
+  };
+  game.selected = { kind: "choice", choice: "otherworldKin" };
+  game.message = "異界で見た同胞: [純人間]を2枚まで除外";
+}
+
+function beginOtherworldKinHeroStep(game, playerId, card, selectedPureHumanIds) {
+  const heroes = otherworldKinHeroCandidates(game, playerId, selectedPureHumanIds);
+  if (!heroes.length) {
+    finishOtherworldKinWithoutHero(game, playerId, card?.name || "異界で見た同胞", selectedPureHumanIds);
+    return;
+  }
+  game.pendingChoice = {
+    type: "otherworldKin",
+    step: "chooseHero",
+    playerId,
+    cardName: card.name,
+    selectedPureHumanIds: [...selectedPureHumanIds],
+    heroCandidates: heroes,
+    queueItem: { playerId, card, ability: { effect: "otherworldKinTactPlay" }, source: { zone: "tact" } },
+  };
+  game.selected = { kind: "choice", choice: "otherworldKin" };
+  game.message = "異界で見た同胞: 世界《ユニフォール》の[勇者]を除外";
+}
+
+function finishOtherworldKinWithoutHero(game, playerId, cardName, selectedPureHumanIds) {
+  const player = game.players[playerId];
+  const pureHumanIds = new Set(selectedPureHumanIds || []);
+  let hellmeneaCounterTotal = 0;
+  for (const unit of unitsOwnedBy(playerId, game)) {
+    if (!pureHumanIds.has(unit.instanceId)) continue;
+    if (matchesCond(unit, { tag: "純人間" }) && unitWorld(unit) === "ヘルメネアの大地") {
+      hellmeneaCounterTotal += unit.counters || 0;
+    }
+    exileBoardUnitToZone(game, unit);
+  }
+  if (hellmeneaCounterTotal > 0) {
+    const heroes = unitsOwnedBy(playerId, game).filter((u) => matchesCond(u, { tag: "勇者" }));
+    for (const h of heroes) {
+      h.counters = (h.counters || 0) + hellmeneaCounterTotal;
+    }
+    log(game, `${player.name}: [勇者]${heroes.length}体にカウンター${hellmeneaCounterTotal}を移した`);
+  }
+  log(game, `${player.name}: 「${cardName}」— [勇者]を除外できなかった`);
+  refreshContinuousEffects(game);
+}
+
+function finishOtherworldKin(game, pending, heroInstanceId) {
+  const playerId = pending.playerId;
+  const player = game.players[playerId];
+  const pureHumanIds = new Set(pending.selectedPureHumanIds || []);
+  let hellmeneaCounterTotal = 0;
+  for (const unit of unitsOwnedBy(playerId, game)) {
+    if (!pureHumanIds.has(unit.instanceId)) continue;
+    if (matchesCond(unit, { tag: "純人間" }) && unitWorld(unit) === "ヘルメネアの大地") {
+      hellmeneaCounterTotal += unit.counters || 0;
+    }
+    exileBoardUnitToZone(game, unit);
+  }
+  const hero = unitsOwnedBy(playerId, game).find((u) => u.instanceId === heroInstanceId);
+  if (!hero) {
+    log(game, `${player.name}: 「${pending.cardName}」— [勇者]の除外に失敗`);
+    return;
+  }
+  const atkBonus = hero.atk || 0;
+  const hpBonus = hero.maxHp ?? hero.hp ?? hero.currentHp ?? 0;
+  exileBoardUnitToZone(game, hero);
+  let buffCount = 0;
+  for (const unit of unitsOwnedBy(playerId, game)) {
+    if (!matchesCond(unit, { tag: "純人間" })) continue;
+    unit.atk = (unit.atk || 0) + atkBonus;
+    unit.hp = (unit.hp || 0) + hpBonus;
+    if (unit.maxHp !== undefined) unit.maxHp = (unit.maxHp || 0) + hpBonus;
+    if (unit.currentHp !== undefined) unit.currentHp = (unit.currentHp || 0) + hpBonus;
+    buffCount += 1;
+  }
+  log(game, `${player.name}: 「${pending.cardName}」— [純人間]${buffCount}体に+${atkBonus}/+${hpBonus}（合計${atkBonus + hpBonus}）`);
+  if (hellmeneaCounterTotal > 0) {
+    const heroes = unitsOwnedBy(playerId, game).filter((u) => matchesCond(u, { tag: "勇者" }));
+    for (const h of heroes) {
+      h.counters = (h.counters || 0) + hellmeneaCounterTotal;
+    }
+    log(game, `${player.name}: [勇者]${heroes.length}体にカウンター${hellmeneaCounterTotal}を移した`);
+  }
+  refreshContinuousEffects(game);
+}
+
+function toggleOtherworldKinPureHuman(instanceId) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "otherworldKin" || pending.step !== "choosePureHuman") return;
+  const selected = new Set(pending.selectedInstanceIds || []);
+  if (selected.has(instanceId)) selected.delete(instanceId);
+  else if (selected.size < (pending.maxPureHuman || 2)) selected.add(instanceId);
+  pending.selectedInstanceIds = [...selected];
+  state.message = `異界で見た同胞: [純人間] ${selected.size}/${pending.maxPureHuman || 2}枚選択`;
+  render();
+}
+
+function resolveOtherworldKinPureHumanConfirm() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "otherworldKin" || pending.step !== "choosePureHuman") return false;
+  const card = pending.queueItem?.card;
+  const selectedIds = pending.selectedInstanceIds || [];
+  beginOtherworldKinHeroStep(state, pending.playerId, card, selectedIds);
+  if (state.pendingChoice?.type !== "otherworldKin") {
+    const qi = pending.queueItem;
+    state.pendingChoice = null;
+    state.selected = null;
+    completeAbilitySource(state, qi);
+    processEffectQueue(state);
+    syncOnlineAction("resolveChoice", pending.playerId);
+  }
+  render();
+  return true;
+}
+
+function resolveOtherworldKinHero(unitIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "otherworldKin" || pending.step !== "chooseHero") return false;
+  const hero = pending.heroCandidates?.[unitIndex];
+  if (!hero) return false;
+  finishOtherworldKin(state, pending, hero.instanceId);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
   return true;
 }
 
@@ -12345,6 +12534,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "colorfulRemapCost") drawColorfulRemapPanel(pending);
   else if (pending.type === "sheriffRemoveKeywords") drawSheriffRemoveKeywordsPanel(pending);
   else if (pending.type === "imposterTact") drawImposterTactPanel(pending);
+  else if (pending.type === "otherworldKin") drawOtherworldKinPanel(pending);
   else if (pending.type === "imposterSummon") drawImposterSummonPanel(pending);
   else if (pending.type === "deployHeroFromAttack") drawDeployHeroFromAttackPanel(pending);
   else if (pending.type === "intelAgencyCancel") drawIntelAgencyCancelPanel(pending);
@@ -12606,6 +12796,40 @@ function drawImposterTactPanel(pending) {
     drawSelectableChoiceCard(x + 28 + i * 154, y + 56, 140, 196, unit, {
       label: unit.name,
       onClick: () => resolveImposterVictim(i),
+    });
+  });
+}
+
+function drawOtherworldKinPanel(pending) {
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const x = 388, y = 160, w = 664, h = 360;
+  drawChoicePanelBase(x, y, w, h);
+  ctx.fillStyle = "#c8d8f0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  if (pending.step === "choosePureHuman") {
+    ctx.fillText(`${pending.cardName}: [純人間]を2枚まで除外`, x + 28, y + 34);
+    ctx.fillStyle = "rgba(190,210,240,0.85)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("選ばなくても確定で次へ進めます。", x + 28, y + 54);
+    const candidates = pending.pureHumanCandidates || [];
+    candidates.forEach((unit, i) => {
+      const selected = (pending.selectedInstanceIds || []).includes(unit.instanceId);
+      drawSelectableChoiceCard(x + 28 + (i % 4) * 154, y + 72 + Math.floor(i / 4) * 150, 140, 196, unit, {
+        selected,
+        label: unit.name,
+        onClick: isController ? () => toggleOtherworldKinPureHuman(unit.instanceId) : null,
+      });
+    });
+    if (isController) {
+      drawButton(x + w - 180, y + h - 48, 150, 32, "確定", resolveOtherworldKinPureHumanConfirm, null, { accent: "p1" });
+    }
+    return;
+  }
+  ctx.fillText(`${pending.cardName}: 世界《ユニフォール》の[勇者]を除外`, x + 28, y + 34);
+  (pending.heroCandidates || []).forEach((unit, i) => {
+    drawSelectableChoiceCard(x + 28 + i * 154, y + 56, 140, 196, unit, {
+      label: unit.name,
+      onClick: isController ? () => resolveOtherworldKinHero(i) : null,
     });
   });
 }
