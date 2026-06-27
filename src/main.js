@@ -8942,12 +8942,6 @@ function playTactFromHand(handIndex) {
         return fail(`${card.name}: 対象がいないため使用できません。`);
       }
     }
-    if (ability.trigger === "onPlay" && ability.effect === "otherworldKinTactPlay") {
-      const hasHero = unitsOwnedBy(state.activePlayer, state).some(
-        (u) => matchesCond(u, { tag: "勇者" }) && unitWorld(u) === "ユニフォール",
-      );
-      if (!hasHero) return fail(`${card.name}: 世界《ユニフォール》の[勇者]がフィールドに必要です。`);
-    }
     if (ability.trigger === "onPlay" && (ability.requireTagInHand || ability.cond)) {
       const playCond = ability.cond || { tag: ability.requireTagInHand };
       const hasMatch = player.hand.some((c) => c !== card && matchesCond(c, playCond));
@@ -9116,19 +9110,7 @@ function unitWorld(unit) {
 }
 
 function otherworldKinPureHumanCandidates(game, playerId) {
-  return unitsOwnedBy(playerId, game).filter(
-    (u) => matchesCond(u, { tag: "純人間" })
-      && !(matchesCond(u, { tag: "勇者" }) && unitWorld(u) === "ユニフォール"),
-  );
-}
-
-function otherworldKinHeroCandidates(game, playerId, excludeInstanceIds = []) {
-  const excluded = new Set(excludeInstanceIds);
-  return unitsOwnedBy(playerId, game).filter(
-    (u) => !excluded.has(u.instanceId)
-      && matchesCond(u, { tag: "勇者" })
-      && unitWorld(u) === "ユニフォール",
-  );
+  return unitsOwnedBy(playerId, game).filter((u) => matchesCond(u, { tag: "純人間" }));
 }
 
 function exileBoardUnitToZone(game, unit) {
@@ -9141,7 +9123,7 @@ function exileBoardUnitToZone(game, unit) {
 function beginOtherworldKinChoice(game, playerId, card) {
   const pureHumans = otherworldKinPureHumanCandidates(game, playerId);
   if (!pureHumans.length) {
-    beginOtherworldKinHeroStep(game, playerId, card, []);
+    log(game, `${game.players[playerId].name}: 「${card.name}」— [純人間]ユニットがいない`);
     return;
   }
   game.pendingChoice = {
@@ -9158,77 +9140,35 @@ function beginOtherworldKinChoice(game, playerId, card) {
   game.message = "異界で見た同胞: [純人間]を2枚まで除外";
 }
 
-function beginOtherworldKinHeroStep(game, playerId, card, selectedPureHumanIds) {
-  const heroes = otherworldKinHeroCandidates(game, playerId, selectedPureHumanIds);
-  if (!heroes.length) {
-    finishOtherworldKinWithoutHero(game, playerId, card?.name || "異界で見た同胞", selectedPureHumanIds);
-    return;
-  }
-  game.pendingChoice = {
-    type: "otherworldKin",
-    step: "chooseHero",
-    playerId,
-    cardName: card.name,
-    selectedPureHumanIds: [...selectedPureHumanIds],
-    heroCandidates: heroes,
-    queueItem: { playerId, card, ability: { effect: "otherworldKinTactPlay" }, source: { zone: "tact" } },
-  };
-  game.selected = { kind: "choice", choice: "otherworldKin" };
-  game.message = "異界で見た同胞: 世界《ユニフォール》の[勇者]を除外";
-}
-
-function finishOtherworldKinWithoutHero(game, playerId, cardName, selectedPureHumanIds) {
+function finishOtherworldKinExile(game, playerId, cardName, selectedPureHumanIds) {
   const player = game.players[playerId];
   const pureHumanIds = new Set(selectedPureHumanIds || []);
+  const toExile = unitsOwnedBy(playerId, game).filter((u) => pureHumanIds.has(u.instanceId));
+  let atkBonus = 0;
+  let hpBonus = 0;
   let hellmeneaCounterTotal = 0;
-  for (const unit of unitsOwnedBy(playerId, game)) {
-    if (!pureHumanIds.has(unit.instanceId)) continue;
+  for (const unit of toExile) {
+    if (matchesCond(unit, { tag: "勇者" }) && unitWorld(unit) === "ユニフォール") {
+      atkBonus += unit.atk || 0;
+      hpBonus += unit.maxHp ?? unit.hp ?? unit.currentHp ?? 0;
+    }
     if (matchesCond(unit, { tag: "純人間" }) && unitWorld(unit) === "ヘルメネアの大地") {
       hellmeneaCounterTotal += unit.counters || 0;
     }
     exileBoardUnitToZone(game, unit);
   }
-  if (hellmeneaCounterTotal > 0) {
-    const heroes = unitsOwnedBy(playerId, game).filter((u) => matchesCond(u, { tag: "勇者" }));
-    for (const h of heroes) {
-      h.counters = (h.counters || 0) + hellmeneaCounterTotal;
+  if (atkBonus > 0 || hpBonus > 0) {
+    let buffCount = 0;
+    for (const unit of unitsOwnedBy(playerId, game)) {
+      if (!matchesCond(unit, { tag: "純人間" })) continue;
+      unit.atk = (unit.atk || 0) + atkBonus;
+      unit.hp = (unit.hp || 0) + hpBonus;
+      if (unit.maxHp !== undefined) unit.maxHp = (unit.maxHp || 0) + hpBonus;
+      if (unit.currentHp !== undefined) unit.currentHp = (unit.currentHp || 0) + hpBonus;
+      buffCount += 1;
     }
-    log(game, `${player.name}: [勇者]${heroes.length}体にカウンター${hellmeneaCounterTotal}を移した`);
+    log(game, `${player.name}: 「${cardName}」— [純人間]${buffCount}体に+${atkBonus}/+${hpBonus}（合計${atkBonus + hpBonus}）`);
   }
-  log(game, `${player.name}: 「${cardName}」— [勇者]を除外できなかった`);
-  refreshContinuousEffects(game);
-}
-
-function finishOtherworldKin(game, pending, heroInstanceId) {
-  const playerId = pending.playerId;
-  const player = game.players[playerId];
-  const pureHumanIds = new Set(pending.selectedPureHumanIds || []);
-  let hellmeneaCounterTotal = 0;
-  for (const unit of unitsOwnedBy(playerId, game)) {
-    if (!pureHumanIds.has(unit.instanceId)) continue;
-    if (matchesCond(unit, { tag: "純人間" }) && unitWorld(unit) === "ヘルメネアの大地") {
-      hellmeneaCounterTotal += unit.counters || 0;
-    }
-    exileBoardUnitToZone(game, unit);
-  }
-  const hero = unitsOwnedBy(playerId, game).find((u) => u.instanceId === heroInstanceId);
-  if (!hero) {
-    log(game, `${player.name}: 「${pending.cardName}」— [勇者]の除外に失敗`);
-    return;
-  }
-  const atkBonus = hero.atk || 0;
-  const hpBonus = hero.maxHp ?? hero.hp ?? hero.currentHp ?? 0;
-  exileBoardUnitToZone(game, hero);
-  let buffCount = 0;
-  for (const unit of unitsOwnedBy(playerId, game)) {
-    if (!matchesCond(unit, { tag: "純人間" })) continue;
-    unit.atk = (unit.atk || 0) + atkBonus;
-    unit.hp = (unit.hp || 0) + hpBonus;
-    if (unit.maxHp !== undefined) unit.maxHp = (unit.maxHp || 0) + hpBonus;
-    if (unit.currentHp !== undefined) unit.currentHp = (unit.currentHp || 0) + hpBonus;
-    buffCount += 1;
-  }
-  log(game, `${player.name}: 「${pending.cardName}」— [純人間]${buffCount}体に+${atkBonus}/+${hpBonus}（合計${atkBonus + hpBonus}）`);
   if (hellmeneaCounterTotal > 0) {
     const heroes = unitsOwnedBy(playerId, game).filter((u) => matchesCond(u, { tag: "勇者" }));
     for (const h of heroes) {
@@ -9253,27 +9193,12 @@ function toggleOtherworldKinPureHuman(instanceId) {
 function resolveOtherworldKinPureHumanConfirm() {
   const pending = state.pendingChoice;
   if (pending?.type !== "otherworldKin" || pending.step !== "choosePureHuman") return false;
-  const card = pending.queueItem?.card;
-  const selectedIds = pending.selectedInstanceIds || [];
-  beginOtherworldKinHeroStep(state, pending.playerId, card, selectedIds);
-  if (state.pendingChoice?.type !== "otherworldKin") {
-    const qi = pending.queueItem;
-    state.pendingChoice = null;
-    state.selected = null;
-    completeAbilitySource(state, qi);
-    processEffectQueue(state);
-    syncOnlineAction("resolveChoice", pending.playerId);
-  }
-  render();
-  return true;
-}
-
-function resolveOtherworldKinHero(unitIndex) {
-  const pending = state.pendingChoice;
-  if (pending?.type !== "otherworldKin" || pending.step !== "chooseHero") return false;
-  const hero = pending.heroCandidates?.[unitIndex];
-  if (!hero) return false;
-  finishOtherworldKin(state, pending, hero.instanceId);
+  finishOtherworldKinExile(
+    state,
+    pending.playerId,
+    pending.cardName,
+    pending.selectedInstanceIds || [],
+  );
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
@@ -12806,32 +12731,22 @@ function drawOtherworldKinPanel(pending) {
   drawChoicePanelBase(x, y, w, h);
   ctx.fillStyle = "#c8d8f0";
   ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
-  if (pending.step === "choosePureHuman") {
-    ctx.fillText(`${pending.cardName}: [純人間]を2枚まで除外`, x + 28, y + 34);
-    ctx.fillStyle = "rgba(190,210,240,0.85)";
-    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-    ctx.fillText("選ばなくても確定で次へ進めます。", x + 28, y + 54);
-    const candidates = pending.pureHumanCandidates || [];
-    candidates.forEach((unit, i) => {
-      const selected = (pending.selectedInstanceIds || []).includes(unit.instanceId);
-      drawSelectableChoiceCard(x + 28 + (i % 4) * 154, y + 72 + Math.floor(i / 4) * 150, 140, 196, unit, {
-        selected,
-        label: unit.name,
-        onClick: isController ? () => toggleOtherworldKinPureHuman(unit.instanceId) : null,
-      });
-    });
-    if (isController) {
-      drawButton(x + w - 180, y + h - 48, 150, 32, "確定", resolveOtherworldKinPureHumanConfirm, null, { accent: "p1" });
-    }
-    return;
-  }
-  ctx.fillText(`${pending.cardName}: 世界《ユニフォール》の[勇者]を除外`, x + 28, y + 34);
-  (pending.heroCandidates || []).forEach((unit, i) => {
-    drawSelectableChoiceCard(x + 28 + i * 154, y + 56, 140, 196, unit, {
+  ctx.fillText(`${pending.cardName}: [純人間]を2枚まで除外`, x + 28, y + 34);
+  ctx.fillStyle = "rgba(190,210,240,0.85)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("選ばなくても確定できます。", x + 28, y + 54);
+  const candidates = pending.pureHumanCandidates || [];
+  candidates.forEach((unit, i) => {
+    const selected = (pending.selectedInstanceIds || []).includes(unit.instanceId);
+    drawSelectableChoiceCard(x + 28 + (i % 4) * 154, y + 72 + Math.floor(i / 4) * 150, 140, 196, unit, {
+      selected,
       label: unit.name,
-      onClick: isController ? () => resolveOtherworldKinHero(i) : null,
+      onClick: isController ? () => toggleOtherworldKinPureHuman(unit.instanceId) : null,
     });
   });
+  if (isController) {
+    drawButton(x + w - 180, y + h - 48, 150, 32, "確定", resolveOtherworldKinPureHumanConfirm, null, { accent: "p1" });
+  }
 }
 
 function drawImposterSummonPanel(pending) {
