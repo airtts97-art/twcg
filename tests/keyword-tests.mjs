@@ -798,6 +798,182 @@ const results = await page.evaluate(() => {
     summary: { pendingReveal, attackerPendingRest, attackerRestedAfter },
   });
 
+  const longTermCard = api.testing.catalogCard("card_1782304306296");
+  const longTermAbility = (longTermCard?.abilities || []).find((a) => a.effect === "longTermInvestmentPlay");
+  out.push({
+    name: "long_term_investment_parsed",
+    summary: { found: !!longTermAbility },
+  });
+
+  reset();
+  api.testing.setResources("p1", highResources);
+  api.state.players.p1.hand = [];
+  api.state.players.p1.mainDeck = Array.from({ length: 10 }, (_, i) => ({ id: `lt${i}`, name: `LT${i}`, type: "unit" }));
+  const investmentHandIdx = api.testing.addHandCard("p1", "card_1782304306296");
+  api.testing.playTactFromHand(investmentHandIdx);
+  api.testing.endTurn();
+  api.testing.endTurn();
+  out.push({
+    name: "long_term_investment_draw_bonus",
+    summary: {
+      handCount: api.state.players.p1.hand.length,
+      expectedDraw: api.state.players.p1.core.draw + 2,
+    },
+  });
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.testing.placeUnit("guardian", "p2", 0, 5, { rested: true });
+  api.testing.placeUnit("mageBattery", "p1", 2, 5, { rested: false });
+  const guardedCoreHpBefore = api.state.players.p2.core.hp;
+  api.testing.selectUnit(2, 5);
+  api.testing.attack({ kind: "core", playerId: "p2" });
+  out.push({
+    name: "guard_on_summon_row_blocks_core",
+    summary: {
+      coreHpBefore: guardedCoreHpBefore,
+      coreHpAfter: api.state.players.p2.core.hp,
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { ore: 5, magic: 5, funds: 0, people: 0, nature: 0, fuel: 0, electric: 0 });
+  const deckGolem = api.testing.catalogCard("card_1753611186441");
+  if (deckGolem) {
+    api.state.players.p1.mainDeck = [{ ...deckGolem, instanceId: 91001 }];
+    api.state.players.p1.dump = [{ ...deckGolem, id: "dump-golem", instanceId: 91002 }];
+    api.state.players.p1.structs = [{
+      id: "card_1753660736818",
+      name: "覆没の大暴走",
+      type: "struct",
+      rested: false,
+      abilities: [{
+        trigger: "onStructurePhase",
+        effect: "chooseSummonGolem",
+        maxCost: 3,
+        deckOnly: true,
+        costOptions: [
+          { resource: "ore", amount: 2 },
+          { resource: "magic", amount: 1 },
+        ],
+      }],
+    }];
+    api.state.pendingStructPhase = {
+      playerId: "p1",
+      activatedIndexes: [],
+      activatedTactIndexes: [],
+      resourcesBefore: { ...api.state.players.p1.resources },
+      handBefore: api.state.players.p1.hand.length,
+    };
+    api.state.phase = "structure";
+    api.state.activePlayer = "p1";
+    const oreBefore = api.state.players.p1.resources.ore;
+    api.testing.activateStructInPhase(0);
+    const pendingChoice = !!api.state.pendingStructPhase?.pendingResourceChoice;
+    if (pendingChoice) api.testing.resolveMarketChoice("ore");
+    out.push({
+      name: "fumetsu_golem_summon_from_deck_only",
+      summary: {
+        pendingChoice,
+        oreBefore,
+        oreAfter: api.state.players.p1.resources.ore,
+        deckLen: api.state.players.p1.mainDeck.length,
+        dumpLen: api.state.players.p1.dump.length,
+        structRested: api.state.players.p1.structs[0]?.rested,
+        summonedFromDeck: api.state.players.p1.mainDeck.length === 0,
+        dumpUntouched: api.state.players.p1.dump.length === 1,
+      },
+    });
+  } else {
+    out.push({ name: "fumetsu_golem_summon_from_deck_only", summary: { skipped: true } });
+  }
+
+  const mobilizationCard = api.cardCatalog.main["card_1782682744095"];
+  const mobilizationAbility = (mobilizationCard?.abilities || []).find((a) => a.effect === "tactPayRestDraw");
+  out.push({
+    name: "mobilization_plan_parsed",
+    summary: {
+      found: !!mobilizationAbility,
+      cost: mobilizationAbility?.cost,
+      draw: mobilizationAbility?.draw,
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { funds: 3, people: 0, nature: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.state.players.p1.mainDeck = Array.from({ length: 5 }, (_, i) => ({ id: `mob-${i}`, name: `Deck${i}`, type: "unit" }));
+  const mobilizationHandIdx = api.testing.addHandCard("p1", "card_1782682744095");
+  api.testing.playTactFromHand(mobilizationHandIdx);
+  const tactIdx = api.state.players.p1.tactZone.findIndex((c) => c.id === "card_1782682744095");
+  const fundsBefore = api.state.players.p1.resources.funds;
+  const handBefore = api.state.players.p1.hand.length;
+  const deckBefore = api.state.players.p1.mainDeck.length;
+  if (tactIdx >= 0) api.testing.activatePermanentTact(tactIdx);
+  out.push({
+    name: "mobilization_plan_draw_on_activate",
+    summary: {
+      fundsBefore,
+      fundsAfter: api.state.players.p1.resources.funds,
+      handBefore,
+      handAfter: api.state.players.p1.hand.length,
+      deckBefore,
+      deckAfter: api.state.players.p1.mainDeck.length,
+      tactRested: api.state.players.p1.tactZone[tactIdx]?.rested,
+    },
+  });
+
+  const kihaCard = api.cardCatalog.structs["card_1782681464783"];
+  const kihaAbility = (kihaCard?.abilities || []).find((a) => a.effect === "structPayProduce");
+  out.push({
+    name: "kiha_eho_facility_parsed",
+    summary: {
+      found: !!kihaAbility,
+      cost: kihaAbility?.cost,
+      produces: kihaAbility?.produces,
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { funds: 2, nature: 2, people: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.state.players.p1.structs = [{
+    id: "card_1782681464783",
+    name: "キハエーホ陸軍施設",
+    type: "struct",
+    rested: false,
+    abilities: [{
+      trigger: "onStructurePhase",
+      effect: "structPayProduce",
+      cost: { funds: 1, nature: 1 },
+      produces: { people: 5 },
+    }],
+  }];
+  api.state.pendingStructPhase = {
+    playerId: "p1",
+    activatedIndexes: [],
+    activatedTactIndexes: [],
+    resourcesBefore: { ...api.state.players.p1.resources },
+    handBefore: api.state.players.p1.hand.length,
+  };
+  api.state.phase = "structure";
+  api.state.activePlayer = "p1";
+  const kihaFundsBefore = api.state.players.p1.resources.funds;
+  const kihaNatureBefore = api.state.players.p1.resources.nature;
+  const kihaPeopleBefore = api.state.players.p1.resources.people;
+  api.testing.activateStructInPhase(0);
+  out.push({
+    name: "kiha_eho_facility_paid_produce",
+    summary: {
+      fundsBefore: kihaFundsBefore,
+      fundsAfter: api.state.players.p1.resources.funds,
+      natureBefore: kihaNatureBefore,
+      natureAfter: api.state.players.p1.resources.nature,
+      peopleBefore: kihaPeopleBefore,
+      peopleAfter: api.state.players.p1.resources.people,
+      structRested: api.state.players.p1.structs[0]?.rested,
+    },
+  });
+
   return out;
 });
 
@@ -1123,5 +1299,28 @@ assert(byName.deckmaker_struct_destroy_gain.peopleAfter === byName.deckmaker_str
 assert(byName.shock_battalion_attack_rests_attacker.pendingReveal === true, "302 shock battalion should trigger reveal pick on damage");
 assert(byName.shock_battalion_attack_rests_attacker.attackerPendingRest === false, "attacker should stay active while reveal pick is pending");
 assert(byName.shock_battalion_attack_rests_attacker.attackerRestedAfter === true, "attacker should rest after resolving 302 reveal pick");
+
+assert(byName.long_term_investment_parsed.found === true, "長期投資 should parse longTermInvestmentPlay");
+assert(byName.long_term_investment_draw_bonus.handCount === byName.long_term_investment_draw_bonus.expectedDraw, "長期投資 should add +2 draw on the following turn");
+assert(byName.guard_on_summon_row_blocks_core.coreHpAfter === byName.guard_on_summon_row_blocks_core.coreHpBefore, "守護 on summon row should block core attacks");
+if (!byName.fumetsu_golem_summon_from_deck_only.skipped) {
+  assert(byName.fumetsu_golem_summon_from_deck_only.pendingChoice === true, "覆没の大暴走 should ask for resource payment");
+  assert(byName.fumetsu_golem_summon_from_deck_only.oreAfter === byName.fumetsu_golem_summon_from_deck_only.oreBefore - 2, "覆没の大暴走 should consume ore on activation");
+  assert(byName.fumetsu_golem_summon_from_deck_only.summonedFromDeck === true, "覆没の大暴走 should summon from deck");
+  assert(byName.fumetsu_golem_summon_from_deck_only.dumpUntouched === true, "覆没の大暴走 should not summon from dump");
+  assert(byName.fumetsu_golem_summon_from_deck_only.structRested === true, "覆没の大暴走 should rest after activation");
+}
+
+assert(byName.mobilization_plan_parsed.found === true, "動員計画 should parse tactPayRestDraw");
+assert(byName.mobilization_plan_parsed.draw === 2, "動員計画 draw amount should be 2");
+assert(byName.mobilization_plan_draw_on_activate.fundsAfter === byName.mobilization_plan_draw_on_activate.fundsBefore - 1, "動員計画 should consume gold on activation");
+assert(byName.mobilization_plan_draw_on_activate.handAfter === byName.mobilization_plan_draw_on_activate.handBefore + 2, "動員計画 should draw 2 cards");
+assert(byName.mobilization_plan_draw_on_activate.deckAfter === byName.mobilization_plan_draw_on_activate.deckBefore - 2, "動員計画 should draw from deck");
+assert(byName.mobilization_plan_draw_on_activate.tactRested === true, "動員計画 should rest after activation");
+assert(byName.kiha_eho_facility_parsed.found === true, "キハエーホ陸軍施設 should parse structPayProduce");
+assert(byName.kiha_eho_facility_paid_produce.fundsAfter === byName.kiha_eho_facility_paid_produce.fundsBefore - 1, "キハエーホ should consume gold");
+assert(byName.kiha_eho_facility_paid_produce.natureAfter === byName.kiha_eho_facility_paid_produce.natureBefore - 1, "キハエーホ should consume nature");
+assert(byName.kiha_eho_facility_paid_produce.peopleAfter === byName.kiha_eho_facility_paid_produce.peopleBefore + 5, "キハエーホ should gain 5 people");
+assert(byName.kiha_eho_facility_paid_produce.structRested === true, "キハエーホ should rest after activation");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));

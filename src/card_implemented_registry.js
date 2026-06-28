@@ -64,6 +64,8 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782651333318", // サンデルシャン銀行
   "card_1782650657482", // 冠飾りの騎士
   "card_1782650951674", // ゴルテナ伯ゾア
+  "card_1782682744095", // 動員計画
+  "card_1782681464783", // キハエーホ陸軍施設
 ]);
 
 export function isImplementedCard(cardId) {

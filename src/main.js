@@ -628,6 +628,28 @@ const abilityEffects = {
     const gainLabel = Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("、");
     log(game, `${player.name}: 「${card.name}」${costLabel}支払い → ドロー${drawAmount}、${gainLabel}`);
   },
+  structPayProduce({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const cost = ability.cost || {};
+    if (!pay(player, cost)) return;
+    card.rested = true;
+    for (const [res, amt] of Object.entries(ability.produces || {})) {
+      addResources(player, res, amt);
+    }
+    const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
+    const gainLabel = Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("、");
+    log(game, `${player.name}: 「${card.name}」${costLabel}支払い → ${gainLabel}`);
+  },
+  tactPayRestDraw({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const cost = ability.cost || {};
+    if (!pay(player, cost)) return;
+    if (source?.zone === "tact" && card.permanentTact) card.rested = true;
+    const drawAmount = ability.draw || 1;
+    drawCards(game, playerId, drawAmount);
+    const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
+    log(game, `${player.name}: 「${card.name}」${costLabel}支払い → ドロー${drawAmount}`);
+  },
   drawCards({ game, playerId, card, ability }) {
     drawCards(game, playerId, ability.amount);
     if (card?.type === "struct" && !ability.multiActivate) card.rested = true;
@@ -1759,8 +1781,14 @@ const abilityEffects = {
       maxCost: ability.maxCost || 3,
       row: ability.row,
       sourceCardName: card.name,
-      deckOnly: true,
+      deckOnly: ability.deckOnly !== false,
     });
+  },
+  longTermInvestmentPlay({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const amount = ability?.amount || 2;
+    player.drawBonusNextTurn = (player.drawBonusNextTurn || 0) + amount;
+    log(game, `${player.name}: 「${card.name}」→ 次のターンのドロー+${amount}`);
   },
   summonGolemFromDeckOrDump({ game, playerId, card, ability }) {
     summonGolemFromZones(game, playerId, {
@@ -1794,6 +1822,7 @@ const abilityEffects = {
         trigger: "onStructurePhase",
         effect: "chooseSummonGolem",
         maxCost: ability.maxCost || 3,
+        deckOnly: true,
         costOptions: ability.costOptions || [
           { resource: "ore", amount: 2 },
           { resource: "magic", amount: 1 },
@@ -1882,12 +1911,17 @@ const abilityEffects = {
   },
   chooseSummonGolem({ game, card, ability }) {
     if (!game.pendingStructPhase) return;
+    const deckOnly = ability.deckOnly !== false;
     game.pendingStructPhase.pendingResourceChoice = {
       options: (ability.costOptions || []).map((opt) => ({
         id: opt.resource,
         label: `${RESOURCE_LABELS[opt.resource] || opt.resource}${opt.amount}`,
         cost: { [opt.resource]: opt.amount },
-        action: { effect: "summonGolemFromDeck", maxCost: ability.maxCost || 3 },
+        action: {
+          effect: deckOnly ? "summonGolemFromDeck" : "summonGolemFromDeckOrDump",
+          maxCost: ability.maxCost || 3,
+          deckOnly,
+        },
       })),
       cardName: card.name,
     };
@@ -3672,6 +3706,30 @@ function parseDeckmakerAbilities(card, localType) {
         });
       }
     }
+    const structPayProduceMatch = text.match(
+      /((?:[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+(?:と)?)+)を支払う[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/,
+    );
+    if (structPayProduceMatch && !abilities.some((a) => a.effect === "structPayProduce")) {
+      const cost = {};
+      const costRe = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+      let costMatch;
+      while ((costMatch = costRe.exec(structPayProduceMatch[1].replace(/[と、]/g, "")))) {
+        const resource = structResMap[costMatch[1]];
+        if (!resource) continue;
+        cost[resource] = (cost[resource] || 0) + (parseDeckmakerKeywordValue(costMatch[2]) || 1);
+      }
+      const produceResource = structResMap[structPayProduceMatch[2]];
+      if (produceResource && Object.keys(cost).length) {
+        abilities.push({
+          trigger: "onStructurePhase",
+          effect: "structPayProduce",
+          cost,
+          produces: {
+            [produceResource]: parseDeckmakerKeywordValue(structPayProduceMatch[3]) || 1,
+          },
+        });
+      }
+    }
     const generates = fromDeckmakerCosts(card.generates || {});
     const negEntries = Object.entries(generates).filter(([, a]) => a < 0);
     const posEntries = Object.entries(generates).filter(([, a]) => a > 0);
@@ -3682,7 +3740,7 @@ function parseDeckmakerAbilities(card, localType) {
         costOptions: negEntries.map(([resource, amount]) => ({ resource, amount: Math.abs(amount) })),
         produces: Object.fromEntries(posEntries),
       });
-    } else if (!abilities.some((a) => a.effect === "structPayDrawProduce")) {
+    } else if (!abilities.some((a) => a.effect === "structPayDrawProduce" || a.effect === "structPayProduce")) {
       for (const [resource, amount] of Object.entries(generates)) {
         if (Number(amount) > 0) {
           abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource, amount });
@@ -3748,6 +3806,28 @@ function parseDeckmakerAbilities(card, localType) {
         })),
       });
     }
+    const structPayRestGolemMatch = text.match(
+      /((?:「)?[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+(?:または[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+)?(?:」)?を支払い).*?レストする[：:]デッキ(?:・墓地)?からコスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨]+)以下.*\[ゴーレム\]/,
+    );
+    if (structPayRestGolemMatch && !abilities.some((a) => a.effect === "chooseSummonGolem")) {
+      const costOptions = [];
+      const costOptionRe = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+      let costMatch;
+      while ((costMatch = costOptionRe.exec(structPayRestGolemMatch[1]))) {
+        const resource = structResMap[costMatch[1]];
+        if (!resource) continue;
+        costOptions.push({ resource, amount: parseDeckmakerKeywordValue(costMatch[2]) || 1 });
+      }
+      if (costOptions.length) {
+        abilities.push({
+          trigger: "onStructurePhase",
+          effect: "chooseSummonGolem",
+          maxCost: parseDeckmakerKeywordValue(structPayRestGolemMatch[2]) || 3,
+          deckOnly: !/デッキ・墓地|デッキと墓地/.test(structPayRestGolemMatch[0]),
+          costOptions,
+        });
+      }
+    }
   }
   // Firebase generates フィールド（タクト等の即時資源）
   if (localType !== "struct" && localType !== "core" && !/与ダメージ時/.test(text)) {
@@ -3763,9 +3843,35 @@ function parseDeckmakerAbilities(card, localType) {
   // Draw patterns: "カードをX枚引く", "デッキからX枚ドロー", "X枚ドロー"
   const structPayRestDrawText = localType === "struct" && /を支払いレストし[^。\n]*\d+枚ドローする/.test(text);
   const structRestDrawText = localType === "struct" && /レストする[：:].*枚ドロー/.test(text);
+  const tactPayRestDrawText = localType === "tact" && /を支払い、?レストする[：:].*デッキから.*枚ドロー/.test(text);
+  if (localType === "tact" && tactPayRestDrawText && !abilities.some((a) => a.effect === "tactPayRestDraw")) {
+    const tactPayRestDrawMatch = text.match(
+      /((?:[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+(?:、|,)?)+)を支払い、?レストする[：:]デッキから([0-9０-９一二三四五六七八九]+)枚ドロー/,
+    );
+    if (tactPayRestDrawMatch) {
+      const tactResMap = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+      const cost = {};
+      const costRe = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+      let costMatch;
+      while ((costMatch = costRe.exec(tactPayRestDrawMatch[1].replace(/[、,]/g, "")))) {
+        const resource = tactResMap[costMatch[1]];
+        if (!resource) continue;
+        cost[resource] = (cost[resource] || 0) + (parseDeckmakerKeywordValue(costMatch[2]) || 1);
+      }
+      if (Object.keys(cost).length) {
+        abilities.push({
+          trigger: "onMainPhase",
+          effect: "tactPayRestDraw",
+          cost,
+          draw: parseDeckmakerKeywordValue(tactPayRestDrawMatch[2]) || 1,
+          isPermanent: true,
+        });
+      }
+    }
+  }
   const drawMatch = text.match(/(?:カードを|デッキから)([0-9０-９一二三四五六七八九]+)枚(?:引く|ドロー)/)
     || text.match(/([0-9０-９一二三四五六七八九]+)枚ドロー/);
-  if (drawMatch && !structPayRestDrawText && !structRestDrawText) {
+  if (drawMatch && !structPayRestDrawText && !structRestDrawText && !tactPayRestDrawText) {
     const amount = parseDeckmakerKeywordValue(drawMatch[1]) || 1;
     abilities.push({ trigger: baseTrigger, effect: "drawCards", amount });
   }
@@ -4763,6 +4869,38 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1782315551233" && !abilities.some((a) => a.effect === "drawCards")) {
     abilities.push({ trigger: "onSummon", effect: "drawCards", amount: 2 });
+  }
+
+  if (card.id === "card_1782304306296") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "longTermInvestmentPlay" });
+  } else if (card.id === "card_1782682744095") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "permanentTactPlay" });
+    abilities.push({
+      trigger: "onMainPhase",
+      effect: "tactPayRestDraw",
+      cost: { funds: 1 },
+      draw: 2,
+      isPermanent: true,
+    });
+  } else if (card.id === "card_1782681464783") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "structPayProduce",
+      cost: { funds: 1, nature: 1 },
+      produces: { people: 5 },
+    });
+  } else {
+    const nextTurnDrawBonusMatch = text.match(/次のターン.*?ドロー.*?[＋+]([0-9０-９①②③④⑤⑥⑦⑧⑨]+)/);
+    if (nextTurnDrawBonusMatch && localType === "tact" && !abilities.some((a) => a.effect === "longTermInvestmentPlay")) {
+      abilities.push({
+        trigger: "onPlay",
+        effect: "longTermInvestmentPlay",
+        amount: parseDeckmakerKeywordValue(nextTurnDrawBonusMatch[1]) || 2,
+      });
+    }
   }
 
   if (card.id === "card_1782592972506") {
@@ -6567,6 +6705,7 @@ function createPlayer(id, mainDeckIds = DEFAULT_MAIN_DECK_IDS, structDeckIds = D
     grandZone: [],
     dump: [],
     exileZone: [],
+    drawBonusNextTurn: 0,
   };
 }
 
@@ -8874,7 +9013,14 @@ function startTurn(game, playerId, options = {}) {
   }
   for (const [key, amount] of Object.entries(player.core.income || {})) addResources(player, key, amount);
   refreshContinuousEffects(game);
-  if (!options.skipDraw) drawCards(game, playerId, player.core.draw);
+  const drawBonus = player.drawBonusNextTurn || 0;
+  player.drawBonusNextTurn = 0;
+  if (!options.skipDraw) {
+    drawCards(game, playerId, player.core.draw + drawBonus);
+    if (drawBonus > 0) {
+      log(game, `${player.name}: 前ターン効果によりドロー+${drawBonus}`);
+    }
+  }
   game.turnStartSequence = { playerId, resourcesBefore, handBefore, phase: "onTurnStart" };
   // onTurnStart: 全ユニット・タクトの能力をキューに積んでから一括処理
   const turnStartUnits = unitsOwnedBy(playerId, game);
@@ -10912,15 +11058,22 @@ function cleanupAllDestroyed(killer = null, game) {
   refreshContinuousEffects(g);
 }
 
+function coreGuardRows(defenderPlayerId) {
+  const defender = state.players[defenderPlayerId];
+  return [...new Set([defender.directRow, defender.summonRow].filter(
+    (row) => Number.isInteger(row) && row >= 0 && row < ROWS,
+  ))];
+}
+
 function isCoreGuardedFrom(attacker, defenderPlayerId) {
   if (hasKeyword(attacker, "arc") || hasKeyword(attacker, "flying")) return false;
-  const defender = state.players[defenderPlayerId];
-  const row = defender.directRow;
-  for (let col = 0; col < COLS; col += 1) {
-    const guardian = state.board[row]?.[col];
-    if (!guardian || guardian.owner !== defenderPlayerId || !hasKeyword(guardian, "guard")) continue;
-    if (hasKeyword(guardian, "flying") && !hasKeyword(attacker, "flying") && !hasKeyword(attacker, "antiAir") && attacker.atk <= keywordValue(guardian, "flying")) continue;
-    return true;
+  for (const row of coreGuardRows(defenderPlayerId)) {
+    for (let col = 0; col < COLS; col += 1) {
+      const guardian = state.board[row]?.[col];
+      if (!guardian || guardian.owner !== defenderPlayerId || !hasKeyword(guardian, "guard")) continue;
+      if (hasKeyword(guardian, "flying") && !hasKeyword(attacker, "flying") && !hasKeyword(attacker, "antiAir") && attacker.atk <= keywordValue(guardian, "flying")) continue;
+      return true;
+    }
   }
   return false;
 }
@@ -15843,6 +15996,8 @@ function abilityText(card) {
         damageTargetUnit: `対象ユニットに${ability.amount}ダメージ`,
         produceResource: `${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         structPayDrawProduce: `${Object.entries(ability.cost || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("")}支払い → ドロー${ability.draw || 1}、${Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("/")}`,
+        structPayProduce: `${Object.entries(ability.cost || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("")}支払い → ${Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("/")}`,
+        tactPayRestDraw: `${Object.entries(ability.cost || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("")}支払い → ドロー${ability.draw || 1}`,
         gainResource: `${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         buffFriendlyUnitsHp: `味方ユニットのHP+${ability.amount}`,
         buffFriendlyUnitsAtk: `味方ユニットのATK+${ability.amount}`,
@@ -15852,6 +16007,7 @@ function abilityText(card) {
         chooseProduceResource: `${(ability.options || []).map((o) => o.label || o.id).join("か")}を得る`,
         chooseSummonGolem: `${(ability.costOptions || []).map((o) => `${RESOURCE_LABELS[o.resource] || o.resource}${o.amount}`).join("または")}→デッキからコスト${ability.maxCost || 3}以下の[ゴーレム]を出す`,
         tactToStructOverStruct: `「${ability.requiredStructName || "覆没の迷宮"}」があればストラクト化`,
+        longTermInvestmentPlay: `次のターンのドロー+${ability.amount || 2}`,
         summonGolemFromDeck: `デッキからコスト${ability.maxCost || 3}以下の[ゴーレム]を出す`,
         summonGolemFromDeckOrDump: `デッキ・墓地からコスト${ability.maxCost || 3}以下の[ゴーレム]を出す`,
         summonGolemToSameRow: `デッキ・墓地からコスト${ability.maxCost || 3}以下の[ゴーレム]を同じ行に出す`,

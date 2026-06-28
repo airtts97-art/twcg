@@ -21,9 +21,9 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "damageRestedTarget", "exileTargetNonNeutralNonUnifall", "exileAllNonNeutralNonUnifall", "reviveFromExile",
   "grantKeywordsToAllMagicMachines", "damageAllEnemiesAndPushBack", "reviveStructFromDump",
   "buffFriendlyUnitsAtk", "descentEffect", "searchUnitToCostHand", "searchCardToHand",
-  "summonGolemFromDeck", "summonGolemFromDeckOrDump", "summonGolemToSameRow", "tactToStructOverStruct", "summonSelfFromDumpMobile",
+  "summonGolemFromDeck", "summonGolemFromDeckOrDump", "summonGolemToSameRow", "tactToStructOverStruct", "summonSelfFromDumpMobile", "longTermInvestmentPlay", "tactPayRestDraw",
   "mysticCapture", "damageEnemyCore", "damageTargetUnit", "grantDestroyGain", "chooseExchange",
-  "structPayRestChooseResource", "structPayDrawProduce", "identityPrivateOnSummon", "identityKaijuSummonFromDump",
+  "structPayRestChooseResource", "structPayDrawProduce", "structPayProduce", "identityPrivateOnSummon", "identityKaijuSummonFromDump",
   "stripNeutralUnitAbilities", "discardEqualToFieldUnits", "colorfulTurnEndRemap", "sheriffOnSummon",
   "imposterTactPlay", "imposterDestroyNeutral",
   "otherworldKinTactPlay",
@@ -46,7 +46,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
 
 const STRUCT_PRODUCTION_EFFECTS = new Set([
   "produceResource", "produceResourceCostHP", "produceResourceCostHuman", "chooseProduceResource",
-  "structPayRestChooseResource", "structPayDrawProduce",
+  "structPayRestChooseResource", "structPayDrawProduce", "structPayProduce",
 ]);
 
 const EFFECT_TRIGGER_RE = /(?:出撃|召喚|破壊|レスト|アクト|構造フェイズ|ターン開始|ターン終了|被ダメージ|攻撃|撃破|除外|手札から|デッキから|墓地から|召喚された|配置された|コアが|相手のターン|自分のターン|プレイした|使用した|ダメージを与えた)(?:時|して|された|した|に)/;
