@@ -3040,20 +3040,12 @@ roomCodeInput.addEventListener("blur", () => {
   render();
 });
 
-const RESOURCE_KEY_ALIASES = {
-  food: "nature",
-  natural: "nature",
-  human: "people",
-  gold: "funds",
-  mineral: "ore",
-};
-
 function normalizeResourceObject(resources = {}) {
   const normalized = emptyResources();
   for (const [rawKey, rawAmount] of Object.entries(resources || {})) {
     const amount = Number(rawAmount) || 0;
     if (!amount) continue;
-    const mappedKey = RESOURCE_KEY_ALIASES[rawKey] || rawKey;
+    const mappedKey = DECKMAKER_TO_RESOURCE_KEYS[rawKey] || rawKey;
     if (RESOURCE_KEYS.includes(mappedKey)) normalized[mappedKey] += amount;
   }
   return normalized;
@@ -6872,7 +6864,7 @@ function emptyResources() {
 }
 
 function addResources(player, key, amount) {
-  const resourceKey = RESOURCE_KEY_ALIASES[key] || key;
+  const resourceKey = DECKMAKER_TO_RESOURCE_KEYS[key] || key;
   player.resources[resourceKey] = (player.resources[resourceKey] || 0) + amount;
 }
 
