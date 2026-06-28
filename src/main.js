@@ -717,7 +717,7 @@ const abilityEffects = {
   payOnAttackEnhance({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
     const payCost = ability.payCost || {};
-    const canPayEnhance = canPayForCard(player, payCost, card);
+    const canPayEnhance = canPay(player, payCost);
     game.pendingChoice = {
       type: "payOnAttackEnhance",
       playerId,
@@ -1620,8 +1620,10 @@ const abilityEffects = {
   reviveFromExile({ game, playerId, card }) {
     const eligible = [];
     for (const [pid, player] of Object.entries(game.players)) {
-      for (const c of (player.exileZone || [])) {
-        if (c.type === "unit") eligible.push({ ...c, _exileOwner: pid });
+      const exileZone = player.exileZone || [];
+      for (let i = 0; i < exileZone.length; i++) {
+        const c = exileZone[i];
+        if (c.type === "unit") eligible.push({ ...c, _exileOwner: pid, _exileIndex: i });
       }
     }
     if (eligible.length === 0) {
@@ -2344,25 +2346,19 @@ const abilityEffects = {
     return "pending";
   },
   surviveDamageAndOptionalBuff({ game, playerId, card, ability }) {
-    // 被ダメージ時：資源を支払える場合のみ発動
     const resource = ability.resource || "magic";
     const amount = ability.amount || 1;
     const player = game.players[playerId];
-    console.log(`surviveDamageAndOptionalBuff: card=${card.name}, resource=${resource}, amount=${amount}, curRes=${player.resources[resource] || 0}, ability=${JSON.stringify(ability)}`);
 
-    // 資源が不足していれば、この処理中も破壊される（食いしばり発動しない）
-    if ((player.resources[resource] || 0) < amount) {
-      console.log(`Resource insufficient for buff: need ${amount} ${resource}, have ${player.resources[resource] || 0}`);
-      return;
-    }
-
-    // 資源が十分：食いしばり発動 + 修正選択UI表示
+    // 効果処理中は破壊されない（HPを1にしない。破壊判定を効果完了まで延期する）
+    card.noDestroyDuringEffectResolution = true;
     if ((card.currentHp || 0) <= 0) {
-      card.currentHp = 1;
-      log(game, `${game.players[playerId].name}: 「${card.name}」は被ダメージで破壊されない（${resource}${amount}を支払う予定）`);
+      log(game, `${player.name}: 「${card.name}」は効果処理中は破壊されない`);
     }
 
-    const pendingChoice = {
+    if ((player.resources[resource] || 0) < amount) return;
+
+    game.pendingChoice = {
       type: "payForBuff",
       playerId,
       cardName: card.name,
@@ -2373,9 +2369,6 @@ const abilityEffects = {
       atkBuff: ability.atkBuff || 1,
       hpBuff: ability.hpBuff || 2,
     };
-    game.pendingChoice = pendingChoice;
-    console.log(`Setting pendingChoice:`, pendingChoice);
-    console.log(`game.pendingChoice after set:`, game.pendingChoice);
     return "pending";
   },
 };
@@ -3513,6 +3506,19 @@ function parseActivationCostFromText(costText) {
   return cost;
 }
 
+function parsePayOnAttackEnhanceFromText(text) {
+  const match = String(text).match(
+    /攻撃(?:時|する(?:とき|と|時))に([^を]+?)を支払(?:った|う)?場合[：:]\s*\[貫通([^\]]+)\]\s*[、,]\s*\[装甲([^\]]+)\]\s*[、,]\s*ATK[+＋]([①②③④⑤⑥⑦⑧⑨0-9０-９]+)(?:\/[±＋+]?0|の修正を得る)/,
+  );
+  if (!match) return null;
+  return {
+    payCost: parseActivationCostFromText(match[1]),
+    pierce: parseDeckmakerKeywordValue(match[2]) || 1,
+    armor: parseDeckmakerKeywordValue(match[3]) || 1,
+    atkBuff: parseDeckmakerKeywordValue(match[4]) || 1,
+  };
+}
+
 function fromDeckmakerCosts(costs = {}) {
   const result = emptyResources();
   for (const [deckmakerKey, amount] of Object.entries(costs || {})) {
@@ -3535,11 +3541,20 @@ function parseDeckmakerKeywordValue(raw = "") {
   return Number(token.replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))) || undefined;
 }
 
+function extractDeckmakerKeywordBlocks(description = "") {
+  const blocks = [];
+  const leading = String(description).match(/^(?:\s*\[[^\]]+\])+/);
+  if (leading) blocks.push(leading[0]);
+  for (const match of String(description).matchAll(/^(?:[ \t]*\[[^\]]+\][ \t]*)+$/gm)) {
+    if (!blocks.includes(match[0])) blocks.push(match[0]);
+  }
+  return blocks.join("\n");
+}
+
 function parseDeckmakerKeywords(card) {
-  // Scan both the leading [keyword] block and ability text in description
-  // Leading block: [装甲②][機動] etc. — these are unconditional
+  // Scan standalone [keyword] lines in description (leading or after a condition line).
   // Ability text: 被ダメージ時：[衝撃]を得る など — these are conditional and should NOT be added as unconditional keywords
-  const descKeywordBlock = (card.description || "").match(/^(?:\s*\[[^\]]+\])+/)?.[0] || "";
+  const descKeywordBlock = extractDeckmakerKeywordBlocks(card.description || "");
 
   // IMPORTANT: Do NOT scan [keywords] from ability text (trigger:effect descriptions)
   // These are CONDITIONAL and would incorrectly add them as unconditional base keywords
@@ -3802,6 +3817,13 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onMill", effect: "summonSelfFromDump" });
   }
 
+  // Revive from exile: "除外されているユニットから一つ選び、自分の第一行に出す"
+  if (/除外(?:されている|された)?ユニットから(?:一つ|1つ)?選び.*第一行に出す/.test(text)) {
+    if (!abilities.some((a) => a.effect === "reviveFromExile")) {
+      abilities.push({ trigger: "onPlay", effect: "reviveFromExile" });
+    }
+  }
+
   // Destroy all enemy units: "すべての相手ユニットを破壊"
   if (/すべての相手ユニットを破壊/.test(text)) {
     abilities.push({ trigger: baseTrigger, effect: "destroyAllEnemyUnits" });
@@ -3823,7 +3845,11 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // Destroy target enemy struct: "フィールドの相手の施設カードを1枚選び、破壊する"
-  if (/相手.*施設.*破壊/.test(text) || /フィールドの相手.*施設/.test(text)) {
+  const destroyTargetStructMatch = /相手.*施設.*破壊/.test(text)
+    || /フィールドの相手.*施設/.test(text)
+    || /相手のストラクト(?:カード)?を[0-9０-９①②③④⑤⑥⑦⑧⑨]+枚選び[^。\n]*破壊/.test(text)
+    || /相手の施設(?:カード)?を[0-9０-９①②③④⑤⑥⑦⑧⑨]+枚選び[^。\n]*破壊/.test(text);
+  if (destroyTargetStructMatch && !abilities.some((a) => a.effect === "destroyTargetStruct" || a.effect === "destroyEnemyStructsOnPlay")) {
     abilities.push({ trigger: baseTrigger, effect: "destroyTargetStruct" });
   }
 
@@ -3944,11 +3970,10 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: baseTrigger, effect: "revealTagsForResources", cond: heroCond, tagGroups, resourcePer: per, resources: [res1, res2] });
   }
 
-  // 被ダメージ時：破壊されず + 資源支払いで+N/+M または +N/M
-  let takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊されず[^。\n]*?([金人自鉱燃電魔])を支払うことで[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/\+?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
+  // 被ダメージ時：効果処理中は破壊されない + 資源支払いで+N/+M
+  let takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊され(?:ず|ない)[^。\n]*?([金人自鉱燃電魔])を支払うことで[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/\+?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
   if (!takeDamageSurviveBuff) {
-    // フォールバック：より柔軟なパターンを試す（+N/M形式にも対応）
-    takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊されず[^。\n]*?([金人自鉱燃電魔])を支払[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/(\+)?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
+    takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊され(?:ず|ない)[^。\n]*?([金人自鉱燃電魔])を支払[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/(\+)?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
   }
   if (takeDamageSurviveBuff) {
     const resMap = { 金: "funds", 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic" };
@@ -4077,17 +4102,12 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
-  const payOnAttackEnhanceMatch = text.match(
-    /攻撃時に([^を]+)を支払った場合：\[貫通([^\]]+)\]、\[装甲([^\]]+)\]、ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/,
-  );
-  if (payOnAttackEnhanceMatch && localType === "unit" && !abilities.some((a) => a.effect === "payOnAttackEnhance")) {
+  const payOnAttackEnhanceParsed = parsePayOnAttackEnhanceFromText(text);
+  if (payOnAttackEnhanceParsed && localType === "unit" && !abilities.some((a) => a.effect === "payOnAttackEnhance")) {
     abilities.push({
       trigger: "onAttack",
       effect: "payOnAttackEnhance",
-      payCost: parseActivationCostFromText(payOnAttackEnhanceMatch[1]),
-      pierce: parseDeckmakerKeywordValue(payOnAttackEnhanceMatch[2]) || 1,
-      armor: parseDeckmakerKeywordValue(payOnAttackEnhanceMatch[3]) || 1,
-      atkBuff: parseDeckmakerKeywordValue(payOnAttackEnhanceMatch[4]) || 1,
+      ...payOnAttackEnhanceParsed,
     });
   }
 
@@ -4258,6 +4278,17 @@ function parseDeckmakerAbilities(card, localType) {
         abilities.push({ trigger: "onActivate", effect: "destroyAllUnits", activationCost });
       }
     }
+  }
+
+  const onAttackSummonGolemSameRowMatch = text.match(
+    /攻撃する(?:とき|と|時)[：:].*同じ行.*コスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨]+)以下.*\[ゴーレム\].*デッキ・墓地から出す/,
+  );
+  if (onAttackSummonGolemSameRowMatch && localType === "unit" && !abilities.some((a) => a.effect === "summonGolemToSameRow")) {
+    abilities.push({
+      trigger: "onAttack",
+      effect: "summonGolemToSameRow",
+      maxCost: parseDeckmakerKeywordValue(onAttackSummonGolemSameRowMatch[1]) || 3,
+    });
   }
 
   const onAttackSelfAtkMatch = text.match(/攻撃する(?:とき|と|時)[：:][＋+]?(\d+|[①②③④⑤⑥⑦⑧⑨0-9０-９]+)\/[±＋+]?0/u);
@@ -4692,6 +4723,11 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onPlay", effect: "northeastGloryTactPlay" });
   }
 
+  if (card.id === "precipitousFall") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "reviveFromExile" });
+  }
+
   if (card.id === "card_1782561876492") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "otherworldKinTactPlay" });
@@ -4833,6 +4869,10 @@ function fromDeckmakerCard(card) {
     if (card.id === "card_1753611167885") {
       base.requiredStructId = "card_1753660736818";
       base.requiredStructName = "\u8986\u6ca1\u306e\u5927\u66b4\u8d70";
+    }
+    const structFieldRequirementMatch = (base.text || "").match(/「(.+?)」ストラクトが場にない場合/);
+    if (structFieldRequirementMatch && !base.requiredStructName) {
+      base.requiredStructName = structFieldRequirementMatch[1].trim();
     }
     if (card.id === "card_1782545233380") {
       base.requiredStructId = "card_1782545511296";
@@ -7383,6 +7423,7 @@ function canControlActivePlayer() {
 }
 
 function canControlChoicePlayer(playerId) {
+  if (app.match.status !== "online") return true;
   return controlledPlayerId() === playerId;
 }
 
@@ -7434,8 +7475,8 @@ function processEffectQueue(game) {
       }
       const result = effect({ game, playerId: item.playerId, card: item.card, ability: item.ability, source: item.source, target: item.target || null });
       if (result === "pending") {
-        if (game.pendingChoice && !game.pendingChoice.queueItem) {
-          game.pendingChoice.queueItem = item;
+        if (game.pendingChoice) {
+          game.pendingChoice.queueItem = game.pendingChoice.queueItem || item;
         }
         cleanupAllDestroyed(null, game);
         return;
@@ -7444,7 +7485,10 @@ function processEffectQueue(game) {
     }
     if (!game.pendingChoice && !game.pendingTarget) {
       resumePendingDamageBatch(game);
-      if (!game.pendingAttackContinuation) cleanupAllDestroyed(null, game);
+      if (!game.pendingAttackContinuation && !game.pendingDamageBatch) {
+        clearEffectResolutionIndestructible(game);
+        cleanupAllDestroyed(null, game);
+      }
     }
   } finally {
     game._effectQueueDepth -= 1;
@@ -7705,6 +7749,7 @@ function resumePendingAttackContinuation() {
     log(state, `「${unit.name}」の攻撃を完了`);
   }
   afterAttack(unit);
+  if (!state.pendingChoice) clearEffectResolutionIndestructible(state);
   cleanupAllDestroyed(unit);
   syncOnlineAction("attackUnit", unit.owner);
 }
@@ -7802,13 +7847,13 @@ function resolvePayForBuff(pay) {
   const pending = state.pendingChoice;
   if (pending?.type !== "payForBuff") return false;
   const player = state.players[pending.playerId];
+  const unit = state.board[pending.unitRow]?.[pending.unitCol];
   if (pay) {
     if ((player.resources[pending.resource] || 0) < pending.amount) {
       state.message = "資源が不足しています。";
       return false;
     }
     addResources(player, pending.resource, -pending.amount);
-    const unit = state.board[pending.unitRow]?.[pending.unitCol];
     if (unit) {
       unit.atk = (unit.atk || 0) + (pending.atkBuff || 0);
       unit.currentHp = (unit.currentHp || 0) + (pending.hpBuff || 0);
@@ -7818,10 +7863,15 @@ function resolvePayForBuff(pay) {
   } else {
     log(state, `${player.name}: 「${pending.cardName}」バフをスキップ`);
   }
+  if (unit) delete unit.noDestroyDuringEffectResolution;
   state.pendingChoice = null;
   state.selected = null;
   resumePendingAfterChoice();
   processEffectQueue(state);
+  if (!state.pendingChoice && !state.pendingDamageBatch) {
+    clearEffectResolutionIndestructible(state);
+    cleanupAllDestroyed(null, state);
+  }
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
   return true;
@@ -8295,44 +8345,57 @@ function resolveImposterSummon(index) {
 function resolveReviveFromExile(index) {
   const pending = state.pendingChoice;
   if (pending?.type !== "reviveFromExile") return false;
-  const card = pending.eligible[index];
-  if (!card) return false;
-  const exileOwner = card._exileOwner;
+  const choice = pending.eligible[index];
+  if (!choice) return false;
+  const exileOwner = choice._exileOwner;
+  const ownerExile = exileOwner ? (state.players[exileOwner]?.exileZone || []) : [];
+  let exileCard = null;
   if (exileOwner) {
-    const ownerExile = state.players[exileOwner]?.exileZone || [];
-    const idx = ownerExile.findIndex((c) => c.instanceId === card.instanceId);
-    if (idx >= 0) ownerExile.splice(idx, 1);
+    const idx = typeof choice._exileIndex === "number" ? choice._exileIndex : -1;
+    if (idx >= 0 && ownerExile[idx]) {
+      exileCard = ownerExile[idx];
+      ownerExile.splice(idx, 1);
+    }
+  }
+  if (!exileCard) {
+    state.message = "除外ゾーンからカードを取り出せませんでした。";
+    return false;
   }
   const playerInfo = PLAYERS[pending.playerId];
   const player = state.players[pending.playerId];
+  const template = cloneCard(exileCard);
   let placed = false;
   for (let col = 0; col < COLS; col++) {
     if (!state.board[playerInfo.summonRow][col]) {
       const unit = {
-        ...cloneCard(card),
+        ...template,
         instanceId: nextInstanceId++,
         owner: pending.playerId,
         row: playerInfo.summonRow,
         col,
+        maxHp: template.hp,
+        currentHp: template.hp,
         rested: false,
         attacksThisTurn: 0,
         mobileMoveUsed: false,
         counters: 0,
       };
-      delete unit._exileOwner;
       commitUnitToBoard(state, unit, playerInfo.summonRow, col);
       placed = true;
-      log(state, `${player.name}: 「${card.name}」を除外ゾーンから場に出す`);
+      log(state, `${player.name}: 「${template.name}」を除外ゾーンから場に出す`);
       triggerAbilities(state, pending.playerId, unit, "onSummon", { zone: "exile" });
       break;
     }
   }
   if (!placed) {
-    log(state, `${player.name}: 場が満員のため「${card.name}」を場に出せない`);
-    player.exileZone.push(card);
+    log(state, `${player.name}: 場が満員のため「${template.name}」を場に出せない`);
+    ownerExile.push(exileCard);
   }
+  const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   return true;
 }
@@ -8340,9 +8403,12 @@ function resolveReviveFromExile(index) {
 function resolveReviveFromExileSkip() {
   const pending = state.pendingChoice;
   if (pending?.type !== "reviveFromExile") return false;
+  const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
   log(state, `${state.players[pending.playerId].name}: 除外ゾーンからの呼び出しをスキップ`);
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   return true;
 }
@@ -8611,9 +8677,8 @@ function structEffectProtectLevel(struct) {
 }
 
 function getPendingEnemyStructDestroyContext() {
-  const controllerId = controlledPlayerId();
   const pendingChoice = state.pendingChoice;
-  if (pendingChoice?.type === "destroyEnemyStruct" && pendingChoice.playerId === controllerId) {
+  if (pendingChoice?.type === "destroyEnemyStruct" && canControlChoicePlayer(pendingChoice.playerId)) {
     return {
       opponentId: opponentOf(pendingChoice.playerId),
       sourceCard: pendingChoice.queueItem?.card,
@@ -8623,7 +8688,7 @@ function getPendingEnemyStructDestroyContext() {
   }
   const pendingStruct = state.pendingStructPhase;
   const enemyChoice = pendingStruct?.pendingEnemyStructChoice;
-  if (enemyChoice && pendingStruct.playerId === controllerId) {
+  if (enemyChoice && canControlChoicePlayer(pendingStruct.playerId)) {
     return {
       opponentId: opponentOf(pendingStruct.playerId),
       sourceCard: enemyChoice.sourceCard || { name: enemyChoice.cardName },
@@ -9438,11 +9503,25 @@ function playTactFromHand(handIndex) {
         return fail(`${card.name}: 対象がいないため使用できません。`);
       }
     }
+    if (ability.trigger === "onPlay" && (ability.effect === "destroyTargetStruct" || ability.effect === "destroyEnemyStructsOnPlay")) {
+      const opponent = opponentOf(state.activePlayer);
+      if (!state.players[opponent].structs.length) {
+        return fail(`${card.name}: 相手のストラクトがないため使用できません。`);
+      }
+      if (!getDestroyableEnemyStructEntries(state, opponent, card).length) {
+        return fail(`${card.name}: 効果で破壊できる相手ストラクトがないため使用できません。`);
+      }
+    }
     if (ability.trigger === "onPlay" && (ability.requireTagInHand || ability.cond)) {
       const playCond = ability.cond || { tag: ability.requireTagInHand };
       const hasMatch = player.hand.some((c) => c !== card && matchesCond(c, playCond));
       const condLabel = playCond.tag ? `[${playCond.tag}]` : `「${playCond.nameContains}」`;
       if (!hasMatch) return fail(`${card.name}: 手札に${condLabel}ユニットが必要です。`);
+    }
+    if (ability.trigger === "onPlay" && ability.effect === "reviveFromExile") {
+      const hasExileUnit = ["p1", "p2"].some((pid) =>
+        (state.players[pid].exileZone || []).some((c) => c.type === "unit"));
+      if (!hasExileUnit) return fail(`${card.name}: 除外ゾーンにユニットがいません。`);
     }
   }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
@@ -10302,7 +10381,7 @@ function continueCoreAttackAfterOnAttack(unit, defenderId) {
   const player = state.players[unit.owner];
   const defender = state.players[defenderId];
   const coreArmor = defender.core.armor || 0;
-  const coreDmg = Math.max(0, unit.atk - coreArmor);
+  const coreDmg = Math.max(0, (unit.atk || 0) + (unit.attackStrikeBonus || 0) - coreArmor);
   defender.core.hp -= coreDmg;
   if (coreDmg > 0) {
     unit.dealtDamageThisTurn = true;
@@ -10389,6 +10468,7 @@ function continueUnitAttackAfterOnAttack(unit, defender, { useCharge = false } =
   startAttackAnimation(unit, unit.row, unit.col, defender.row, defender.col);
   afterAttack(unit);
   log(state, `「${unit.name}」が「${defender.name}」を攻撃`);
+  if (!state.pendingChoice) clearEffectResolutionIndestructible(state);
   cleanupAllDestroyed(unit);
   syncOnlineAction("attackUnit", unit.owner);
   return true;
@@ -10447,6 +10527,7 @@ function offerChargeAttackChoice(unit, target) {
 function resolveChargeAttack(useCharge) {
   const pending = state.pendingChoice;
   if (pending?.type !== "chargeAttack") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
   const unit = state.board[pending.unitRow]?.[pending.unitCol];
   const defender = state.board[pending.target.row]?.[pending.target.col];
   state.pendingChoice = null;
@@ -10500,10 +10581,11 @@ function resolvePayOptionalOnSummonSearch(pay) {
 function resolvePayOnAttackEnhance(pay) {
   const pending = state.pendingChoice;
   if (pending?.type !== "payOnAttackEnhance") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
   const unit = state.board[pending.unitRow]?.[pending.unitCol];
   const player = state.players[pending.playerId];
   if (pay) {
-    if (!unit || !canPayForCard(player, pending.payCost || {}, unit)) {
+    if (!unit || !canPay(player, pending.payCost || {})) {
       state.message = "資源が不足しています。";
       render();
       return false;
@@ -10725,6 +10807,7 @@ function runDamageAllEnemiesAndPushBack(game, playerId, ability, card, startInde
     }
   }
   game.pendingDamageBatch = null;
+  clearEffectResolutionIndestructible(game);
   cleanupAllDestroyed(card);
 }
 
@@ -10748,12 +10831,32 @@ function resumePendingDamageBatch(game = state) {
 
 function resumePendingAfterChoice() {
   resumePendingDamageBatch(state);
-  resumePendingAttackContinuation();
+  if (
+    state.pendingAttackContinuation?.preDamage
+    && state.effectQueue.length
+    && !state.pendingChoice
+    && !state.pendingTarget
+  ) {
+    processEffectQueue(state);
+  }
+  if (!state.pendingChoice && !state.pendingTarget) {
+    resumePendingAttackContinuation();
+  }
+}
+
+function clearEffectResolutionIndestructible(game = state) {
+  for (const row of game.board) {
+    for (const unit of row) {
+      if (unit?.noDestroyDuringEffectResolution) delete unit.noDestroyDuringEffectResolution;
+    }
+  }
 }
 
 function shouldDeferUnitDestruction(game, unit) {
+  if (!unit) return false;
+  if (unit.noDestroyDuringEffectResolution) return true;
   const pending = game.pendingChoice;
-  if (!pending || !unit) return false;
+  if (!pending) return false;
   if (pending.type === "payForBuff" && pending.unitRow === unit.row && pending.unitCol === unit.col) return true;
   if (pending.type === "revealPick" && pending.queueItem?.card?.instanceId === unit.instanceId) return true;
   return false;
@@ -13959,7 +14062,8 @@ function drawPayOnAttackEnhancePanel(pending) {
   ctx.fillText("通常攻撃：追加コストなし", x + 28, y + 86);
   const isController = canControlChoicePlayer(pending.playerId);
   if (isController) {
-    const canPayEnhance = pending.canPayEnhance !== false;
+    const player = state.players[pending.playerId];
+    const canPayEnhance = canPay(player, pending.payCost || {});
     drawButton(
       x + 28,
       y + h - 58,
@@ -14346,7 +14450,6 @@ function drawDumpWarBondReturnPanel(pending) {
 }
 
 function drawPayForBuffPanel(pending) {
-  console.log(`drawPayForBuffPanel called:`, pending);
   const x = 420, y = 300, w = 600, h = 260;
   drawChoicePanelBase(x, y, w, h, "rgba(40,80,140,0.85)", "#5090ff");
   ctx.fillStyle = "#e0f0ff";
@@ -14368,14 +14471,10 @@ function drawPayForBuffPanel(pending) {
   // （相手のターン中に自分が被ダメージを受けた場合、activePlayer ≠ pending.playerId なため、
   //  canControlActivePlayer() は false になる。そのため、単純に playerId チェックのみ）
   const isController = canControlChoicePlayer(pending.playerId);
-  console.log(`drawPayForBuffPanel: isController=${isController}, playerId=${pending.playerId}, controlled=${controlledPlayerId()}`);
   if (isController) {
     const canPay = curRes >= pending.amount;
-    console.log(`drawPayForBuffPanel buttons: canPay=${canPay}, curRes=${curRes}, amount=${pending.amount}`);
     drawButton(x + 20, y + h - 52, 270, 38, `${resLabel}${pending.amount}を支払い強化`, canPay ? () => resolvePayForBuff(true) : null, null, canPay ? { accent: "p1" } : { accent: "dim" });
     drawButton(x + 310, y + h - 52, 270, 38, "スキップ", () => resolvePayForBuff(false));
-  } else {
-    console.log(`Controller check failed: cannot draw buttons`);
   }
 }
 
@@ -16103,6 +16202,9 @@ const testing = {
   resolveRevealPickSkip,
   resolveSearchDeckPick,
   resolveChargeAttack,
+  resolvePayOnAttackEnhance,
+  resolveDestroyEnemyStructChoice,
+  resolveDestroyEnemyStructSkip,
   selectHandCard: selectHandCardForTest,
   selectStructDeckCard: selectStructDeckCardForTest,
   useSelectedHandCard,

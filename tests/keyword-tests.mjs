@@ -684,6 +684,75 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const sabotageCard = api.cardCatalog.main["card_1753659700866"];
+  const sabotageAbility = (sabotageCard?.abilities || []).find((a) => a.effect === "destroyTargetStruct");
+  out.push({
+    name: "sabotage_destroy_target_struct_parsed",
+    summary: { found: !!sabotageAbility, trigger: sabotageAbility?.trigger },
+  });
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.state.players.p2.structs = [{
+    id: "card_1753904622342",
+    name: "銅鉱山",
+    type: "struct",
+    faction: "ニュートラル",
+  }];
+  const sabotageHandIdx = api.testing.addHandCard("p1", "card_1753659700866");
+  api.testing.playTactFromHand(sabotageHandIdx);
+  const pendingDestroyStruct = api.state.pendingChoice?.type === "destroyEnemyStruct";
+  let structDestroyed = false;
+  if (pendingDestroyStruct) {
+    structDestroyed = api.testing.resolveDestroyEnemyStructChoice(0);
+  }
+  out.push({
+    name: "sabotage_play_offers_struct_choice",
+    summary: {
+      pendingDestroyStruct,
+      structDestroyed,
+      enemyStructs: api.state.players.p2.structs.length,
+      message: api.state.message,
+    },
+  });
+
+  const atlasCard = api.cardCatalog.main["card_1782600607874"];
+  const enhanceAbility = (atlasCard?.abilities || []).find((a) => a.effect === "payOnAttackEnhance");
+  out.push({
+    name: "pay_on_attack_enhance_parsed",
+    summary: {
+      found: !!enhanceAbility,
+      payCost: enhanceAbility?.payCost,
+      pierce: enhanceAbility?.pierce,
+      atkBuff: enhanceAbility?.atkBuff,
+    },
+  });
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.testing.placeUnit("card_1782600607874", "p1", 2, 2, { rested: false });
+  api.testing.placeUnit("militia", "p2", 1, 2, { rested: true, hp: 20 });
+  const defenderHpBefore = api.state.board[1][2].currentHp;
+  api.testing.selectUnit(2, 2);
+  api.testing.attack({ kind: "unit", row: 1, col: 2 });
+  const pendingEnhance = api.state.pendingChoice?.type === "payOnAttackEnhance";
+  let defenderHpAfter = defenderHpBefore;
+  if (pendingEnhance) {
+    api.testing.resolvePayOnAttackEnhance(true);
+    defenderHpAfter = api.state.board[1][2]?.currentHp ?? 0;
+  }
+  out.push({
+    name: "pay_on_attack_enhance_applies_before_damage",
+    summary: {
+      pendingEnhance,
+      defenderHpBefore,
+      defenderHpAfter,
+      damageDealt: defenderHpBefore - defenderHpAfter,
+    },
+  });
+
   // Verify mill effect fires on summon
   reset();
   api.state.players.p1.mainDeck = Array.from({ length: 5 }, (_, i) => ({ id: `dk${i}`, name: `DeckCard${i}`, type: "unit" }));
@@ -1039,6 +1108,16 @@ assert(byName.deckmaker_draw_pattern_parsed.amount === 2, "deckmaker draw amount
 assert(byName.long_range_artillery_struct_phase.found === true, "長距離砲撃陣 should parse struct-phase destroyEnemyStructs");
 assert(byName.long_range_artillery_struct_phase.fuelCost === 1, "長距離砲撃陣 fuel cost should be 1");
 assert(byName.long_range_artillery_struct_phase.amount === 2, "長距離砲撃陣 destroy amount should be 2");
+assert(byName.sabotage_destroy_target_struct_parsed.found === true, "破壊工作 should parse destroyTargetStruct");
+assert(byName.sabotage_destroy_target_struct_parsed.trigger === "onPlay", "破壊工作 destroyTargetStruct should trigger on play");
+assert(byName.sabotage_play_offers_struct_choice.pendingDestroyStruct === true, "破壊工作 should open enemy struct choice");
+assert(byName.sabotage_play_offers_struct_choice.structDestroyed === true, "破壊工作 struct choice should destroy a struct");
+assert(byName.sabotage_play_offers_struct_choice.enemyStructs === 0, "破壊工作 should remove destroyed enemy struct");
+assert(byName.pay_on_attack_enhance_parsed.found === true, "payOnAttackEnhance should parse from card text");
+assert(byName.pay_on_attack_enhance_parsed.payCost?.people === 1, "payOnAttackEnhance people cost should be 1");
+assert(byName.pay_on_attack_enhance_parsed.payCost?.nature === 2, "payOnAttackEnhance nature cost should be 2");
+assert(byName.pay_on_attack_enhance_applies_before_damage.pendingEnhance === true, "attack should open payOnAttackEnhance choice");
+assert(byName.pay_on_attack_enhance_applies_before_damage.damageDealt > 0, "enhanced attack should deal damage after choice");
 assert(byName.deckmaker_mill_on_summon.millDumpAfter === byName.deckmaker_mill_on_summon.millDumpBefore + 2, "deckmaker mill ability should send 2 cards to dump on summon");
 assert(byName.deckmaker_struct_destroy_gain.peopleAfter === byName.deckmaker_struct_destroy_gain.peopleBefore + 1, "deckmaker struct should gain 1 people on enemy unit destroyed");
 assert(byName.shock_battalion_attack_rests_attacker.pendingReveal === true, "302 shock battalion should trigger reveal pick on damage");
