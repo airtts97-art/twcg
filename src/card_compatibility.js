@@ -37,6 +37,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "summonTagFromDumpAndRest", "summonHandUnitToOpponent", "kaijuAwaken", "damageOwnCore",
   "redirectDamageToOther", "revealTagsForResources", "surviveDamageAndOptionalBuff",
   "vsTagAtkBonus", "spendCountersForBuff", "selfCounterDeathShield",
+  "payOnAttackEnhance",
   "buffSelfAtkThisAttack", "destroyAllUnits", "expandDataLinkRange",
   "discardHandToMillOpponentDeck",
 ]);

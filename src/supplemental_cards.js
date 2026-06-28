@@ -642,4 +642,27 @@ export default [
     rarity: "通常",
     imageUrl: "assets/cards/card_1782560224044.jpeg",
   },
+  {
+    id: "card_1782600607874",
+    name: "北東軍第113騎兵大隊",
+    type: "ユニット",
+    world: "ユニフォール",
+    attack: 3,
+    defense: 6,
+    description:
+      "[機動]　[警戒]　[奇襲]　\n[歩兵]タグのユニットに対し撃破時：自①を得る\n攻撃時に人①自②を支払った場合：[貫通③]、[装甲①]、ATK+③の修正を得る\n隣接するユニットのうち２つが[アトラス北東軍]のタグのユニットの時：ATK+①、HP+①の修正を得る",
+    flavorText:
+      "騎兵の本領はその機動力と、それを活かした突撃能力の高さにある。\n彼らはいずれ装甲騎兵に取って代わられる。だが、それは今では無い。",
+    tags: ["アトラス北東軍", "純人間", "獣", "龍", "騎兵"],
+    costs: {
+      play: { human: 3, gold: 2, nature: 2, mineral: 1, fuel: 0, electric: 0, magic: 0 },
+      act: { gold: 1, nature: 2, human: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { gold: 0, human: 0, nature: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+    limit: 4,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782600607874.jpeg",
+  },
 ];

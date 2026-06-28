@@ -342,6 +342,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782208333313",  // 正体隠匿(インポスター)
   "card_1782561876492",  // 異界で見た同胞
   "card_1782560224044",  // 唯一無二にして大儀な。
+  "card_1782600607874",  // 北東軍第113騎兵大隊
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -620,6 +621,26 @@ const abilityEffects = {
     }
     addResources(game.players[playerId], ability.resource, ability.amount);
     log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
+  },
+  payOnAttackEnhance({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const payCost = ability.payCost || {};
+    if (!canPayForCard(player, payCost, card)) return;
+    game.pendingChoice = {
+      type: "payOnAttackEnhance",
+      playerId,
+      unitRow: card.row,
+      unitCol: card.col,
+      cardName: card.name,
+      payCost,
+      pierce: ability.pierce || 0,
+      armor: ability.armor || 0,
+      atkBuff: ability.atkBuff || 0,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "payOnAttackEnhance" };
+    game.message = `「${card.name}」: 資源を支払って攻撃を強化しますか？`;
+    return "pending";
   },
   warTimeBondPlay({ game, playerId, card }) {
     const core = game.players[playerId].core;
@@ -3870,6 +3891,32 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
+  const vsTagDestroyGainMatch = text.match(/\[([^\]]+)\]タグのユニットに対し撃破時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/);
+  if (vsTagDestroyGainMatch && localType === "unit") {
+    const vsTagResMap = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
+    abilities.push({
+      trigger: "onDestroyEnemyUnit",
+      effect: "gainResource",
+      vsTag: vsTagDestroyGainMatch[1],
+      resource: vsTagResMap[vsTagDestroyGainMatch[2]] || "nature",
+      amount: parseDeckmakerKeywordValue(vsTagDestroyGainMatch[3]) || 1,
+    });
+  }
+
+  const payOnAttackEnhanceMatch = text.match(
+    /攻撃時に([^を]+)を支払った場合：\[貫通([^\]]+)\]、\[装甲([^\]]+)\]、ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/,
+  );
+  if (payOnAttackEnhanceMatch && localType === "unit" && !abilities.some((a) => a.effect === "payOnAttackEnhance")) {
+    abilities.push({
+      trigger: "onAttack",
+      effect: "payOnAttackEnhance",
+      payCost: parseActivationCostFromText(payOnAttackEnhanceMatch[1]),
+      pierce: parseDeckmakerKeywordValue(payOnAttackEnhanceMatch[2]) || 1,
+      armor: parseDeckmakerKeywordValue(payOnAttackEnhanceMatch[3]) || 1,
+      atkBuff: parseDeckmakerKeywordValue(payOnAttackEnhanceMatch[4]) || 1,
+    });
+  }
+
   // vs-armor attack bonus: "[装甲]効果を持っているユニットに対し与攻撃時：ATK+②"
   const vsArmorAtkMatch = text.match(/\[装甲\]効果を持っているユニットに対し与攻撃時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
   if (vsArmorAtkMatch && localType === "unit") {
@@ -6633,6 +6680,17 @@ function applyConditionalKeywordValue(unit, key, active, keywordId, value) {
 }
 
 function parseAdjacentTagBuff(text) {
+  const combinedMatch = String(text || "").match(
+    /隣接するユニットのうち([0-9０-９①②③④⑤⑥⑦⑧⑨]+)つが\[([^\]]+)\](?:のタグ)?のユニットの時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)[、,]HP\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/,
+  );
+  if (combinedMatch) {
+    return {
+      count: parseDeckmakerKeywordValue(combinedMatch[1]) || 2,
+      tag: combinedMatch[2],
+      atk: parseDeckmakerKeywordValue(combinedMatch[3]) || 1,
+      hp: parseDeckmakerKeywordValue(combinedMatch[4]) || 1,
+    };
+  }
   const match = String(text || "").match(
     /隣接するユニットのうち([0-9０-９①②③④⑤⑥⑦⑧⑨]+)つが\[([^\]]+)\](?:のタグ)?のユニットの時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る[、,]?HP\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/,
   );
@@ -9936,8 +9994,44 @@ function triggerAttackAbilities(unit) {
   processEffectQueue(state);
 }
 
+function resolvePayOnAttackEnhance(pay) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "payOnAttackEnhance") return false;
+  const unit = state.board[pending.unitRow]?.[pending.unitCol];
+  const player = state.players[pending.playerId];
+  if (pay) {
+    if (!unit || !canPayForCard(player, pending.payCost || {}, unit)) {
+      state.message = "資源が不足しています。";
+      render();
+      return false;
+    }
+    pay(player, pending.payCost || {});
+    unit.attackStrikeBonus = (unit.attackStrikeBonus || 0) + (pending.atkBuff || 0);
+    unit.attackPierceBonus = (unit.attackPierceBonus || 0) + (pending.pierce || 0);
+    unit.attackArmorBonus = (unit.attackArmorBonus || 0) + (pending.armor || 0);
+    const costLabel = Object.entries(pending.payCost || {})
+      .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
+      .join("");
+    log(
+      state,
+      `${player.name}: 「${unit.name}」${costLabel}支払い → 貫通${pending.pierce}・装甲${pending.armor}・+${pending.atkBuff}/±0`,
+    );
+  }
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function afterAttack(unit) {
   unit.attackStrikeBonus = 0;
+  unit.attackPierceBonus = 0;
+  unit.attackArmorBonus = 0;
   unit.attacksThisTurn = (unit.attacksThisTurn || 0) + 1;
   const attackLimit = keywordValue(unit, "multiStrike", 1);
   if (unit.attacksThisTurn >= attackLimit) unit.rested = true;
@@ -9976,7 +10070,11 @@ function isGuardedFrom(attacker, defender) {
 }
 
 function defenderArmorValue(defender, attacker, { useCharge = false } = {}) {
-  let armorVal = Math.max(keywordValue(defender, "armor"), Number(defender.armor) || 0);
+  let armorVal = Math.max(
+    keywordValue(defender, "armor"),
+    Number(defender.armor) || 0,
+    defender.attackArmorBonus || 0,
+  );
   if (!(useCharge && hasKeyword(attacker, "charge"))) {
     const counterArmorGE = (state.globalEffects || []).find(
       (e) => e.type === "counterArmor" && e.playerId === defender.owner
@@ -10013,7 +10111,8 @@ function calculateAttackDamage(attacker, defender, { useCharge = false } = {}) {
   }
   const ignoresArmor = useCharge && hasKeyword(attacker, "charge");
   const armorVal = defenderArmorValue(defender, attacker, { useCharge });
-  const armor = ignoresArmor ? 0 : Math.max(0, armorVal - keywordValue(attacker, "pierce"));
+  const pierce = keywordValue(attacker, "pierce") + (attacker.attackPierceBonus || 0);
+  const armor = ignoresArmor ? 0 : Math.max(0, armorVal - pierce);
   return Math.max(0, atk - armor);
 }
 
@@ -12666,6 +12765,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "intelAgencyCancel") drawIntelAgencyCancelPanel(pending);
   else if (pending.type === "destroyEnemyStruct") drawDestroyEnemyStructPanel(pending);
   else if (pending.type === "chargeAttack") drawChargeAttackPanel(pending);
+  else if (pending.type === "payOnAttackEnhance") drawPayOnAttackEnhancePanel(pending);
 }
 
 function drawExposureManagementPanel(pending) {
@@ -13204,6 +13304,35 @@ function drawIntelAgencyCancelPanel(pending) {
   if (isController) {
     drawButton(x + 28, y + h - 58, 240, 36, `${costLabel}で無効化`, () => { resolveIntelAgencyCancel(true); render(); }, null, { accent: "p1" });
     drawButton(x + 290, y + h - 58, 220, 36, "効果を通す", () => { resolveIntelAgencyCancel(false); render(); });
+  }
+}
+
+function drawPayOnAttackEnhancePanel(pending) {
+  const x = 420, y = 280, w = 620, h = 240;
+  drawChoicePanelBase(x, y, w, h, "rgba(80,60,40,0.82)", "#d0a060");
+  ctx.fillStyle = "#ffe8c8";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」の攻撃`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(255,230,200,0.92)";
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  const costLabel = Object.entries(pending.payCost || {})
+    .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
+    .join("");
+  ctx.fillText(`強化攻撃：${costLabel} → 貫通${pending.pierce}・装甲${pending.armor}・+${pending.atkBuff}/±0`, x + 28, y + 64);
+  ctx.fillText("通常攻撃：追加コストなし", x + 28, y + 86);
+  const isController = canControlChoicePlayer(pending.playerId);
+  if (isController) {
+    drawButton(
+      x + 28,
+      y + h - 58,
+      280,
+      36,
+      `強化攻撃（${costLabel}）`,
+      () => { resolvePayOnAttackEnhance(true); },
+      null,
+      { accent: "p1" },
+    );
+    drawButton(x + 320, y + h - 58, 220, 36, "通常攻撃", () => { resolvePayOnAttackEnhance(false); });
   }
 }
 
