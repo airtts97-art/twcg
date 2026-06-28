@@ -677,7 +677,7 @@ const abilityEffects = {
   payOnAttackEnhance({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
     const payCost = ability.payCost || {};
-    if (!canPayForCard(player, payCost, card)) return;
+    const canPayEnhance = canPayForCard(player, payCost, card);
     game.pendingChoice = {
       type: "payOnAttackEnhance",
       playerId,
@@ -685,6 +685,7 @@ const abilityEffects = {
       unitCol: card.col,
       cardName: card.name,
       payCost,
+      canPayEnhance,
       pierce: ability.pierce || 0,
       armor: ability.armor || 0,
       atkBuff: ability.atkBuff || 0,
@@ -2089,11 +2090,10 @@ const abilityEffects = {
   produceResourceCostHuman({ game, playerId, card, ability }) {
     const player = game.players[playerId];
     const humanCost = ability.humanCost || 1;
-    if ((player.resources.human || 0) < humanCost) {
+    if (!pay(player, { people: humanCost })) {
       log(game, `${player.name}: 人資源が不足しているため「${card.name}」を使えない`);
       return;
     }
-    addResources(player, "human", -humanCost);
     card.rested = true;
     addResources(player, ability.resource, ability.amount || 1);
     log(game, `${player.name}: 「${card.name}」人${humanCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`);
@@ -3000,12 +3000,20 @@ roomCodeInput.addEventListener("blur", () => {
   render();
 });
 
+const RESOURCE_KEY_ALIASES = {
+  food: "nature",
+  natural: "nature",
+  human: "people",
+  gold: "funds",
+  mineral: "ore",
+};
+
 function normalizeResourceObject(resources = {}) {
   const normalized = emptyResources();
   for (const [rawKey, rawAmount] of Object.entries(resources || {})) {
     const amount = Number(rawAmount) || 0;
     if (!amount) continue;
-    const mappedKey = rawKey === "food" ? "nature" : rawKey;
+    const mappedKey = RESOURCE_KEY_ALIASES[rawKey] || rawKey;
     if (RESOURCE_KEYS.includes(mappedKey)) normalized[mappedKey] += amount;
   }
   return normalized;
@@ -4375,6 +4383,8 @@ function parseDeckmakerAbilities(card, localType) {
         { id: "nature", label: "自③", cost: { funds: 3 }, produces: { nature: 3 } },
         { id: "ore", label: "鉱③", cost: { funds: 3 }, produces: { ore: 3 } },
         { id: "fuel", label: "燃③", cost: { funds: 3 }, produces: { fuel: 3 } },
+        { id: "electric", label: "電③", cost: { funds: 3 }, produces: { electric: 3 } },
+        { id: "magic", label: "魔③", cost: { funds: 4 }, produces: { magic: 3 } },
       ],
     });
   }
@@ -6822,7 +6832,7 @@ function emptyResources() {
 }
 
 function addResources(player, key, amount) {
-  const resourceKey = key === "food" ? "nature" : key === "mineral" ? "ore" : key;
+  const resourceKey = RESOURCE_KEY_ALIASES[key] || key;
   player.resources[resourceKey] = (player.resources[resourceKey] || 0) + amount;
 }
 
@@ -9733,7 +9743,14 @@ function beginUniqueRiteDumpActivate(playerId, absIdx) {
   const [exiled] = player.dump.splice(absIdx, 1);
   player.exileZone.push(exiled);
   notifyDumpChanged(state, playerId);
-  addResources(player, "people", -1);
+  if (!pay(player, { people: 1 })) {
+    state.message = "人①が不足しています。";
+    player.dump.splice(absIdx, 0, exiled);
+    player.exileZone.pop();
+    notifyDumpChanged(state, playerId);
+    render();
+    return;
+  }
   log(state, `${player.name}: 墓地の「${exiled.name}」を除外し人①を支払う`);
   zoneViewerState = null;
   state.pendingChoice = {
@@ -12871,8 +12888,47 @@ function drawResourceList(player, x, y) {
   });
 }
 
+const HAND_SELECTION_CHOICE_TYPES = new Set([
+  "mysticCapture",
+  "discardForDraw",
+  "coreStructStartDiscard",
+  "colorfulDiscard",
+  "discardHandToMill",
+  "lifeCounterPayment",
+]);
+
+function isHandSelectionPendingChoice(pending = state.pendingChoice) {
+  if (!pending) return false;
+  if (HAND_SELECTION_CHOICE_TYPES.has(pending.type)) return true;
+  return pending.type === "deployHeroFromAttack" && pending.step === "chooseHero";
+}
+
+function shouldShowPlayerHandToViewer(playerId) {
+  const pending = state.pendingChoice;
+  if (!isHandSelectionPendingChoice(pending)) return true;
+  const selectorId = pending.playerId;
+  if (playerId === selectorId) return false;
+  return viewerPlayerId() !== selectorId;
+}
+
+function drawHiddenHandZone(area, label = "HAND") {
+  const x = area.x;
+  const y = area.y;
+  const w = area.w;
+  const h = area.h;
+  roundRect(x, y, w, h, area === layout.hand ? 8 : 6, "rgba(12,16,32,0.92)", "rgba(60,70,100,0.35)", 1);
+  ctx.fillStyle = "rgba(130,145,190,0.55)";
+  ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${label} — 非公開`, x + 14, y + Math.round(h / 2) + 4);
+}
+
 function drawHand() {
-  const player = state.players[viewerPlayerId()];
+  const viewer = viewerPlayerId();
+  if (!shouldShowPlayerHandToViewer(viewer)) {
+    drawHiddenHandZone(layout.hand, "HAND");
+    return;
+  }
+  const player = state.players[viewer];
   // Dark hand zone
   const hx = layout.hand.x, hy = layout.hand.y, hw = layout.hand.w, hh = layout.hand.h;
   const grd = ctx.createLinearGradient(hx, hy, hx, hy + hh);
@@ -12913,6 +12969,10 @@ function drawHand() {
 
 function drawTopHand() {
   const oppId = opponentOf(viewerPlayerId());
+  if (!shouldShowPlayerHandToViewer(oppId)) {
+    drawHiddenHandZone(layout.topHand, "HAND");
+    return;
+  }
   const opponent = state.players[oppId];
   const { x, y, w, h } = layout.topHand;
 
@@ -13867,17 +13927,23 @@ function drawPayOnAttackEnhancePanel(pending) {
   ctx.fillText("通常攻撃：追加コストなし", x + 28, y + 86);
   const isController = canControlChoicePlayer(pending.playerId);
   if (isController) {
+    const canPayEnhance = pending.canPayEnhance !== false;
     drawButton(
       x + 28,
       y + h - 58,
       280,
       36,
       `強化攻撃（${costLabel}）`,
-      () => { resolvePayOnAttackEnhance(true); },
+      canPayEnhance ? () => { resolvePayOnAttackEnhance(true); } : null,
       null,
-      { accent: "p1" },
+      canPayEnhance ? { accent: "p1" } : { accent: "dim" },
     );
     drawButton(x + 320, y + h - 58, 220, 36, "通常攻撃", () => { resolvePayOnAttackEnhance(false); });
+    if (!canPayEnhance) {
+      ctx.fillStyle = "rgba(255,200,160,0.9)";
+      ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+      ctx.fillText("強化攻撃に必要な資源が不足しています。", x + 28, y + 112);
+    }
   }
 }
 

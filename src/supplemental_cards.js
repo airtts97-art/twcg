@@ -806,4 +806,26 @@ export default [
     rarity: "伝説",
     imageUrl: "assets/cards/card_1782650951674.jpeg",
   },
+  {
+    id: "card_1782226154092",
+    name: "マイサータ貿易港",
+    type: "ストラクト",
+    world: "ユニフォール",
+    description:
+      "[効果保護①]\n金③を支払う：人③を得る\n金③を支払う：自③を得る\n金③を支払う：鉱③を得る\n金③を支払う：燃③を得る\n金③を支払う：電③を得る\n金④を支払う：魔③を得る",
+    flavorText:
+      "今や北東軍最大の貿易港であるマイサータ港。海峡に挟まれた安全地帯であるここは汎ゆる物資が目まぐるしく取引されていく。",
+    tags: ["アトラス北東軍", "産業", "取引"],
+    costs: {
+      play: { human: 1, mineral: 1, nature: 1, fuel: 1, gold: 5, magic: 0, electric: 0 },
+      act: {},
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { mineral: 0, magic: 0, electric: 0, nature: 0, fuel: 0, gold: 0, human: 0 },
+    limit: 4,
+    roles: [],
+    rarity: "伝説",
+    imageUrl: "assets/cards/card_1782226154092.jpeg",
+  },
 ];

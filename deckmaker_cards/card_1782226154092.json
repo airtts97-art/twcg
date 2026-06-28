@@ -1,0 +1,41 @@
+{
+  "type": "ストラクト",
+  "description": "[効果保護①]\n金③を支払う：人③を得る\n金③を支払う：自③を得る\n金③を支払う：鉱③を得る\n金③を支払う：燃③を得る\n金③を支払う：電③を得る\n金④を支払う：魔③を得る",
+  "world": "ユニフォール",
+  "tactSubType": null,
+  "generates": {
+    "gold": 0,
+    "human": 0,
+    "nature": 0,
+    "mineral": 0,
+    "magic": 0,
+    "fuel": 0,
+    "electric": 0
+  },
+  "limit": 4,
+  "tags": [
+    "アトラス北東軍",
+    "産業",
+    "取引"
+  ],
+  "rarity": "伝説",
+  "roles": [],
+  "costs": {
+    "play": {
+      "electric": 0,
+      "fuel": 1,
+      "human": 1,
+      "mineral": 1,
+      "nature": 1,
+      "gold": 5,
+      "magic": 0
+    },
+    "choice": [],
+    "choiceAct": [],
+    "act": {}
+  },
+  "imageUrl": "assets/cards/card_1782226154092.jpeg",
+  "id": "card_1782226154092",
+  "flavorText": "今や北東軍最大の貿易港であるマイサータ港。海峡に挟まれた安全地帯であるここは汎ゆる物資が目まぐるしく取引されていく。",
+  "name": "マイサータ貿易港"
+}
