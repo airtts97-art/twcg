@@ -515,6 +515,46 @@ function drawAnimations() {
 let zoneViewerState = null; // { playerId, zone: "dump"|"exile", scroll: 0 }
 let structPhaseScroll = 0;
 let enemyStructChoiceScroll = 0;
+
+function clampEnemyStructChoiceScroll(structCount, maxCols) {
+  enemyStructChoiceScroll = Math.max(0, Math.min(enemyStructChoiceScroll, Math.max(0, structCount - maxCols)));
+}
+
+function enemyStructPickerLayout(pickW = 88) {
+  const pickH = Math.round(pickW / CARD_ASPECT);
+  const navH = 24;
+  const boxH = 38 + pickH + navH + 10;
+  return { pickW, pickH, navH, boxH };
+}
+
+function drawEnemyStructChoicePager(panelX, panelW, navY, structCount, maxCols) {
+  if (structCount <= maxCols) return;
+  clampEnemyStructChoiceScroll(structCount, maxCols);
+  const btnW = 44;
+  const btnH = 24;
+  const mid = panelX + panelW / 2;
+  if (enemyStructChoiceScroll > 0) {
+    drawButton(mid - 118, navY, btnW, btnH, "◀", () => {
+      enemyStructChoiceScroll = Math.max(0, enemyStructChoiceScroll - 1);
+      render();
+    });
+  }
+  ctx.fillStyle = "rgba(255,200,200,0.85)";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(
+    `${enemyStructChoiceScroll + 1}〜${Math.min(enemyStructChoiceScroll + maxCols, structCount)} / ${structCount}`,
+    mid,
+    navY + 16,
+  );
+  ctx.textAlign = "left";
+  if (enemyStructChoiceScroll + maxCols < structCount) {
+    drawButton(mid + 74, navY, btnW, btnH, "▶", () => {
+      enemyStructChoiceScroll = Math.min(structCount - maxCols, enemyStructChoiceScroll + 1);
+      render();
+    });
+  }
+}
 // --- End zone viewer ---
 
 function matchesDeckSearchFilter(deckCard, filter) {
@@ -13974,13 +14014,14 @@ function drawDestroyEnemyStructPanel(pending) {
   const cardH = Math.round(cardW / CARD_ASPECT);
   const gap = 14;
   const maxCols = 5;
-  enemyStructChoiceScroll = Math.max(0, Math.min(enemyStructChoiceScroll, Math.max(0, structs.length - maxCols)));
+  clampEnemyStructChoiceScroll(structs.length, maxCols);
   const visibleStructs = structs
     .map((struct, index) => ({ struct, index }))
     .slice(enemyStructChoiceScroll, enemyStructChoiceScroll + maxCols);
   const cols = Math.max(visibleStructs.length, 1);
   const panelW = Math.max(520, cols * (cardW + gap) + 96);
-  const panelH = 300;
+  const needsPager = structs.length > maxCols;
+  const panelH = needsPager ? 340 : 300;
   const x = Math.round((W - panelW) / 2);
   const y = Math.round((H - panelH) / 2);
   drawChoicePanelBase(x, y, panelW, panelH, "rgba(180,60,60,0.75)", "#ff4040");
@@ -14021,19 +14062,8 @@ function drawDestroyEnemyStructPanel(pending) {
           : null,
       });
     });
-    if (structs.length > maxCols) {
-      const navY = startY + cardH + 28;
-      if (enemyStructChoiceScroll > 0) {
-        drawButton(x + 20, navY, 48, 24, "◀", () => { enemyStructChoiceScroll--; render(); });
-      }
-      ctx.fillStyle = "rgba(255,200,200,0.8)";
-      ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(`${enemyStructChoiceScroll + 1}〜${Math.min(enemyStructChoiceScroll + maxCols, structs.length)} / ${structs.length}`, x + panelW / 2, navY + 16);
-      ctx.textAlign = "left";
-      if (enemyStructChoiceScroll + maxCols < structs.length) {
-        drawButton(x + panelW - 68, navY, 48, 24, "▶", () => { enemyStructChoiceScroll++; render(); });
-      }
+    if (needsPager) {
+      drawEnemyStructChoicePager(x, panelW, startY + cardH + 14, structs.length, maxCols);
     }
   }
   if (isController) {
@@ -14043,7 +14073,7 @@ function drawDestroyEnemyStructPanel(pending) {
       ctx.fillText(`破壊ごとに燃${pending.fuelCost}が必要`, x + 24, y + panelH - 62);
     }
     if (pending.remaining > 1) {
-      drawButton(x + panelW - 220, y + panelH - 52, 196, 36, "破壊を終了", () => { resolveDestroyEnemyStructSkip(); render(); });
+      drawButton(x + 24, y + panelH - 52, 196, 36, "破壊を終了", () => { resolveDestroyEnemyStructSkip(); render(); });
     }
   }
 }
@@ -14668,7 +14698,8 @@ function drawStructPhaseOverlay() {
   const btnH = 28;
   const cardRowH = cardH + 4 + 13 + 6 + btnH + 6; // card+abilityText+btn
   const enemyChoice = pending.pendingEnemyStructChoice;
-  const choiceH = pending.pendingResourceChoice ? 72 : enemyChoice ? 120 : 0;
+  const enemyPicker = enemyChoice ? enemyStructPickerLayout(88) : null;
+  const choiceH = pending.pendingResourceChoice ? 72 : enemyPicker ? enemyPicker.boxH + 8 : 0;
   const footerH = 56;
   const w = Math.max(660, contentW + 80);
   const h = headerH + cardRowH + choiceH + footerH;
@@ -14719,6 +14750,7 @@ function drawStructPhaseOverlay() {
 
   const choice = pending.pendingResourceChoice;
   const waitingChoice = choice || enemyChoice;
+  let enemyStructPager = null;
   visibleItems.forEach(({ index, card: struct }, i) => {
     const hasMultiActivate = (struct.abilities || []).some((a) => a.multiActivate);
     const activated = !hasMultiActivate && pending.activatedIndexes.includes(index);
@@ -14810,7 +14842,7 @@ function drawStructPhaseOverlay() {
     const validIndices = new Set(getDestroyableEnemyStructEntries(state, opponentId, sourceCard).map((entry) => entry.index));
     const tauntRequired = enemyStructChoicePool(enemyStructs).length < enemyStructs.length;
     const choiceY = y + h - footerH - choiceH + 6;
-    roundRect(x + 14, choiceY, w - 28, 108, 6, "rgba(28,8,8,0.92)", "rgba(180,60,60,0.7)", 1.5);
+    roundRect(x + 14, choiceY, w - 28, enemyPicker.boxH, 6, "rgba(28,8,8,0.92)", "rgba(180,60,60,0.7)", 1.5);
     ctx.fillStyle = "#f0a0a0";
     ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
     const remainLabel = enemyChoice.remaining > 1 ? `（残り${enemyChoice.remaining}枚）` : "";
@@ -14820,11 +14852,10 @@ function drawStructPhaseOverlay() {
       ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
       ctx.fillText("[構造挑発]対象のみ選択可 / [効果保護]は[効果貫通]が必要", x + 26, choiceY + 36, w - 52);
     }
-    const pickW = 88;
-    const pickH = Math.round(pickW / CARD_ASPECT);
+    const { pickW, pickH } = enemyPicker;
     const pickGap = 10;
     const maxEnemyCols = Math.max(1, Math.floor((w - 52) / (pickW + pickGap)));
-    enemyStructChoiceScroll = Math.max(0, Math.min(enemyStructChoiceScroll, Math.max(0, enemyStructs.length - maxEnemyCols)));
+    clampEnemyStructChoiceScroll(enemyStructs.length, maxEnemyCols);
     const visibleEnemyStructs = enemyStructs
       .map((enemyStruct, enemyIdx) => ({ enemyStruct, enemyIdx }))
       .slice(enemyStructChoiceScroll, enemyStructChoiceScroll + maxEnemyCols);
@@ -14832,39 +14863,32 @@ function drawStructPhaseOverlay() {
     const canPayFuel = (player.resources.fuel || 0) >= enemyChoice.fuelCost;
     visibleEnemyStructs.forEach(({ enemyStruct, enemyIdx }) => {
       const selectable = validIndices.has(enemyIdx);
-      drawCard(px, choiceY + 30, pickW, pickH, enemyStruct, { noHover: !isController || !selectable, small: true, artOnly: true });
+      drawCard(px, choiceY + 38, pickW, pickH, enemyStruct, { noHover: !isController || !selectable, small: true, artOnly: true });
       if (!selectable) {
-        roundRect(px, choiceY + 30, pickW, pickH, 6, "rgba(0,0,0,0.55)", "rgba(80,40,40,0.5)", 1);
+        roundRect(px, choiceY + 38, pickW, pickH, 6, "rgba(0,0,0,0.55)", "rgba(80,40,40,0.5)", 1);
         ctx.fillStyle = "#c09090";
         ctx.font = "600 9px 'Yu Gothic UI', sans-serif";
         ctx.textAlign = "center";
         const blockLabel = !canDestroyEnemyStructByEffect(sourceCard, enemyStruct) ? "効果保護" : "挑発対象外";
-        ctx.fillText(blockLabel, px + pickW / 2, choiceY + 30 + pickH / 2 + 3, pickW - 8);
+        ctx.fillText(blockLabel, px + pickW / 2, choiceY + 38 + pickH / 2 + 3, pickW - 8);
         ctx.textAlign = "left";
       } else if (isController && canPayFuel) {
-        addHit(px, choiceY + 30, pickW, pickH, () => resolveEnemyStructChoice(enemyIdx));
+        addHit(px, choiceY + 38, pickW, pickH, () => resolveEnemyStructChoice(enemyIdx));
       }
       px += pickW + pickGap;
     });
-    if (enemyStructs.length > maxEnemyCols) {
-      const navY = choiceY + 30 + pickH + 8;
-      if (enemyStructChoiceScroll > 0) {
-        drawButton(x + 20, navY, 40, 22, "◀", () => { enemyStructChoiceScroll--; render(); });
-      }
-      ctx.fillStyle = "rgba(220,180,180,0.85)";
-      ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(`${enemyStructChoiceScroll + 1}〜${Math.min(enemyStructChoiceScroll + maxEnemyCols, enemyStructs.length)} / ${enemyStructs.length}`, x + w / 2, navY + 15);
-      ctx.textAlign = "left";
-      if (enemyStructChoiceScroll + maxEnemyCols < enemyStructs.length) {
-        drawButton(x + w - 60, navY, 40, 22, "▶", () => { enemyStructChoiceScroll++; render(); });
-      }
-    }
     if (!enemyStructs.length) {
       ctx.fillStyle = "rgba(220,180,180,0.8)";
       ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
       ctx.fillText("相手のストラクトがありません", x + 26, choiceY + 58);
     }
+    enemyStructPager = {
+      panelX: x + 14,
+      panelW: w - 28,
+      navY: choiceY + 38 + pickH + 8,
+      structCount: enemyStructs.length,
+      maxCols: maxEnemyCols,
+    };
   }
 
   if (isController) {
@@ -14875,6 +14899,15 @@ function drawStructPhaseOverlay() {
       endDisabled ? null : endStructPhase,
       null,
       endDisabled ? { accent: "dim" } : { accent: "p1" }
+    );
+  }
+  if (enemyStructPager) {
+    drawEnemyStructChoicePager(
+      enemyStructPager.panelX,
+      enemyStructPager.panelW,
+      enemyStructPager.navY,
+      enemyStructPager.structCount,
+      enemyStructPager.maxCols,
     );
   }
 }
