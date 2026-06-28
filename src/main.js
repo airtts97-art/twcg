@@ -1807,30 +1807,15 @@ const abilityEffects = {
   tactToStructOverStruct({ game, playerId, card, ability }) {
     const player = game.players[playerId];
     const requiredName = ability.requiredStructName || "覆没の迷宮";
-    const hasRequiredStruct = player.structs.some((struct) => struct.id === ability.requiredStructId || struct.name === requiredName);
-    if (!hasRequiredStruct) {
+    const structIndex = findBaseStructForTactOverlay(player, ability);
+    if (structIndex < 0) {
       log(game, `${player.name}: ${requiredName} がないため ${card.name} を施設化できません`);
       return;
     }
     const tactIndex = player.tactZone.indexOf(card);
     if (tactIndex >= 0) player.tactZone.splice(tactIndex, 1);
-    const structCard = cloneCard(card);
-    structCard.type = "struct";
-    structCard.rested = false;
-    structCard.abilities = [
-      {
-        trigger: "onStructurePhase",
-        effect: "chooseSummonGolem",
-        maxCost: ability.maxCost || 3,
-        deckOnly: true,
-        costOptions: ability.costOptions || [
-          { resource: "ore", amount: 2 },
-          { resource: "magic", amount: 1 },
-        ],
-      },
-    ];
-    player.structs.push(structCard);
-    log(game, `${player.name}: ${card.name} をストラクトとして配置`);
+    applyStructTactOverlay(player.structs[structIndex], card, ability);
+    log(game, `${player.name}: 「${requiredName}」に「${card.name}」を重ね、ストラクトとして扱う`);
   },
   summonSelfFromDumpMobile({ game, playerId, card }) {
     const player = game.players[playerId];
@@ -9107,9 +9092,54 @@ function cardHasStructPhaseActivation(card) {
   return (card?.abilities || []).some((a) => STRUCT_PHASE_TRIGGERS.includes(a.trigger));
 }
 
+function structHasTactOverlay(struct) {
+  return Boolean(struct?.underlyingStruct);
+}
+
+function findBaseStructForTactOverlay(player, ability) {
+  const requiredName = ability?.requiredStructName || "覆没の迷宮";
+  return (player.structs || []).findIndex((struct) =>
+    !structHasTactOverlay(struct)
+    && ((ability?.requiredStructId && struct.id === ability.requiredStructId)
+      || struct.name === requiredName));
+}
+
+function overlayStructPhaseAbilitiesFromTact(tactCard, overlayAbility) {
+  const phaseAbilities = (tactCard.abilities || []).filter((a) =>
+    STRUCT_PHASE_TRIGGERS.includes(a.trigger) && a.effect !== "tactToStructOverStruct");
+  if (phaseAbilities.length) {
+    return cloneCard({ abilities: phaseAbilities }).abilities;
+  }
+  return [{
+    trigger: "onStructurePhase",
+    effect: "chooseSummonGolem",
+    maxCost: overlayAbility.maxCost || 3,
+    deckOnly: overlayAbility.deckOnly !== false,
+    costOptions: overlayAbility.costOptions || [
+      { resource: "ore", amount: 2 },
+      { resource: "magic", amount: 1 },
+    ],
+  }];
+}
+
+function applyStructTactOverlay(baseStruct, tactCard, overlayAbility) {
+  const underlying = cloneCard(baseStruct);
+  delete underlying.underlyingStruct;
+  baseStruct.underlyingStruct = underlying;
+  baseStruct.id = tactCard.id;
+  baseStruct.name = tactCard.name;
+  baseStruct.text = tactCard.text || tactCard.description || underlying.text;
+  if (tactCard.imageUrl) baseStruct.imageUrl = tactCard.imageUrl;
+  syncBundledRuntimeCard(baseStruct);
+  baseStruct.abilities = overlayStructPhaseAbilitiesFromTact(tactCard, overlayAbility);
+  baseStruct.rested = false;
+  baseStruct.type = "struct";
+}
+
 function ensureStructPhaseAbilities(card) {
   if (!card?.id) return card;
   syncBundledRuntimeCard(card);
+  if (structHasTactOverlay(card)) return card;
   if (cardHasStructPhaseActivation(card)) return card;
   const catalogCard = catalogCardFor(card);
   if (!catalogCard?.abilities?.length) return card;
@@ -9668,6 +9698,12 @@ function playTactFromHand(handIndex) {
       const hasExileUnit = ["p1", "p2"].some((pid) =>
         (state.players[pid].exileZone || []).some((c) => c.type === "unit"));
       if (!hasExileUnit) return fail(`${card.name}: 除外ゾーンにユニットがいません。`);
+    }
+    if (ability.trigger === "onPlay" && ability.effect === "tactToStructOverStruct") {
+      const requiredName = ability.requiredStructName || "覆没の迷宮";
+      if (findBaseStructForTactOverlay(player, ability) < 0) {
+        return fail(`${card.name}: 「${requiredName}」がないため使用できません。`);
+      }
     }
   }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");

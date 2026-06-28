@@ -889,6 +889,33 @@ const results = await page.evaluate(() => {
     out.push({ name: "fumetsu_golem_summon_from_deck_only", summary: { skipped: true } });
   }
 
+  reset();
+  api.testing.setResources("p1", { ore: 5, magic: 5, funds: 0, people: 0, nature: 0, fuel: 0, electric: 0 });
+  api.state.players.p1.structs = [{
+    id: "card_1753661462969",
+    name: "覆没の迷宮",
+    type: "struct",
+    rested: false,
+    abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "magic", amount: 3 }],
+  }];
+  const overlayHandIdx = api.testing.addHandCard("p1", "card_1753660736818");
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.playTactFromHand(overlayHandIdx);
+  const overlaidStruct = api.state.players.p1.structs[0];
+  const faceEffects = (overlaidStruct?.abilities || []).map((a) => a.effect);
+  out.push({
+    name: "tact_overlay_suppresses_base_struct",
+    summary: {
+      structCount: api.state.players.p1.structs.length,
+      overlayId: overlaidStruct?.id,
+      underlyingName: overlaidStruct?.underlyingStruct?.name,
+      faceEffects,
+      baseProduceSuppressed: !faceEffects.includes("produceResource"),
+      baseStoredUnderneath: overlaidStruct?.underlyingStruct?.name === "覆没の迷宮",
+    },
+  });
+
   const mobilizationCard = api.cardCatalog.main["card_1782682744095"];
   const mobilizationAbility = (mobilizationCard?.abilities || []).find((a) => a.effect === "tactPayRestDraw");
   out.push({
@@ -1310,6 +1337,10 @@ if (!byName.fumetsu_golem_summon_from_deck_only.skipped) {
   assert(byName.fumetsu_golem_summon_from_deck_only.dumpUntouched === true, "覆没の大暴走 should not summon from dump");
   assert(byName.fumetsu_golem_summon_from_deck_only.structRested === true, "覆没の大暴走 should rest after activation");
 }
+assert(byName.tact_overlay_suppresses_base_struct.structCount === 1, "tact overlay should not add a second struct");
+assert(byName.tact_overlay_suppresses_base_struct.overlayId === "card_1753660736818", "overlaid struct should use tact identity");
+assert(byName.tact_overlay_suppresses_base_struct.baseStoredUnderneath === true, "base struct should be stored underneath overlay");
+assert(byName.tact_overlay_suppresses_base_struct.baseProduceSuppressed === true, "base struct abilities should not remain active on face");
 
 assert(byName.mobilization_plan_parsed.found === true, "動員計画 should parse tactPayRestDraw");
 assert(byName.mobilization_plan_parsed.draw === 2, "動員計画 draw amount should be 2");
