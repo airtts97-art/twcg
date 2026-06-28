@@ -9017,6 +9017,15 @@ function canMoveUnitTo(unit, toRow) {
   return !rowHasEnemyUnit(unit.owner, toRow);
 }
 
+function canRelocateUnitToCell(unit, toRow, toCol) {
+  if (!unit) return false;
+  if (toRow < 0 || toRow >= ROWS || toCol < 0 || toCol >= COLS) return false;
+  if (!isUnitFieldCell(toRow, toCol)) return false;
+  if (state.board[toRow]?.[toCol]) return false;
+  if (toRow === unit.row) return Math.abs(toCol - unit.col) === 1;
+  return canMoveUnitTo(unit, toRow);
+}
+
 function canSummonUnitTo(playerId, row) {
   if (isOpponentSummonRow(playerId, row)) return false;
   return !rowHasEnemyUnit(playerId, row);
@@ -9804,8 +9813,8 @@ function relocateUnit(unit, toRow, toCol, actionLabel, onlineAction) {
   if (toRow < 0 || toRow >= ROWS || toCol < 0 || toCol >= COLS) return fail("移動先が無効です。");
   if (!isUnitFieldCell(toRow, toCol)) return fail("その行には配置できません。");
   if (state.board[toRow][toCol]) return fail("移動先のマスが埋まっています。");
-  if (!canMoveUnitTo(unit, toRow)) {
-    return fail("敵ユニットが存在する横列には移動できません。");
+  if (!canRelocateUnitToCell(unit, toRow, toCol)) {
+    return fail(toRow === unit.row ? "そのマスには横移できません。" : "敵ユニットが存在する横列には移動できません。");
   }
   if (!payForCard(player, unit.actCost, unit)) return fail("アクトコストが不足しています。");
   const fromRow = unit.row;
@@ -12420,6 +12429,9 @@ function handleCellClick(row, col) {
       if (colDiff <= 1 && row === retreatRow && canMoveUnitTo(unitCard, row)) {
         return relocateUnit(unitCard, row, col, "後退", "retreatUnit");
       }
+      if (row === unitCard.row && colDiff === 1) {
+        return relocateUnit(unitCard, row, col, "横移", "moveUnit");
+      }
     }
   }
   if (selected?.kind === "unit" && unit?.owner !== state.activePlayer) {
@@ -12793,7 +12805,7 @@ function drawBoardActionButtons() {
   const btnH = 28;
   const gap = 3;
   const panelW = 340;
-  const panelH = btnH * 2 + gap + 8;
+  const panelH = btnH * 3 + gap * 2 + 8;
 
   let panelX = Math.round(cellX + cW / 2 - panelW / 2);
   panelX = Math.max(layout.board.x + 2, Math.min(panelX, layout.board.x + layout.board.w - panelW - 2));
@@ -12815,8 +12827,9 @@ function drawBoardActionButtons() {
     return rowHasEnemyUnit(unit.owner, row);
   }
 
-  function dirBtn(label, row, col, logLabel, action, canBase) {
-    const valid = canBase && cellOpen(row, col) && !rowHasEnemy(row);
+  function dirBtn(label, row, col, logLabel, action, canBase, { lateral = false } = {}) {
+    const rowOk = lateral || !rowHasEnemy(row);
+    const valid = canBase && cellOpen(row, col) && rowOk;
     return {
       label,
       fn: valid ? () => relocateUnit(unit, row, col, logLabel, action) : null,
@@ -12831,6 +12844,13 @@ function drawBoardActionButtons() {
     dirBtn("↑前進", fwdRow, unit.col, "前進", "moveUnit", canMoveFwd),
     dirBtn("↗", fwdRow, unit.col + 1, "前進", "moveUnit", canMoveFwd),
     { label: "攻撃", fn: () => { state.message = "敵ユニットか敵コアを選択"; }, accent: "p1" },
+  ];
+
+  const latBtns = [
+    dirBtn("←", unit.row, unit.col - 1, "横移", "moveUnit", canMoveFwd, { lateral: true }),
+    { label: "横移", fn: null, dim: true },
+    dirBtn("→", unit.row, unit.col + 1, "横移", "moveUnit", canMoveFwd, { lateral: true }),
+    { label: "", fn: null, dim: true },
   ];
 
   const retBtns = [
@@ -12858,7 +12878,8 @@ function drawBoardActionButtons() {
   }
 
   drawRow(advBtns, panelY + 4);
-  drawRow(retBtns, panelY + 4 + btnH + gap);
+  drawRow(latBtns, panelY + 4 + btnH + gap);
+  drawRow(retBtns, panelY + 4 + (btnH + gap) * 2);
 }
 
 function drawTactZoneActionButtons() {
