@@ -343,6 +343,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782561876492",  // 異界で見た同胞
   "card_1782560224044",  // 唯一無二にして大儀な。
   "card_1782600607874",  // 北東軍第113騎兵大隊
+  "card_1782592972506",  // 北東軍親衛隊
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -621,6 +622,32 @@ const abilityEffects = {
     }
     addResources(game.players[playerId], ability.resource, ability.amount);
     log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
+  },
+  payOptionalOnSummonSearch({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const payCost = ability.payCost || {};
+    const searchName = ability.cardName || "";
+    const hasTarget = player.mainDeck.some(
+      (deckCard) => deckCard.name === searchName || (deckCard.name || "").includes(searchName),
+    );
+    if (!hasTarget) {
+      log(game, `${player.name}: 「${card.name}」デッキに「${searchName}」なし`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "payOptionalOnSummonSearch",
+      playerId,
+      cardName: card.name,
+      searchName,
+      payCost,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "payOptionalOnSummonSearch" };
+    const costLabel = Object.entries(payCost)
+      .map(([resource, amount]) => `${RESOURCE_LABELS[resource] || resource}${amount}`)
+      .join("");
+    game.message = `「${card.name}」: ${costLabel}を支払って「${searchName}」を手札に加えますか？`;
+    return "pending";
   },
   payOnAttackEnhance({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
@@ -3832,6 +3859,21 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
+  const payOptionalSummonSearchMatch = text.match(
+    /出撃時([金人自鉱燃電魔])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払[^：:\n]*[：:]「([^」]+)」をデッキから手札に加える/,
+  );
+  if (payOptionalSummonSearchMatch && localType === "unit") {
+    const optionalSummonResMap = { 金: "funds", 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic" };
+    const resource = optionalSummonResMap[payOptionalSummonSearchMatch[1]] || "funds";
+    const amount = parseDeckmakerKeywordValue(payOptionalSummonSearchMatch[2]) || 1;
+    abilities.push({
+      trigger: "onSummon",
+      effect: "payOptionalOnSummonSearch",
+      payCost: { [resource]: amount },
+      cardName: payOptionalSummonSearchMatch[3].trim(),
+    });
+  }
+
   // Search other card by name to hand: "デッキから「X」を1枚まで手札に加える" (not self)
   const searchOtherMatch = text.match(/デッキから「(.+?)」を([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚まで手札に加える/);
   if (searchOtherMatch && card.name) {
@@ -4553,6 +4595,20 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onSummon", effect: "drawCards", amount: 2 });
   }
 
+  if (card.id === "card_1782592972506") {
+    if (!abilities.some((a) => a.effect === "payOptionalOnSummonSearch")) {
+      abilities.push({
+        trigger: "onSummon",
+        effect: "payOptionalOnSummonSearch",
+        payCost: { funds: 6 },
+        cardName: "北東軍最高司令官",
+      });
+    }
+    if (!abilities.some((a) => a.effect === "gainResource" && a.trigger === "onDestroyEnemyUnit")) {
+      abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource: "funds", amount: 3 });
+    }
+  }
+
   if (Array.isArray(card.abilities)) {
     for (const imported of card.abilities) {
       if (!imported?.effect || !imported?.trigger) continue;
@@ -4583,6 +4639,10 @@ function fromDeckmakerCard(card) {
     keywords: parseDeckmakerKeywords(card),
     abilities: parseDeckmakerAbilities(card, localType),
   };
+  const deckLimit = Number(card.limit);
+  if (deckLimit >= 1) base.limit = deckLimit;
+  else if (base.keywords.some((kw) => kw.id === "legendary")) base.limit = 1;
+  else base.limit = 4;
   if (localType === "unit") {
     base.atk = Number(card.attack) || 0;
     base.hp = Number(card.defense) || 1;
@@ -5998,7 +6058,7 @@ function addDeckCard(cardId) {
   const card = cardCatalog.main[cardId];
   if (!card || card.fixture) return;
   const currentCount = app.deck.main.filter((id) => id === cardId).length;
-  const maxCopies = hasKeyword(card, "legendary") ? 1 : 4;
+  const maxCopies = maxDeckCopiesFor(card);
   if (currentCount >= maxCopies) {
     app.deckBuilder.message = `${card.name} は ${maxCopies}枚までです。`;
     return;
@@ -6379,8 +6439,9 @@ function validateDeck(ids) {
   for (const id of ids) counts[id] = (counts[id] || 0) + 1;
   for (const [id, count] of Object.entries(counts)) {
     const card = cardCatalog.main[id];
-    if (count > 1 && hasKeyword(card, "legendary")) {
-      throw new Error(`Legendary card duplicated in deck: ${id}`);
+    const maxCopies = maxDeckCopiesFor(card);
+    if (count > maxCopies) {
+      throw new Error(`Too many copies in deck (${count}/${maxCopies}): ${id}`);
     }
   }
   const factions = new Set(
@@ -6395,6 +6456,14 @@ function validateDeck(ids) {
 
 function hasKeyword(card, id) {
   return Boolean(getKeyword(card, id));
+}
+
+function maxDeckCopiesFor(card) {
+  if (!card) return 4;
+  if (hasKeyword(card, "legendary")) return 1;
+  const limit = Number(card.limit);
+  if (limit >= 1 && limit <= 4) return limit;
+  return 4;
 }
 
 function getKeyword(card, id) {
@@ -6992,6 +7061,10 @@ function canControlActivePlayer() {
 
 function canControlChoicePlayer(playerId) {
   return controlledPlayerId() === playerId;
+}
+
+function isStructPhaseInputLocked() {
+  return Boolean(state.pendingStructPhase);
 }
 
 function requireActivePlayerControl() {
@@ -8515,6 +8588,7 @@ function finishStartTurn(game, playerId, resourcesBefore, handBefore) {
   const activatables = structPhaseActivatables(player);
   if (activatables.length > 0) {
     game.pendingStructPhase = { playerId, activatedIndexes: [], activatedTactIndexes: [], resourcesBefore, handBefore };
+    game.selected = null;
     game.message = `${player.name}: ストラクトフェーズ`;
   } else {
     const gained = resourceDelta(resourcesBefore, player.resources);
@@ -9994,6 +10068,39 @@ function triggerAttackAbilities(unit) {
   processEffectQueue(state);
 }
 
+function resolvePayOptionalOnSummonSearch(pay) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "payOptionalOnSummonSearch") return false;
+  const player = state.players[pending.playerId];
+  const qi = pending.queueItem;
+  if (pay) {
+    const unit = qi?.card;
+    if (!canPayForCard(player, pending.payCost || {}, unit)) {
+      state.message = "資源が不足しています。";
+      render();
+      return false;
+    }
+    pay(player, pending.payCost || {});
+    abilityEffects.searchCardToHand({
+      game: state,
+      playerId: pending.playerId,
+      ability: { cardName: pending.searchName, amount: 1 },
+    });
+    const costLabel = Object.entries(pending.payCost || {})
+      .map(([resource, amount]) => `${RESOURCE_LABELS[resource] || resource}${amount}`)
+      .join("");
+    log(state, `${player.name}: 「${pending.cardName}」${costLabel}支払い → 「${pending.searchName}」を手札に`);
+  }
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function resolvePayOnAttackEnhance(pay) {
   const pending = state.pendingChoice;
   if (pending?.type !== "payOnAttackEnhance") return false;
@@ -10613,7 +10720,7 @@ function deckAnalysis() {
   const nonNeutralFactions = new Set(mainCards.map((card) => card.faction).filter((faction) => faction && faction !== "ニュートラル"));
   if (nonNeutralFactions.size > 2) warnings.push(`非中立陣営 ${nonNeutralFactions.size}/2`);
   for (const entry of groupedCardEntries(app.deck.main, cardCatalog.main)) {
-    const maxCopies = hasKeyword(entry.card, "legendary") ? 1 : 4;
+    const maxCopies = maxDeckCopiesFor(entry.card);
     if (entry.count > maxCopies) warnings.push(`${entry.card.name} ${entry.count}/${maxCopies}`);
   }
 
@@ -10764,6 +10871,7 @@ function addHit(x, y, w, h, onClick) {
 }
 
 function addCardHover(x, y, w, h, card) {
+  if (isStructPhaseInputLocked()) return;
   hoverRegions.push({ x, y, w, h, card });
 }
 
@@ -11908,7 +12016,9 @@ function drawBoard() {
         }
       }
 
-      addHit(cx, cy, cW, cH, () => handleCellClick(row, col));
+      if (!isStructPhaseInputLocked()) {
+        addHit(cx, cy, cW, cH, () => handleCellClick(row, col));
+      }
       if (unit) drawBoardCard(cx, cy, cW, cH, unit);
 
       // Standard|Tact 境界 (戦闘行のみ, col10)
@@ -12164,6 +12274,7 @@ function drawCore(playerId, x, y, w, h) {
 }
 
 function handleCellClick(row, col) {
+  if (isStructPhaseInputLocked()) return;
   const selected = state.selected;
   const unit = state.board[row][col];
   if (state.pendingChoice?.type === "summonToken") {
@@ -12332,11 +12443,13 @@ function drawSidePanel(playerId, box) {
         ctx.shadowBlur = 0;
         ctx.restore();
       }
-      addHit(bx, by, cW, cH, () => {
-        if (!requireActivePlayerControl()) return;
-        state.selected = { kind: "structDeck", playerId, index: absI, confirmed: false };
-        state.message = `${card.name}: カード確認後に設置できます。`;
-      });
+      if (!isStructPhaseInputLocked()) {
+        addHit(bx, by, cW, cH, () => {
+          if (!requireActivePlayerControl()) return;
+          state.selected = { kind: "structDeck", playerId, index: absI, confirmed: false };
+          state.message = `${card.name}: カード確認後に設置できます。`;
+        });
+      }
     });
     drawButton(box.x + box.w - 58, deckTitleY - 12, 24, 16, "↑", () => changeStructDeckScroll(-1), null, { micro: true });
     drawButton(box.x + box.w - 30, deckTitleY - 12, 24, 16, "↓", () => changeStructDeckScroll(1), null, { micro: true });
@@ -12410,15 +12523,17 @@ function drawHand() {
     const cy = hy + 18;
     if (cx + cardW > hx + hw - 8) return;
     const isSelected = state.selected?.kind === "hand" && state.selected.playerId === player.id && state.selected.index === i;
-    drawCard(cx, cy, cardW, cardH, card, { selected: isSelected, small: false, artOnly: true, affordable: cardIsAffordable(player, card) });
-    addHit(cx, cy, cardW, cardH, () => {
-      if (!requireActivePlayerControl()) return;
-      state.selected = { kind: "hand", playerId: player.id, index: i, confirmed: false };
-      // 自分の手札の場合のみメッセージを表示（相手の見ているカードを隠すため）
-      if (player.id === viewerPlayerId()) {
-        state.message = `${card.name}: カード確認後に使用できます。`;
-      }
-    });
+    drawCard(cx, cy, cardW, cardH, card, { selected: isSelected, small: false, artOnly: true, affordable: cardIsAffordable(player, card), noHover: isStructPhaseInputLocked() });
+    if (!isStructPhaseInputLocked()) {
+      addHit(cx, cy, cardW, cardH, () => {
+        if (!requireActivePlayerControl()) return;
+        state.selected = { kind: "hand", playerId: player.id, index: i, confirmed: false };
+        // 自分の手札の場合のみメッセージを表示（相手の見ているカードを隠すため）
+        if (player.id === viewerPlayerId()) {
+          state.message = `${card.name}: カード確認後に使用できます。`;
+        }
+      });
+    }
   });
 }
 
@@ -12766,6 +12881,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "destroyEnemyStruct") drawDestroyEnemyStructPanel(pending);
   else if (pending.type === "chargeAttack") drawChargeAttackPanel(pending);
   else if (pending.type === "payOnAttackEnhance") drawPayOnAttackEnhancePanel(pending);
+  else if (pending.type === "payOptionalOnSummonSearch") drawPayOptionalOnSummonSearchPanel(pending);
 }
 
 function drawExposureManagementPanel(pending) {
@@ -13304,6 +13420,35 @@ function drawIntelAgencyCancelPanel(pending) {
   if (isController) {
     drawButton(x + 28, y + h - 58, 240, 36, `${costLabel}で無効化`, () => { resolveIntelAgencyCancel(true); render(); }, null, { accent: "p1" });
     drawButton(x + 290, y + h - 58, 220, 36, "効果を通す", () => { resolveIntelAgencyCancel(false); render(); });
+  }
+}
+
+function drawPayOptionalOnSummonSearchPanel(pending) {
+  const x = 420, y = 280, w = 620, h = 240;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,80,120,0.82)", "#60a0ff");
+  ctx.fillStyle = "#d0e8ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」出撃時`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(190,220,255,0.92)";
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  const costLabel = Object.entries(pending.payCost || {})
+    .map(([resource, amount]) => `${RESOURCE_LABELS[resource] || resource}${amount}`)
+    .join("");
+  ctx.fillText(`${costLabel}を支払う：デッキから「${pending.searchName}」を手札に加える`, x + 28, y + 64);
+  ctx.fillText("スキップ：効果を発動しない", x + 28, y + 86);
+  const isController = canControlChoicePlayer(pending.playerId);
+  if (isController) {
+    drawButton(
+      x + 28,
+      y + h - 58,
+      280,
+      36,
+      `支払う（${costLabel}）`,
+      () => { resolvePayOptionalOnSummonSearch(true); },
+      null,
+      { accent: "p1" },
+    );
+    drawButton(x + 320, y + h - 58, 220, 36, "スキップ", () => { resolvePayOptionalOnSummonSearch(false); });
   }
 }
 
@@ -14010,6 +14155,11 @@ function drawStructPhaseOverlay() {
 
   ctx.fillStyle = "rgba(0,0,8,0.76)";
   ctx.fillRect(0, 0, W, H);
+  addHit(0, 0, W, H, () => {
+    if (canControlActivePlayer()) {
+      state.message = "ストラクトフェーズ中は他のカードを操作できません。";
+    }
+  });
 
   // カード画像メインのレイアウト（ページング）
   const cardW = 96;
@@ -14244,6 +14394,7 @@ function drawHandConfirmOverlay() {
     !["hand", "structDeck"].includes(selected?.kind) ||
     selected.confirmed ||
     state.pendingChoice ||
+    state.pendingStructPhase ||
     (selected.playerId && selected.playerId !== viewerPlayerId())
   ) {
     return;
@@ -14357,7 +14508,7 @@ function drawHandConfirmOverlay() {
 function drawFieldCardDetailOverlay() {
   const selected = state.selected;
   const card = selectedFieldCard();
-  if (!card || state.pendingChoice) return;
+  if (!card || state.pendingChoice || state.pendingStructPhase) return;
 
   ctx.fillStyle = "rgba(0, 0, 10, 0.72)";
   ctx.fillRect(0, 0, W, H);

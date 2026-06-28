@@ -38,6 +38,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "redirectDamageToOther", "revealTagsForResources", "surviveDamageAndOptionalBuff",
   "vsTagAtkBonus", "spendCountersForBuff", "selfCounterDeathShield",
   "payOnAttackEnhance",
+  "payOptionalOnSummonSearch",
   "buffSelfAtkThisAttack", "destroyAllUnits", "expandDataLinkRange",
   "discardHandToMillOpponentDeck",
 ]);

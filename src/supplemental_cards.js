@@ -665,4 +665,27 @@ export default [
     rarity: "通常",
     imageUrl: "assets/cards/card_1782600607874.jpeg",
   },
+  {
+    id: "card_1782592972506",
+    name: "北東軍親衛隊",
+    type: "ユニット",
+    world: "ユニフォール",
+    attack: 5,
+    defense: 8,
+    description:
+      "[装甲⑤]　[貫通⑤]　[機動]　[連撃③]　[警戒]　[守護]　[効果保護①]\n出撃時金⑥を支払う事が出来る：「北東軍最高司令官」をデッキから手札に加える\n敵撃破時：金③を得る\n隣接するユニットのうち1つが[アトラス北東軍]のタグのユニットの時：ATK+①、HP+①の修正を得る",
+    flavorText:
+      "我らは最高司令官に忠誠を誓い、彼女の為に死ぬまで戦う。\n彼女の理想を妨げる者達を焼き尽くすまで。",
+    tags: ["アトラス北東軍", "純人間", "獣", "龍", "歩兵"],
+    costs: {
+      play: { human: 4, gold: 3, nature: 3, mineral: 5, fuel: 5, electric: 0, magic: 0 },
+      act: { nature: 2, mineral: 2, gold: 0, human: 0, fuel: 0, electric: 0, magic: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { gold: 0, human: 0, nature: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+    limit: 4,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782592972506.jpeg",
+  },
 ];
