@@ -60,6 +60,10 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782600607874", // 北東軍第113騎兵大隊
   "card_1782592972506", // 北東軍親衛隊
   "card_1782641805941", // 西方勇者
+  "card_1782651169572", // エレナ＝アンドート
+  "card_1782651333318", // サンデルシャン銀行
+  "card_1782650657482", // 冠飾りの騎士
+  "card_1782650951674", // ゴルテナ伯ゾア
 ]);
 
 export function isImplementedCard(cardId) {

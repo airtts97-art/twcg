@@ -345,6 +345,10 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782600607874",  // 北東軍第113騎兵大隊
   "card_1782592972506",  // 北東軍親衛隊
   "card_1782641805941",  // 西方勇者
+  "card_1782651169572",  // エレナ＝アンドート
+  "card_1782651333318",  // サンデルシャン銀行
+  "card_1782650657482",  // 冠飾りの騎士
+  "card_1782650951674",  // ゴルテナ伯ゾア
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -985,6 +989,43 @@ const abilityEffects = {
     card.rested = false;
     log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに常駐`);
     refreshContinuousEffects(game);
+  },
+  sandershanBankPlay({ game, playerId, card }) {
+    card.permanentTact = true;
+    card.rested = false;
+    log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに常駐（金含有コストに金を追加）`);
+  },
+  crownKnightFrontStrike({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const row = card.row + player.forward;
+    let hits = 0;
+    for (const col of [card.col - 1, card.col, card.col + 1]) {
+      if (col < 0 || col >= COLS || !isUnitFieldCell(row, col)) continue;
+      const target = game.board[row]?.[col];
+      if (!target) continue;
+      const result = dealDamageToUnit(game, target, 15, { source: card }, { cleanup: false, effectAttack: true, killer: card });
+      if (result.pending) return "pending";
+      if (result.damage > 0) hits += 1;
+    }
+    cleanupAllDestroyed(card, game);
+    log(game, `${player.name}: 「${card.name}」— 正面3マスに15ダメージ（${hits}体）`);
+  },
+  crownKnightFortify({ game, playerId, card }) {
+    ensureKeyword(card, "effectProtect", Math.max(keywordValue(card, "effectProtect"), 1));
+    ensureKeyword(card, "armor", Math.max(keywordValue(card, "armor"), 4));
+    log(game, `${game.players[playerId].name}: 「${card.name}」— [効果保護①][装甲④]を得る`);
+  },
+  goltenaBombardMark({ game, playerId, card, target }) {
+    if (!target || target.row == null || target.col == null) return;
+    if (!game.goltenaBombardments) game.goltenaBombardments = [];
+    game.goltenaBombardments.push({
+      ownerId: playerId,
+      opponentId: opponentOf(playerId),
+      unitInstanceId: card.instanceId,
+      row: target.row,
+      col: target.col,
+    });
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 照準（${target.row + 1}行${target.col + 1}列）`);
   },
   exposureManagementPlay({ game, playerId, card }) {
     card.permanentTact = true;
@@ -4671,6 +4712,42 @@ function parseDeckmakerAbilities(card, localType) {
     }
   }
 
+  if (card.id === "card_1782651333318") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "sandershanBankPlay" });
+  }
+
+  if (card.id === "card_1782650657482") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onActivate",
+      effect: "crownKnightFrontStrike",
+      exclusiveGroup: "crownKnightOnce",
+      choiceLabel: "正面3マスに15ダメージ",
+    });
+    abilities.push({
+      trigger: "onActivate",
+      effect: "crownKnightFortify",
+      exclusiveGroup: "crownKnightOnce",
+      choiceLabel: "効果保護①・装甲④",
+    });
+  }
+
+  if (card.id === "card_1782650951674") {
+    if (!abilities.some((a) => a.trigger === "onDestroyEnemyUnit" && a.effect === "gainResource" && a.resource === "funds")) {
+      abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource: "funds", amount: 3 });
+    }
+    if (!abilities.some((a) => a.trigger === "onActivate" && a.effect === "goltenaBombardMark")) {
+      abilities.push({
+        trigger: "onActivate",
+        effect: "goltenaBombardMark",
+        target: "attackableCell",
+        exclusiveGroup: "goltenaOnce",
+        choiceLabel: "砲撃照準を指定",
+      });
+    }
+  }
+
   if (Array.isArray(card.abilities)) {
     for (const imported of card.abilities) {
       if (!imported?.effect || !imported?.trigger) continue;
@@ -4727,6 +4804,7 @@ function fromDeckmakerCard(card) {
     if (card.id === "card_1753968998785") base.requiredSacrificeName = "炎使いの騎士";
     if (card.id === "card_1753970684315") base.requiredSacrificeName = "炎の英傑";
     if (card.id === "card_1761808048476") ensureKeyword(base, "oneDamage");
+    if (card.id === "card_1782651169572") base.immuneMagicPlayTactEffects = true;
     if (card.id === "card_1753664097092") removeKeywords(base, ["mobile"]);
     if (card.id === "card_1782212242238") {
       base.identityRevealGate = { hostId: "card_1782211899987", stackedId: "card_1755671140352" };
@@ -6365,6 +6443,7 @@ function createGame(
     selected: null,
     effectQueue: [],
     globalEffects: [],
+    goltenaBombardments: [],
     pendingTarget: null,
     pendingChoice: null,
     pendingAttackContinuation: null,
@@ -6566,9 +6645,10 @@ function refreshCounterConditionalKeywords(card) {
 }
 
 function keywordValue(card, id, fallback = 0) {
-  const keyword = getKeyword(card, id);
-  if (!keyword) return fallback;
-  return typeof keyword.value === "number" ? keyword.value : 1;
+  const keywords = (card?.keywords || []).filter((keyword) => keyword.id === id);
+  if (!keywords.length) return fallback;
+  const values = keywords.map((keyword) => (typeof keyword.value === "number" ? keyword.value : 1));
+  return Math.max(fallback, ...values);
 }
 
 function keywordLabels(card) {
@@ -6937,6 +7017,145 @@ function canPay(player, cost = {}) {
   return Object.entries(normalizedCost).every(([key, amount]) => (player.resources[key] || 0) >= amount);
 }
 
+function sandershanBankActive(game = state) {
+  for (const playerId of ["p1", "p2"]) {
+    for (const tact of game.players[playerId]?.tactZone || []) {
+      if (tact.id === "card_1782651333318") return true;
+    }
+  }
+  return false;
+}
+
+function applySandershanBankCostModifier(cost = {}) {
+  const normalized = normalizeResourceObject(cost);
+  if (!sandershanBankActive() || !(normalized.funds > 0)) return normalized;
+  return { ...normalized, funds: normalized.funds * 2 };
+}
+
+function elenaActCostGoldTax(unit) {
+  const actFunds = normalizeResourceObject(unit?.actCost || {}).funds || 0;
+  if (actFunds > 0) return actFunds;
+  return normalizeResourceObject(unit?.cost || {}).funds || 0;
+}
+
+function applyElenaActCostTax(game, unit) {
+  if (unit?.id !== "card_1782651169572") return;
+  const goldAmount = elenaActCostGoldTax(unit);
+  if (goldAmount <= 0) return;
+  const opponentId = opponentOf(unit.owner);
+  const opponent = game.players[opponentId];
+  const available = opponent.resources.funds || 0;
+  const paid = Math.min(available, goldAmount);
+  opponent.resources.funds = available - paid;
+  const shortfall = goldAmount - paid;
+  if (shortfall > 0) {
+    opponent.core.hp -= shortfall;
+    log(
+      game,
+      `${opponent.name}: 「${unit.name}」効果 — 金${paid}支払い、不足${shortfall}はコアHPで支払い`,
+    );
+    checkWinner(game);
+  } else {
+    log(game, `${opponent.name}: 「${unit.name}」効果 — 金${goldAmount}を支払い`);
+  }
+}
+
+function payActCostForUnit(player, unit, { useCharge = false } = {}) {
+  const cost = { ...(unit.actCost || {}) };
+  if (useCharge && hasKeyword(unit, "charge")) {
+    cost.electric = (cost.electric || 0) + chargeAttackElectricCost(unit);
+  }
+  if (!payForCard(player, cost, unit)) return false;
+  applyElenaActCostTax(state, unit);
+  return true;
+}
+
+function unitImmuneToMagicPlayTactEffects(unit) {
+  return Boolean(unit?.immuneMagicPlayTactEffects || unit?.id === "card_1782651169572");
+}
+
+function tactSourceIncludesMagicPlayCost(sourceCard) {
+  if (!sourceCard || sourceCard.type !== "tact") return false;
+  return (normalizeResourceObject(sourceCard.cost || {}).magic || 0) > 0;
+}
+
+function availableActivateAbilities(unit) {
+  return (unit.abilities || []).filter((ability) => {
+    if (ability.trigger !== "onActivate") return false;
+    if (ability.exclusiveGroup && unit.exclusiveActivateUsed === ability.exclusiveGroup) return false;
+    return true;
+  });
+}
+
+function attackableCellsForUnit(unit, game = state) {
+  const player = game.players[unit.owner];
+  const maxRows = keywordValue(unit, "arc", 1);
+  const cells = [];
+  for (let dist = 1; dist <= maxRows; dist += 1) {
+    const row = unit.row + player.forward * dist;
+    if (row < 0 || row >= ROWS) continue;
+    for (const col of unitFieldColsForRow(row)) {
+      const occupant = game.board[row]?.[col];
+      if (occupant && occupant.owner === unit.owner) continue;
+      if (occupant) {
+        const check = canAttackUnit(unit, occupant);
+        if (!check.ok) continue;
+      }
+      cells.push({ row, col });
+    }
+  }
+  return cells;
+}
+
+function findUnitByInstanceId(game, instanceId) {
+  if (!instanceId) return null;
+  for (const row of game.board) {
+    for (const unit of row) {
+      if (unit?.instanceId === instanceId) return unit;
+    }
+  }
+  return null;
+}
+
+function processGoltenaBombardments(game, endingPlayer) {
+  if (!game.goltenaBombardments?.length) return;
+  const remaining = [];
+  for (const strike of game.goltenaBombardments) {
+    if (strike.opponentId !== endingPlayer) {
+      remaining.push(strike);
+      continue;
+    }
+    const unit = findUnitByInstanceId(game, strike.unitInstanceId);
+    if (!unit) continue;
+    const cells = [[strike.row, strike.col], ...surroundingCells(strike.row, strike.col)];
+    const seen = new Set();
+    let hits = 0;
+    let interrupted = false;
+    for (const [row, col] of cells) {
+      const key = `${row},${col}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const target = game.board[row]?.[col];
+      if (!target) continue;
+      const result = dealDamageToUnit(game, target, 5, { source: unit }, { cleanup: false, effectAttack: true, killer: unit });
+      if (result.pending) {
+        remaining.push(strike);
+        interrupted = true;
+        break;
+      }
+      if (result.damage > 0) {
+        target.rested = true;
+        hits += 1;
+      }
+    }
+    if (interrupted) break;
+    cleanupAllDestroyed(unit, game);
+    log(game, `${game.players[strike.ownerId].name}: 「${unit.name}」砲撃 — 照準と周囲に5ダメージ（${hits}体）`);
+  }
+  if (remaining.length) game.goltenaBombardments = remaining;
+  else game.goltenaBombardments = [];
+}
+
 function pay(player, cost = {}) {
   const normalizedCost = normalizeResourceObject(cost);
   if (!canPay(player, normalizedCost)) return false;
@@ -6954,7 +7173,7 @@ function findCopperMineReduction(player, card, cost = {}) {
 }
 
 function effectiveCostForCard(player, cost = {}, card = null) {
-  const effective = normalizeResourceObject(cost);
+  let effective = applySandershanBankCostModifier(cost);
   if (!card || !player?.id) return effective;
   if (card.type === "tact") {
     const discount = (state.globalEffects || [])
@@ -7194,6 +7413,9 @@ function processEffectQueue(game) {
 }
 
 function hasValidAbilityTarget(game, item) {
+  if (item.ability.target === "attackableCell") {
+    return attackableCellsForUnit(item.card, game).length > 0;
+  }
   for (let row = 0; row < ROWS; row += 1) {
     for (let col = 0; col < COLS; col += 1) {
       const target = game.board[row][col];
@@ -7206,13 +7428,15 @@ function hasValidAbilityTarget(game, item) {
 function resolvePendingTarget(row, col) {
   const pending = state.pendingTarget;
   if (!pending) return false;
-  const target = state.board[row]?.[col];
-  if (!isValidAbilityTarget(pending, target)) {
+  if (!isValidAbilityTargetAt(pending, row, col)) {
     state.message = "対象にできません。";
     log(state, state.message);
     return true;
   }
   const effect = abilityEffects[pending.ability.effect];
+  const target = pending.ability.target === "attackableCell"
+    ? { row, col }
+    : state.board[row]?.[col];
   if (effect) effect({ game: state, playerId: pending.playerId, card: pending.card, ability: pending.ability, target });
   state.pendingTarget = null;
   state.selected = null;
@@ -8092,11 +8316,20 @@ function resolveChooseActivationResource(resource) {
   addResources(player, resource, -pending.amount);
   const unit = state.board[pending.unitRow]?.[pending.unitCol];
   if (unit && !pending.noRest) unit.rested = true;
+  if (unit && pending.ability?.exclusiveGroup) unit.exclusiveActivateUsed = pending.ability.exclusiveGroup;
   const costLabel = `${RESOURCE_LABELS[resource] || resource}${pending.amount}`;
   log(state, `${player.name}: 「${unit?.name || "?"}」起動（${costLabel}）`);
   state.pendingChoice = null;
   state.selected = null;
-  if (pending.abilityEffect === "restTargetNoUnrest" && unit) {
+  if (pending.ability) {
+    state.effectQueue.push({
+      playerId: pending.playerId,
+      card: unit,
+      ability: pending.ability,
+      source: { zone: "board" },
+    });
+    processEffectQueue(state);
+  } else if (pending.abilityEffect === "restTargetNoUnrest" && unit) {
     state.pendingTarget = {
       playerId: pending.playerId,
       card: unit,
@@ -8311,6 +8544,9 @@ function effectPenetrateLevel(sourceCard) {
 
 function canAffectUnitByEffect(game, target, sourceCard) {
   if (!target) return false;
+  if (unitImmuneToMagicPlayTactEffects(target) && tactSourceIncludesMagicPlayCost(sourceCard)) {
+    return false;
+  }
   const protection = effectProtectLevel(game, target);
   if (protection <= 0) return true;
   return effectPenetrateLevel(sourceCard) >= protection;
@@ -8458,6 +8694,7 @@ function finishDestroyEnemyStructChoice() {
 
 function isValidAbilityTarget(item, target) {
   if (!target) return false;
+  if (item.ability.target === "attackableCell") return false;
   if (item.ability.target === "enemyUnit" && target.owner === item.playerId) return false;
   if (item.ability.target === "friendlyUnit" && target.owner !== item.playerId) return false;
   if (item.ability.target === "friendlyNeutralUnit") {
@@ -8470,6 +8707,13 @@ function isValidAbilityTarget(item, target) {
     if (!canAffectUnitByEffect(state, target, item.card)) return false;
   }
   return true;
+}
+
+function isValidAbilityTargetAt(item, row, col) {
+  if (item.ability.target === "attackableCell") {
+    return attackableCellsForUnit(item.card, state).some((cell) => cell.row === row && cell.col === col);
+  }
+  return isValidAbilityTarget(item, state.board[row]?.[col]);
 }
 
 function completeAbilitySource(game, item) {
@@ -8926,6 +9170,7 @@ function endTurn() {
       triggerAbilities(state, endingPlayer, unit, "onTurnEnd");
     }
   }
+  processGoltenaBombardments(state, endingPlayer);
   processWarBondCountersAtTurnEnd(state, endingPlayer);
   for (const unit of unitsOwnedBy(endingPlayer)) {
     if (unit.indestructibleUntilTurnEnd === endingPlayer) delete unit.indestructibleUntilTurnEnd;
@@ -9816,7 +10061,7 @@ function relocateUnit(unit, toRow, toCol, actionLabel, onlineAction) {
   if (!canRelocateUnitToCell(unit, toRow, toCol)) {
     return fail(toRow === unit.row ? "そのマスには横移できません。" : "敵ユニットが存在する横列には移動できません。");
   }
-  if (!payForCard(player, unit.actCost, unit)) return fail("アクトコストが不足しています。");
+  if (!payActCostForUnit(player, unit)) return fail("アクトコストが不足しています。");
   const fromRow = unit.row;
   const fromCol = unit.col;
   state.board[unit.row][unit.col] = null;
@@ -9874,18 +10119,9 @@ function retreatSelectedUnit() {
   return relocateUnit(unit, toRow, destCol, "後退", "retreatUnit");
 }
 
-function activateSelectedUnit() {
-  if (!requireActivePlayerControl()) return false;
-  if (state.phase !== "main") return fail("メインフェーズのみ起動できます。");
-  if (state.pendingChoice || state.pendingTarget) return false;
-  const unit = selectedUnit();
-  if (!unit) return false;
-  if (unit.owner !== state.activePlayer) return fail("自分のユニットのみ起動できます。");
-  if (unit.rested) return fail("レスト状態のユニットは起動できません。");
-  const activateAbilities = (unit.abilities || []).filter((a) => a.trigger === "onActivate");
-  if (!activateAbilities.length) return false;
-  const player = state.players[state.activePlayer];
-  const ability = activateAbilities[0];
+function executeUnitActivate(unit, ability) {
+  if (!unit || !ability) return false;
+  const player = state.players[unit.owner];
   if (ability.nonDamageOnly && (unit.dealtDamageThisTurn || (unit.attacksThisTurn || 0) > 0)) {
     return fail("与ダメージ後はこの起動効果は使えません。");
   }
@@ -9895,11 +10131,12 @@ function activateSelectedUnit() {
     if (!affordable.length) return fail("支払える資源がありません。");
     state.pendingChoice = {
       type: "chooseActivationResource",
-      playerId: state.activePlayer,
+      playerId: unit.owner,
       amount,
       unitRow: unit.row,
       unitCol: unit.col,
       abilityEffect: ability.effect,
+      ability,
       noRest: ability.noRest || false,
     };
     state.selected = { kind: "choice", choice: "chooseActivationResource" };
@@ -9915,20 +10152,63 @@ function activateSelectedUnit() {
     unit.currentHp = (unit.currentHp || 0) + (ability.hpBuff || 0);
     unit.maxHp = (unit.maxHp || unit.hp || 0) + (ability.hpBuff || 0);
     if (!ability.noRest) unit.rested = true;
+    if (ability.exclusiveGroup) unit.exclusiveActivateUsed = ability.exclusiveGroup;
     log(state, `${player.name}: 「${unit.name}」カウンター${counterCost}消費 → +${ability.atkBuff || 0}/+${ability.hpBuff || 0}`);
-    syncOnlineAction("activateUnit", state.activePlayer);
+    state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" } });
+    processEffectQueue(state);
+    syncOnlineAction("activateUnit", unit.owner);
     render();
     return true;
   }
   const cost = ability.activationCost || {};
   if (!pay(player, cost)) return fail("起動コストが不足しています。");
   if (!ability.noRest) unit.rested = true;
+  if (ability.exclusiveGroup) unit.exclusiveActivateUsed = ability.exclusiveGroup;
   const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
   log(state, `${player.name}: 「${unit.name}」起動${costLabel ? `（${costLabel}）` : ""}`);
-  triggerAbilities(state, state.activePlayer, unit, "onActivate");
-  syncOnlineAction("activateUnit", state.activePlayer);
+  state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" } });
+  processEffectQueue(state);
+  syncOnlineAction("activateUnit", unit.owner);
   render();
   return true;
+}
+
+function resolveChooseUnitActivate(effectName) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "chooseUnitActivate") return false;
+  const unit = state.board[pending.unitRow]?.[pending.unitCol];
+  const ability = (pending.abilities || []).find((entry) => entry.effect === effectName);
+  if (!unit || !ability || unit.owner !== pending.playerId) return false;
+  state.pendingChoice = null;
+  state.selected = { kind: "unit", row: unit.row, col: unit.col };
+  return executeUnitActivate(unit, ability);
+}
+
+function activateSelectedUnit() {
+  if (!requireActivePlayerControl()) return false;
+  if (state.phase !== "main") return fail("メインフェーズのみ起動できます。");
+  if (state.pendingChoice || state.pendingTarget) return false;
+  const unit = selectedUnit();
+  if (!unit) return false;
+  if (unit.owner !== state.activePlayer) return fail("自分のユニットのみ起動できます。");
+  if (unit.rested) return fail("レスト状態のユニットは起動できません。");
+  const activateAbilities = availableActivateAbilities(unit);
+  if (!activateAbilities.length) return false;
+  if (activateAbilities.length > 1) {
+    state.pendingChoice = {
+      type: "chooseUnitActivate",
+      playerId: state.activePlayer,
+      unitRow: unit.row,
+      unitCol: unit.col,
+      abilities: activateAbilities,
+      cardName: unit.name,
+    };
+    state.selected = { kind: "choice", choice: "chooseUnitActivate" };
+    state.message = `「${unit.name}」: 起動する効果を選んでください`;
+    render();
+    return true;
+  }
+  return executeUnitActivate(unit, activateAbilities[0]);
 }
 
 function attackWithSelectedUnit(target, options = {}) {
@@ -10095,11 +10375,7 @@ function canPayChargeAttack(player, unit) {
 }
 
 function payAttackCosts(player, unit, { useCharge = false } = {}) {
-  const cost = { ...(unit.actCost || {}) };
-  if (useCharge && hasKeyword(unit, "charge")) {
-    cost.electric = (cost.electric || 0) + chargeAttackElectricCost(unit);
-  }
-  return payForCard(player, cost, unit);
+  return payActCostForUnit(player, unit, { useCharge });
 }
 
 function offerChargeAttackChoice(unit, target) {
@@ -10999,6 +11275,7 @@ function render() {
   drawLog();
   drawAnimations();
   drawStructPhaseOverlay();
+  drawPendingTargetHighlights();
   drawChoiceOverlay();
   drawHandConfirmOverlay();
   drawFieldCardDetailOverlay();
@@ -12837,7 +13114,7 @@ function drawBoardActionButtons() {
     };
   }
 
-  const hasActivate = (unit.abilities || []).some((a) => a.trigger === "onActivate");
+  const hasActivate = availableActivateAbilities(unit).length > 0;
 
   const advBtns = [
     dirBtn("↖", fwdRow, unit.col - 1, "前進", "moveUnit", canMoveFwd),
@@ -12936,6 +13213,22 @@ function drawTurnStartSummaryPanel() {
   ctx.fillText(`資源 +${formatResourceTotals(summary.gained)} / ドロー ${summary.drawn}枚`, x + 14, y + 42, w - 28);
 }
 
+function drawPendingTargetHighlights() {
+  const pending = state.pendingTarget;
+  if (!pending || pending.ability?.target !== "attackableCell") return;
+  for (const { row, col } of attackableCellsForUnit(pending.card, state)) {
+    const visualRow = boardRowToVisualRow(row);
+    const cx = layout.board.x + col * layout.cell.w;
+    const cy = layout.board.y + visualRow * layout.cell.h;
+    ctx.strokeStyle = "rgba(255,200,80,0.95)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(cx + 3, cy + 3, layout.cell.w - 6, layout.cell.h - 6);
+  }
+  ctx.fillStyle = "rgba(255,220,120,0.92)";
+  ctx.font = "700 16px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("攻撃可能なマスをクリック", W / 2 - 110, layout.board.y - 12);
+}
+
 function drawChoiceOverlay() {
   const pending = state.pendingChoice;
   if (!pending) return;
@@ -12966,6 +13259,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "reviveFromDump") drawReviveFromDumpPanel(pending);
   else if (pending.type === "reviveFromExile") drawReviveFromExilePanel(pending);
   else if (pending.type === "chooseActivationResource") drawChooseActivationResourcePanel(pending);
+  else if (pending.type === "chooseUnitActivate") drawChooseUnitActivatePanel(pending);
   else if (pending.type === "chooseGainResource") drawChooseGainResourcePanel(pending);
   else if (pending.type === "lifeCounterPayment") drawLifeCounterPaymentPanel(pending);
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
@@ -14075,6 +14369,33 @@ function drawChooseActivationResourcePanel(pending) {
       const by = y + h - btnH - 20;
       const label = `${RESOURCE_LABELS[res] || res}（${player.resources[res]}）`;
       drawButton(bx, by, btnW, btnH, label, () => { resolveChooseActivationResource(res); render(); }, null, { accent: "p1" });
+    });
+  }
+}
+
+function drawChooseUnitActivatePanel(pending) {
+  const abilities = pending.abilities || [];
+  const btnW = 220;
+  const btnH = 44;
+  const gap = 12;
+  const w = Math.max(520, btnW + gap * 2);
+  const h = 120 + abilities.length * (btnH + gap);
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,80,160,0.8)", "#4080ff");
+  ctx.fillStyle = "#a0c8ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName || "ユニット"}」: 起動効果を選択`, x + 24, y + 34);
+  ctx.fillStyle = "rgba(160,200,255,0.8)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("いずれか1度のみ発動できる効果は、選択後に使用済みになります。", x + 24, y + 58);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  if (isController) {
+    abilities.forEach((ability, i) => {
+      const bx = x + gap;
+      const by = y + 80 + i * (btnH + gap);
+      const label = ability.choiceLabel || ability.effect;
+      drawButton(bx, by, w - gap * 2, btnH, label, () => { resolveChooseUnitActivate(ability.effect); render(); }, null, { accent: "p1" });
     });
   }
 }
@@ -15360,6 +15681,10 @@ function abilityText(card) {
         produceResourceCostHuman: `人${ability.humanCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         destroyEnemyStructs: `燃${ability.fuelCost}支払い → 相手のストラクト${ability.amount}枚破壊`,
         destroyEnemyStructsOnPlay: `相手のストラクト${ability.amount}枚破壊`,
+        sandershanBankPlay: "永続：金含有プレイ/アクトコストに金を追加",
+        crownKnightFrontStrike: "正面3マスに15ダメージ",
+        crownKnightFortify: "効果保護①・装甲④を得る",
+        goltenaBombardMark: "攻撃可能マスを照準（次の相手ターン終了時に5ダメージ）",
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })
@@ -15675,6 +16000,7 @@ const testing = {
   activatePermanentTact,
   resolveMarketChoice,
   resolveChooseGainResource,
+  resolveChooseUnitActivate,
   resolveLifeCounterPayment,
   toggleDestroyChoice,
   resolveDestroyChoice,
