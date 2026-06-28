@@ -3088,28 +3088,43 @@ async function loadFirebaseCardsIntoCatalog({ force = false } = {}) {
   firebaseCardsLoadPromise = (async () => {
     const warmCache = readFirebaseCardsCache();
 
-    // 起動時はネットワーク取得しない（キャッシュ or バンドルのみ）
-    if (!force) {
-      if (warmCache?.cards?.length) {
-        return applyFirebaseDeckmakerCards(warmCache.cards, {
-          source: "cache",
-          cachedAt: warmCache.savedAt,
-          cacheReason: "cache-only",
-        });
-      }
-      app.cardSync = {
-        status: "cached",
-        count: 0,
-        error: null,
-        updatedAt: Date.now(),
-        drift: [],
-      };
-      return false;
+    // 起動時: キャッシュを先に適用してから Firebase から取得
+    if (!force && warmCache?.cards?.length) {
+      applyFirebaseDeckmakerCards(warmCache.cards, {
+        source: "cache",
+        cachedAt: warmCache.savedAt,
+        cacheReason: "cache-warm",
+      });
     }
 
-    clearFirebaseFetchBackoff();
+    const backoffRemaining = force ? 0 : firebaseFetchBackoffRemainingMs();
+    if (backoffRemaining > 0 && warmCache?.cards?.length) {
+      const ageMin = warmCache.savedAt ? Math.max(1, Math.round((Date.now() - warmCache.savedAt) / 60000)) : "?";
+      app.cardSync = {
+        status: "cached",
+        count: warmCache.cards.length,
+        error: "429 backoff",
+        updatedAt: warmCache.savedAt || Date.now(),
+        drift: app.cardSync?.drift || [],
+        hardcodedDrift: app.cardSync?.hardcodedDrift || [],
+      };
+      if (app.screen === "deckBuilder") {
+        const waitMin = Math.max(1, Math.ceil(backoffRemaining / 60000));
+        app.deckBuilder.message = `Firebase混雑のためキャッシュ使用（${ageMin}分前）。${waitMin}分後に自動再取得します。`;
+      }
+      return true;
+    }
 
-    app.cardSync = { status: "loading", count: 0, error: null, updatedAt: null, drift: [] };
+    if (force) clearFirebaseFetchBackoff();
+
+    app.cardSync = {
+      status: "loading",
+      count: warmCache?.cards?.length || app.cardSync?.count || 0,
+      error: null,
+      updatedAt: null,
+      drift: app.cardSync?.drift || [],
+      hardcodedDrift: app.cardSync?.hardcodedDrift || [],
+    };
     try {
       const cards = await fetchAllFirebaseCards({ initialDelayMs: 500 });
       clearFirebaseFetchBackoff();
