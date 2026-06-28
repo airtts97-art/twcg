@@ -1,0 +1,53 @@
+{
+  "tags": [
+    "王政ウルダニア",
+    "アンドート家",
+    "探究派貴族",
+    "純人間",
+    "魔法"
+  ],
+  "description": "[曲射]\nこのユニットにそのアクトコストを支払った時、アクトコストの金の数だけ相手は金を支払わなければならない。不足している場合、相手はコアのHPで支払わなければならない\nプレイコストに魔を含むタクトの効果を受けない",
+  "roles": [],
+  "flavorText": "一流の金を消す魔術師───\"一流\"はどちらにもかかる。",
+  "tactSubType": null,
+  "rarity": "伝説",
+  "generates": {
+    "fuel": 0,
+    "gold": 0,
+    "electric": 0,
+    "magic": 0,
+    "mineral": 0,
+    "nature": 0,
+    "human": 0
+  },
+  "costs": {
+    "act": {
+      "human": 5,
+      "nature": 0,
+      "magic": 5,
+      "mineral": 0,
+      "electric": 0,
+      "gold": 0,
+      "fuel": 0
+    },
+    "play": {
+      "fuel": 0,
+      "gold": 3,
+      "electric": 0,
+      "magic": 1,
+      "mineral": 0,
+      "nature": 0,
+      "human": 2
+    },
+    "choiceAct": [],
+    "choice": []
+  },
+  "imageUrl": "assets/cards/card_1782651169572.jpeg",
+  "type": "ユニット",
+  "name": "エレナ＝アンドート",
+  "defense": 3,
+  "attack": 5,
+  "limit": 4,
+  "world": "ヘルメネアの大地",
+  "id": "card_1782651169572"
+}

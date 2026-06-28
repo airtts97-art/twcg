@@ -1,0 +1,44 @@
+{
+  "limit": 4,
+  "world": "ヘルメネアの大地",
+  "id": "card_1782651333318",
+  "costs": {
+    "choiceAct": [],
+    "choice": [],
+    "play": {
+      "human": 0,
+      "nature": 0,
+      "magic": 0,
+      "mineral": 0,
+      "electric": 0,
+      "gold": 5,
+      "fuel": 0
+    },
+    "act": {}
+  },
+  "generates": {
+    "fuel": 0,
+    "gold": 0,
+    "electric": 0,
+    "magic": 0,
+    "mineral": 0,
+    "nature": 0,
+    "human": 0
+  },
+  "imageUrl": "assets/cards/card_1782651333318.jpeg",
+  "name": "サンデルシャン銀行",
+  "type": "タクト",
+  "tactSubType": "永続",
+  "rarity": "通常",
+  "tags": [
+    "王政ウルダニア",
+    "アンドート家",
+    "探究派貴族",
+    "金融"
+  ],
+  "description": "お互いが支払うプレイコスト・アクトコストに金が含まれる案らそれに金を追加する",
+  "roles": [
+    "ロック"
+  ],
+  "flavorText": "エレナ=アンドートが生み出したミミック。主食はクロネア硬貨。"
+}

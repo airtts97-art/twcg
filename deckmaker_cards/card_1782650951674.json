@@ -1,0 +1,53 @@
+{
+  "tags": [
+    "王政ウルダニア",
+    "ゴルテナ家",
+    "探究派貴族",
+    "純人間",
+    "魔法"
+  ],
+  "description": "[曲射⓶]\n撃破時：金３を得る\n以下の効果は１度しか使えない\nレストする：このカードが攻撃可能なマスを１つ選ぶ。このユニットがあるなら、次の相手ターン終了時にそのますとその周囲のますにあるカードに５ダメージを与え、ダメージを与えたユニットをレストさせる。",
+  "flavorText": "船を出せ。海を渡れ。欲される物をすべて持ち帰れ。金貨の為に祈りを捧げよ。海と風に歯黄金の輝きがよく映える。",
+  "roles": [],
+  "tactSubType": null,
+  "rarity": "伝説",
+  "defense": 2,
+  "attack": 5,
+  "costs": {
+    "act": {
+      "human": 0,
+      "nature": 0,
+      "mineral": 0,
+      "magic": 3,
+      "electric": 0,
+      "gold": 0,
+      "fuel": 0
+    },
+    "choiceAct": [],
+    "choice": [],
+    "play": {
+      "gold": 13,
+      "fuel": 0,
+      "electric": 0,
+      "magic": 0,
+      "mineral": 0,
+      "human": 4,
+      "nature": 0
+    }
+  },
+  "generates": {
+    "electric": 0,
+    "gold": 0,
+    "fuel": 0,
+    "human": 0,
+    "nature": 0,
+    "magic": 0,
+    "mineral": 0
+  },
+  "imageUrl": "assets/cards/card_1782650951674.jpeg",
+  "name": "ゴルテナ伯ゾア",
+  "type": "ユニット",
+  "world": "ヘルメネアの大地",
+  "limit": 4,
+  "id": "card_1782650951674"
+}

@@ -1,0 +1,53 @@
+{
+  "generates": {
+    "gold": 0,
+    "fuel": 0,
+    "electric": 0,
+    "magic": 0,
+    "mineral": 0,
+    "human": 0,
+    "nature": 0
+  },
+  "costs": {
+    "choiceAct": [],
+    "choice": [],
+    "play": {
+      "mineral": 0,
+      "magic": 12,
+      "nature": 0,
+      "human": 6,
+      "fuel": 0,
+      "gold": 0,
+      "electric": 0
+    },
+    "act": {
+      "human": 0,
+      "nature": 6,
+      "magic": 0,
+      "mineral": 0,
+      "electric": 0,
+      "gold": 0,
+      "fuel": 0
+    }
+  },
+  "imageUrl": "assets/cards/card_1782650657482.jpeg",
+  "type": "ユニット",
+  "name": "冠飾りの騎士",
+  "attack": 8,
+  "defense": 8,
+  "limit": 4,
+  "world": "ヘルメネアの大地",
+  "id": "card_1782650657482",
+  "tags": [
+    "リ・サンティウ連合王国",
+    "純人間",
+    "歩兵",
+    "騎士",
+    "魔法"
+  ],
+  "description": "[装甲⓶][装甲⑤][制圧⓶][奇襲][警戒][守護]\n以下の効果はいづれかを１度のみ発動できる\nレストする：正面さんますのカードに１５ダメージを与える(コア除く)\nレストする：[効果保護①][装甲④]",
+  "roles": [],
+  "flavorText": "冠を飾る方世紀はきらびやかであるべきだが、下品に光ってはならない。もっとも輝くべきは「至高き王威」であるべきなのだから。",
+  "tactSubType": null,
+  "rarity": "伝説"
+}
