@@ -344,6 +344,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782560224044",  // 唯一無二にして大儀な。
   "card_1782600607874",  // 北東軍第113騎兵大隊
   "card_1782592972506",  // 北東軍親衛隊
+  "card_1782641805941",  // 西方勇者
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -648,6 +649,26 @@ const abilityEffects = {
       .join("");
     game.message = `「${card.name}」: ${costLabel}を支払って「${searchName}」を手札に加えますか？`;
     return "pending";
+  },
+  payOnSummonGrantBraveBlood({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const payCost = ability.payCost || { magic: 1, electric: 1 };
+    const counterAmount = ability.counterAmount || 2;
+    if (!canPay(player, payCost)) {
+      log(game, `${player.name}: 「${card.name}」出撃時コスト不足のため勇血効果は発動しなかった`);
+      return;
+    }
+    pay(player, payCost);
+    let count = 0;
+    for (const row of game.board) {
+      for (const unit of row) {
+        if (unit?.owner === playerId) {
+          unit.braveBloodCounter = (unit.braveBloodCounter || 0) + counterAmount;
+          count += 1;
+        }
+      }
+    }
+    log(game, `${player.name}: 「${card.name}」出撃時 → 味方全員に勇血カウンター${counterAmount}（${count}体）`);
   },
   payOnAttackEnhance({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
@@ -3889,6 +3910,21 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
+  const payBraveBloodSummonMatch = text.match(
+    /出撃時[：:]\s*魔([①②③④⑤⑥⑦⑧⑨0-9０-９]+)と電([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払[\s\S]*?勇血カウンター([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/,
+  );
+  if (payBraveBloodSummonMatch && localType === "unit") {
+    abilities.push({
+      trigger: "onSummon",
+      effect: "payOnSummonGrantBraveBlood",
+      payCost: {
+        magic: parseDeckmakerKeywordValue(payBraveBloodSummonMatch[1]) || 1,
+        electric: parseDeckmakerKeywordValue(payBraveBloodSummonMatch[2]) || 1,
+      },
+      counterAmount: parseDeckmakerKeywordValue(payBraveBloodSummonMatch[3]) || 2,
+    });
+  }
+
   // Search other card by name to hand: "デッキから「X」を1枚まで手札に加える" (not self)
   const searchOtherMatch = text.match(/デッキから「(.+?)」を([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚まで手札に加える/);
   if (searchOtherMatch && card.name) {
@@ -4621,6 +4657,17 @@ function parseDeckmakerAbilities(card, localType) {
     }
     if (!abilities.some((a) => a.effect === "gainResource" && a.trigger === "onDestroyEnemyUnit")) {
       abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource: "funds", amount: 3 });
+    }
+  }
+
+  if (card.id === "card_1782641805941") {
+    if (!abilities.some((a) => a.effect === "payOnSummonGrantBraveBlood")) {
+      abilities.push({
+        trigger: "onSummon",
+        effect: "payOnSummonGrantBraveBlood",
+        payCost: { magic: 1, electric: 1 },
+        counterAmount: 2,
+      });
     }
   }
 
@@ -10259,12 +10306,35 @@ function applyCleave(attacker, defender, fromDeltaIndex = 0) {
   return { pending: false, nextDeltaIndex: deltas.length };
 }
 
-function capUnitDamage(target, amount) {
+function countHeroUnitsOnField(playerId, game = state) {
+  let count = 0;
+  for (const row of game.board) {
+    for (const unit of row) {
+      if (unit?.owner === playerId && (unit.tags || []).includes("勇者")) count += 1;
+    }
+  }
+  return count;
+}
+
+function applyBraveBloodDamageReduction(target, amount, game = state) {
+  if (!target || amount <= 0 || (target.braveBloodCounter || 0) <= 0) return amount;
+  target.braveBloodCounter -= 1;
+  const absorb = countHeroUnitsOnField(target.owner, game) * 2;
+  const reduced = Math.max(0, amount - absorb);
+  log(
+    game,
+    `「${target.name}」勇血カウンター-1: ダメージ${amount}→${reduced}（[勇者]×${absorb / 2}）`,
+  );
+  return reduced;
+}
+
+function capUnitDamage(target, amount, game = state) {
   let reduced = amount;
   const airBuff = target?.closeAirSupportTurnBuff;
   if (airBuff?.damageReduction) {
     reduced = Math.max(0, reduced - airBuff.damageReduction);
   }
+  reduced = applyBraveBloodDamageReduction(target, reduced, game);
   return hasKeyword(target, "oneDamage") ? Math.min(reduced, 1) : reduced;
 }
 
@@ -10283,7 +10353,7 @@ function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
   ) {
     return { damage: 0, pending: false };
   }
-  const damage = capUnitDamage(target, rawAmount);
+  const damage = capUnitDamage(target, rawAmount, game);
   target.currentHp = (target.currentHp ?? target.maxHp ?? target.hp ?? 0) - damage;
   const triggerResult = triggerAbilities(game, target.owner, target, "onDamageReceived", { ...source, damage });
   const pending = triggerResult === "pending" || !!game.pendingChoice || !!game.pendingTarget;
@@ -14922,6 +14992,31 @@ function drawCard(x, y, w, h, card, options = {}) {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(`煙${card.smokeScreenCounter}`, bx, by);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.restore();
+    }
+    if ((card.braveBloodCounter || 0) > 0) {
+      const r = options.small ? 9 : 12;
+      const smokeOffset = (card.smokeScreenCounter || 0) > 0 ? r * 2 + 4 : 0;
+      const bx = x + w - r - 4 - smokeOffset;
+      const by = y + r + 4;
+      ctx.save();
+      ctx.shadowColor = "#a04040";
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(120,30,30,0.92)";
+      ctx.fill();
+      ctx.strokeStyle = "#ffb0b0";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#ffe0e0";
+      ctx.font = `800 ${options.small ? 8 : 10}px 'Yu Gothic UI', sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`勇${card.braveBloodCounter}`, bx, by);
       ctx.textAlign = "left";
       ctx.textBaseline = "alphabetic";
       ctx.restore();

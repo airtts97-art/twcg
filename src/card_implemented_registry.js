@@ -59,6 +59,7 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782560224044", // 唯一無二にして大儀な。
   "card_1782600607874", // 北東軍第113騎兵大隊
   "card_1782592972506", // 北東軍親衛隊
+  "card_1782641805941", // 西方勇者
 ]);
 
 export function isImplementedCard(cardId) {

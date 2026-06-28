@@ -688,4 +688,27 @@ export default [
     rarity: "通常",
     imageUrl: "assets/cards/card_1782592972506.jpeg",
   },
+  {
+    id: "card_1782641805941",
+    name: "西方勇者",
+    type: "ユニット",
+    world: "ユニフォール",
+    attack: 5,
+    defense: 7,
+    description:
+      "[装甲③]　[帯電]　[機動]　[警戒]　[守護]\n出撃時：魔1と電1を支払い\n自分のユニット全員が勇血カウンター２を得る\n＊勇血カウンター\n被ダメージ前に、カウンターを1つ取り除いて、自分の場の[勇者]タグユニットの数×2だけダメージを相殺する(ただし0以下にはならない)",
+    flavorText:
+      "シャウビエム朝廷はリッサジオール連合王国に認められ　\n\"西方勇者\"\nを擁立することで成立した",
+    tags: ["シャウビエム朝廷", "純人間", "歩兵", "勇者", "王国勇者主義"],
+    costs: {
+      play: { human: 8, magic: 8, nature: 0, mineral: 1, fuel: 0, electric: 0, gold: 0 },
+      act: { human: 2, nature: 2, gold: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { gold: 0, human: 0, nature: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+    limit: 4,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782641805941.jpeg",
+  },
 ];

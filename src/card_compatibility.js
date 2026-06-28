@@ -39,6 +39,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "vsTagAtkBonus", "spendCountersForBuff", "selfCounterDeathShield",
   "payOnAttackEnhance",
   "payOptionalOnSummonSearch",
+  "payOnSummonGrantBraveBlood",
   "buffSelfAtkThisAttack", "destroyAllUnits", "expandDataLinkRange",
   "discardHandToMillOpponentDeck",
 ]);
