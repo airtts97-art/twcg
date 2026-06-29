@@ -947,6 +947,49 @@ const abilityEffects = {
     const value = (card.abilities || []).find((a) => a.effect === "grantEffectProtectToAdjacent")?.value || 1;
     log(game, `${game.players[playerId].name}: 「${card.name}」隣接ユニットに効果保護${value}を付与（アウラ）`);
   },
+  grantEffectAurasToAdjacent({ game, playerId, card }) {
+    const aura = (card.abilities || []).find((a) => a.effect === "grantEffectAurasToAdjacent") || {};
+    log(
+      game,
+      `${game.players[playerId].name}: 「${card.name}」隣接味方に効果保護${aura.protectValue || 1}・効果貫通${aura.penetrateValue || 1}（アウラ）`,
+    );
+  },
+  grantSmokeScreenToFlanking({ game, playerId, card, ability }) {
+    const amount = ability.amount || 2;
+    if (card.row == null || card.col == null) return;
+    let granted = 0;
+    for (const delta of [-1, 1]) {
+      const neighbor = game.board[card.row]?.[card.col + delta];
+      if (!neighbor || neighbor.owner !== playerId) continue;
+      neighbor.smokeScreenCounter = (neighbor.smokeScreenCounter || 0) + amount;
+      granted += 1;
+      log(game, `${game.players[playerId].name}: 「${neighbor.name}」に煙幕カウンター${amount}`);
+    }
+    if (!granted) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 左右に味方カードがない`);
+    }
+  },
+  payDefenderActCostForCoreDamage({ game, playerId, card, ability, source }) {
+    const defender = source?.attackTarget;
+    if (!defender || defender.owner === playerId) return;
+    const actCost = normalizeResourceObject(defender.actCost || {});
+    const total = totalCostAmount(actCost);
+    if (total <= 0) return;
+    game.pendingChoice = {
+      type: "payDefenderActCostBonus",
+      playerId,
+      unitRow: card.row,
+      unitCol: card.col,
+      cardName: card.name,
+      defenderName: defender.name,
+      defenderActCost: actCost,
+      total,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "payDefenderActCostBonus" };
+    game.message = `「${card.name}」: 「${defender.name}」のアクトコスト${total}を支払い、相手コアに追加ダメージ？`;
+    return "pending";
+  },
   buffSelfAtk({ game, playerId, card, ability }) {
     card.atk = (card.atk || 0) + (ability.amount || 1);
     log(game, `${game.players[playerId].name}: 「${card.name}」+${ability.amount || 1}/0 補正`);
@@ -4203,6 +4246,36 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
+  const adjacentEffectAurasMatch = text.match(
+    /このカードに隣接した味方カードは\[効果保護([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)\]と\[効果貫通([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)\]を得る/,
+  );
+  if (adjacentEffectAurasMatch && !abilities.some((a) => a.effect === "grantEffectAurasToAdjacent")) {
+    abilities.push({
+      effect: "grantEffectAurasToAdjacent",
+      protectValue: parseDeckmakerKeywordValue(adjacentEffectAurasMatch[1]) || 1,
+      penetrateValue: parseDeckmakerKeywordValue(adjacentEffectAurasMatch[2]) || 1,
+    });
+  }
+
+  const restSmokeFlankMatch = text.match(
+    /このカードをレストしてもよい、そうしたら自身の左右のカードに煙幕カウンター([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を与える/,
+  );
+  if (restSmokeFlankMatch && !abilities.some((a) => a.effect === "grantSmokeScreenToFlanking")) {
+    abilities.push({
+      trigger: "onActivate",
+      effect: "grantSmokeScreenToFlanking",
+      amount: parseDeckmakerKeywordValue(restSmokeFlankMatch[1]) || 2,
+      activationCost: {},
+    });
+  }
+
+  const payDefenderActCostMatch = text.match(
+    /攻撃時、相手ユニットのアクトコストを支払ってもよい、そうしたらそのコストの合計だけ相手に追加ダメージを与える/,
+  );
+  if (payDefenderActCostMatch && localType === "unit" && !abilities.some((a) => a.effect === "payDefenderActCostForCoreDamage")) {
+    abilities.push({ trigger: "onAttack", effect: "payDefenderActCostForCoreDamage" });
+  }
+
   // "「破壊された時：金③を得る」を与える" → grant onDestroy gainResource to target unit
   const DESC_RESOURCE_MAP_LOCAL = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
   const grantDestroyGainMatch = text.match(/「破壊された時[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る」を与える/);
@@ -5314,6 +5387,23 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782739826805") {
     if (!abilities.some((a) => a.effect === "vsMagicPlayCostAtkBonus")) {
       abilities.push({ effect: "vsMagicPlayCostAtkBonus", atkBonus: 4 });
+    }
+  }
+
+  if (card.id === "card_1782738082895") {
+    abilities.length = 0;
+    abilities.push({ effect: "grantEffectAurasToAdjacent", protectValue: 1, penetrateValue: 5 });
+    abilities.push({
+      trigger: "onActivate",
+      effect: "grantSmokeScreenToFlanking",
+      amount: 2,
+      activationCost: {},
+    });
+  }
+
+  if (card.id === "card_1782736701501") {
+    if (!abilities.some((a) => a.effect === "payDefenderActCostForCoreDamage")) {
+      abilities.push({ trigger: "onAttack", effect: "payDefenderActCostForCoreDamage" });
     }
   }
 
@@ -9372,6 +9462,8 @@ function effectProtectLevel(game, unit) {
   for (const [row, col] of adjacentCells(unit.row, unit.col)) {
     const adj = game.board[row]?.[col];
     if (adj && adj.owner === unit.owner) {
+      const auraAuras = (adj.abilities || []).find((a) => a.effect === "grantEffectAurasToAdjacent");
+      if (auraAuras) level = Math.max(level, auraAuras.protectValue || 1);
       const aura = (adj.abilities || []).find((a) => a.effect === "grantEffectProtectToAdjacent");
       if (aura) level = Math.max(level, aura.value || 1);
     }
@@ -9379,8 +9471,18 @@ function effectProtectLevel(game, unit) {
   return level;
 }
 
-function effectPenetrateLevel(sourceCard) {
-  return keywordValue(sourceCard, "effectPenetrate");
+function effectPenetrateLevel(sourceCard, game = state) {
+  let level = keywordValue(sourceCard, "effectPenetrate");
+  if (sourceCard?.row != null && sourceCard?.col != null) {
+    for (const [row, col] of adjacentCells(sourceCard.row, sourceCard.col)) {
+      const adj = game.board[row]?.[col];
+      if (adj && adj.owner === sourceCard.owner) {
+        const aura = (adj.abilities || []).find((a) => a.effect === "grantEffectAurasToAdjacent");
+        if (aura) level = Math.max(level, aura.penetrateValue || 1);
+      }
+    }
+  }
+  return level;
 }
 
 function canAffectUnitByEffect(game, target, sourceCard) {
@@ -11363,7 +11465,7 @@ function executeUnitAttack(unit, defender, target, { useCharge = false } = {}) {
   const player = state.players[unit.owner];
   if (!payAttackCosts(player, unit, { useCharge })) return fail("アクトコストが不足しています。");
 
-  triggerAttackAbilities(unit);
+  triggerAttackAbilities(unit, defender);
   if (state.pendingChoice || state.pendingTarget) {
     state.pendingAttackContinuation = {
       preDamage: true,
@@ -11421,10 +11523,15 @@ function resolveChargeAttack(useCharge) {
   return executeUnitAttack(unit, defender, pending.target, { useCharge, useChargeChosen: true });
 }
 
-function triggerAttackAbilities(unit) {
+function triggerAttackAbilities(unit, attackTarget = null) {
   for (const ability of unit.abilities || []) {
     if (ability.trigger === "onAttack") {
-      state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" } });
+      state.effectQueue.push({
+        playerId: unit.owner,
+        card: unit,
+        ability,
+        source: { zone: "board", attackTarget: attackTarget || null },
+      });
     }
   }
   processEffectQueue(state);
@@ -11455,6 +11562,41 @@ function resolvePayOptionalOnSummonSearch(pay) {
   }
   state.pendingChoice = null;
   state.selected = null;
+  completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolvePayDefenderActCostBonus(pay) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "payDefenderActCostBonus") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const qi = pending.queueItem;
+  if (pay) {
+    if (!canPay(player, pending.defenderActCost || {})) {
+      state.message = "資源が不足しています。";
+      render();
+      return false;
+    }
+    pay(player, pending.defenderActCost || {});
+    const opponent = opponentOf(pending.playerId);
+    state.players[opponent].core.hp -= pending.total || 0;
+    const costLabel = Object.entries(pending.defenderActCost || {})
+      .filter(([, amount]) => amount > 0)
+      .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
+      .join("");
+    log(
+      state,
+      `${player.name}: 「${pending.cardName}」${costLabel}支払い → 相手コアに${pending.total}ダメージ`,
+    );
+    checkWinner(state);
+  }
+  state.pendingChoice = null;
+  state.selected = { kind: "unit", row: pending.unitRow, col: pending.unitCol };
   completeAbilitySource(state, qi);
   resumePendingAfterChoice();
   processEffectQueue(state);
@@ -14457,6 +14599,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "destroyEnemyStruct") drawDestroyEnemyStructPanel(pending);
   else if (pending.type === "chargeAttack") drawChargeAttackPanel(pending);
   else if (pending.type === "payOnAttackEnhance") drawPayOnAttackEnhancePanel(pending);
+  else if (pending.type === "payDefenderActCostBonus") drawPayDefenderActCostBonusPanel(pending);
   else if (pending.type === "payOptionalOnSummonSearch") drawPayOptionalOnSummonSearchPanel(pending);
 }
 
@@ -15069,6 +15212,39 @@ function drawPayOptionalOnSummonSearchPanel(pending) {
       { accent: "p1" },
     );
     drawButton(x + 320, y + h - 58, 220, 36, "スキップ", () => { resolvePayOptionalOnSummonSearch(false); });
+  }
+}
+
+function drawPayDefenderActCostBonusPanel(pending) {
+  const x = 420, y = 280, w = 620, h = 220;
+  addHit(0, 0, W, H, () => {});
+  drawChoicePanelBase(x, y, w, h, "rgba(80,60,40,0.82)", "#d0a060");
+  ctx.fillStyle = "#ffe8c8";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」の攻撃`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(255,230,200,0.92)";
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  const costLabel = Object.entries(pending.defenderActCost || {})
+    .filter(([, amount]) => amount > 0)
+    .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
+    .join("");
+  ctx.fillText(`「${pending.defenderName}」のアクトコスト${costLabel}を支払い`, x + 28, y + 64);
+  ctx.fillText(`相手コアに追加${pending.total}ダメージ`, x + 28, y + 86);
+  const isController = canControlChoicePlayer(pending.playerId);
+  if (isController) {
+    const player = state.players[pending.playerId];
+    const canPayBonus = canPay(player, pending.defenderActCost || {});
+    drawButton(
+      x + 28,
+      y + h - 58,
+      280,
+      36,
+      `支払って追加${pending.total}ダメージ`,
+      () => { resolvePayDefenderActCostBonus(true); },
+      null,
+      canPayBonus ? { accent: "p1" } : { accent: "dim" },
+    );
+    drawButton(x + 320, y + h - 58, 220, 36, "支払わない", () => { resolvePayDefenderActCostBonus(false); });
   }
 }
 
@@ -17307,6 +17483,7 @@ const testing = {
   resolveSearchDeckPick,
   resolveChargeAttack,
   resolvePayOnAttackEnhance,
+  resolvePayDefenderActCostBonus,
   resolvePayForBuff,
   resolveDestroyEnemyStructChoice,
   resolveDestroyEnemyStructSkip,
