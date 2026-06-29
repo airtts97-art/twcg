@@ -799,6 +799,74 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const strategicBombingCard = api.cardCatalog.main["card_1782229916488"];
+  const strategicBombingAbility = (strategicBombingCard?.abilities || []).find(
+    (a) => a.effect === "destroyEnemyStructsOnPlay" && a.trigger === "onPlay",
+  );
+  out.push({
+    name: "strategic_bombing_parsed",
+    summary: {
+      found: !!strategicBombingAbility,
+      amount: strategicBombingAbility?.amount,
+    },
+  });
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.testing.setResources("p1", { funds: 20, people: 20, nature: 20, ore: 20, fuel: 20, electric: 20, magic: 20 });
+  api.state.players.p2.structs = [
+    { id: "card_1753904622342", name: "銅鉱山", type: "struct", faction: "ニュートラル" },
+    { id: "card_1753904622342", name: "銀鉱山", type: "struct", faction: "ニュートラル" },
+  ];
+  const bombingHandIdx = api.testing.addHandCard("p1", "card_1782229916488");
+  api.testing.playTactFromHand(bombingHandIdx);
+  const bombingPendingDestroy = api.state.pendingChoice?.type === "destroyEnemyStruct";
+  const bombingRemaining = api.state.pendingChoice?.remaining;
+  let bombingDestroyed = false;
+  if (bombingPendingDestroy) {
+    bombingDestroyed = api.testing.resolveDestroyEnemyStructChoice(0);
+  }
+  out.push({
+    name: "strategic_bombing_play_offers_struct_choice",
+    summary: {
+      pendingDestroyStruct: bombingPendingDestroy,
+      remaining: bombingRemaining,
+      structDestroyed: bombingDestroyed,
+      enemyStructs: api.state.players.p2.structs.length,
+    },
+  });
+
+  reset();
+  api.testing.placeUnit("militia", "p1", 2, 1);
+  const zombieUnit = api.state.board[2][1];
+  zombieUnit.currentHp = -3;
+  zombieUnit.destroyed = true;
+  zombieUnit._finalizing = true;
+  api.testing.cleanupAllDestroyed();
+  out.push({
+    name: "zombie_unit_with_destroy_flags_cleaned",
+    summary: {
+      onBoard: !!api.state.board[2][1],
+      dumpCount: api.state.players.p1.dump.length,
+    },
+  });
+
+  reset();
+  api.testing.placeUnit("militia", "p1", 2, 1, { fromDump: true, hp: 1 });
+  const fromDumpUnit = api.state.board[2][1];
+  const cleanOnSummon = !fromDumpUnit.destroyed && !fromDumpUnit._finalizing;
+  fromDumpUnit.currentHp = -2;
+  api.testing.cleanupAllDestroyed();
+  out.push({
+    name: "from_dump_unit_negative_hp_cleaned",
+    summary: {
+      onBoard: !!api.state.board[2][1],
+      dumpCount: api.state.players.p1.dump.length,
+      cleanOnSummon,
+    },
+  });
+
   const atlasCard = api.cardCatalog.main["card_1782600607874"];
   const enhanceAbility = (atlasCard?.abilities || []).find((a) => a.effect === "payOnAttackEnhance");
   out.push({
@@ -1301,6 +1369,19 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const meikyuCard = api.cardCatalog.structs["card_1753661462969"];
+  const meikyuAbility = (meikyuCard?.abilities || []).find((a) => a.effect === "structPayProduce");
+  out.push({
+    name: "fumetsu_meikyu_parsed",
+    summary: {
+      found: !!meikyuAbility,
+      effect: meikyuAbility?.effect,
+      cost: meikyuAbility?.cost,
+      produces: meikyuAbility?.produces,
+      hasChooseExchange: (meikyuCard?.abilities || []).some((a) => a.effect === "chooseExchange"),
+    },
+  });
+
   reset();
   api.testing.setResources("p1", { people: 2, funds: 0, nature: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
   api.state.players.p1.structs = [{
@@ -1334,6 +1415,47 @@ const results = await page.evaluate(() => {
       peopleAfter: api.state.players.p1.resources.people,
       fundsBefore: donaFundsBefore,
       fundsAfter: api.state.players.p1.resources.funds,
+      structRested: api.state.players.p1.structs[0]?.rested,
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { people: 4, funds: 0, nature: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.state.players.p1.structs = [{
+    id: "card_1753661462969",
+    name: "覆没の迷宮",
+    type: "struct",
+    rested: false,
+    abilities: [{
+      trigger: "onStructurePhase",
+      effect: "structPayProduce",
+      cost: { people: 2 },
+      produces: { magic: 1, ore: 2 },
+    }],
+  }];
+  api.state.pendingStructPhase = {
+    playerId: "p1",
+    activatedIndexes: [],
+    activatedTactIndexes: [],
+    resourcesBefore: { ...api.state.players.p1.resources },
+    handBefore: api.state.players.p1.hand.length,
+  };
+  api.state.phase = "structure";
+  api.state.activePlayer = "p1";
+  const meikyuPeopleBefore = api.state.players.p1.resources.people;
+  const meikyuOreBefore = api.state.players.p1.resources.ore;
+  const meikyuMagicBefore = api.state.players.p1.resources.magic;
+  api.testing.activateStructInPhase(0);
+  out.push({
+    name: "fumetsu_meikyu_one_button",
+    summary: {
+      pendingChoice: !!api.state.pendingStructPhase?.pendingResourceChoice,
+      peopleAfter: api.state.players.p1.resources.people,
+      oreAfter: api.state.players.p1.resources.ore,
+      magicAfter: api.state.players.p1.resources.magic,
+      peopleBefore: meikyuPeopleBefore,
+      oreBefore: meikyuOreBefore,
+      magicBefore: meikyuMagicBefore,
       structRested: api.state.players.p1.structs[0]?.rested,
     },
   });
@@ -2037,6 +2159,17 @@ assert(byName.sabotage_destroy_target_struct_parsed.trigger === "onPlay", "破�
 assert(byName.sabotage_play_offers_struct_choice.pendingDestroyStruct === true, "破壊工作 should open enemy struct choice");
 assert(byName.sabotage_play_offers_struct_choice.structDestroyed === true, "破壊工作 struct choice should destroy a struct");
 assert(byName.sabotage_play_offers_struct_choice.enemyStructs === 0, "破壊工作 should remove destroyed enemy struct");
+assert(byName.strategic_bombing_parsed.found === true, "戦略爆撃 should parse destroyEnemyStructsOnPlay");
+assert(byName.strategic_bombing_parsed.amount === 15, "戦略爆撃 destroy amount should be 15");
+assert(byName.strategic_bombing_play_offers_struct_choice.pendingDestroyStruct === true, "戦略爆撃 should open enemy struct choice modal");
+assert(byName.strategic_bombing_play_offers_struct_choice.remaining === 15, "戦略爆撃 should allow up to 15 destroys");
+assert(byName.strategic_bombing_play_offers_struct_choice.structDestroyed === true, "戦略爆撃 struct choice should destroy a struct");
+assert(byName.strategic_bombing_play_offers_struct_choice.enemyStructs === 1, "戦略爆撃 should leave remaining enemy structs after one pick");
+assert(byName.zombie_unit_with_destroy_flags_cleaned.onBoard === false, "HP<=0 unit with stale destroy flags should leave the board");
+assert(byName.zombie_unit_with_destroy_flags_cleaned.dumpCount === 1, "HP<=0 zombie unit should go to dump");
+assert(byName.from_dump_unit_negative_hp_cleaned.onBoard === false, "fromDump unit at negative HP should be destroyed");
+assert(byName.from_dump_unit_negative_hp_cleaned.dumpCount === 1, "fromDump unit at negative HP should go to dump");
+assert(byName.from_dump_unit_negative_hp_cleaned.cleanOnSummon === true, "fromDump summon should not carry destroy flags");
 assert(byName.pay_on_attack_enhance_parsed.found === true, "payOnAttackEnhance should parse from card text");
 assert(byName.pay_on_attack_enhance_parsed.payCost?.people === 1, "payOnAttackEnhance people cost should be 1");
 assert(byName.pay_on_attack_enhance_parsed.payCost?.nature === 2, "payOnAttackEnhance nature cost should be 2");
@@ -2112,6 +2245,16 @@ assert(byName.dona_camp_parsed.produces?.funds === 5, "ドーナー強制収容�
 assert(byName.dona_camp_paid_produce.peopleAfter === byName.dona_camp_paid_produce.peopleBefore - 1, "ドーナー強制収容所 should consume 1 people");
 assert(byName.dona_camp_paid_produce.fundsAfter === byName.dona_camp_paid_produce.fundsBefore + 5, "ドーナー強制収容所 should gain 5 funds");
 assert(byName.dona_camp_paid_produce.structRested === true, "ドーナー強制収容所 should rest after activation");
+assert(byName.fumetsu_meikyu_parsed.found === true, "覆没の迷宮 should parse structPayProduce");
+assert(byName.fumetsu_meikyu_parsed.cost?.people === 2, "覆没の迷宮 should cost 2 people");
+assert(byName.fumetsu_meikyu_parsed.produces?.magic === 1, "覆没の迷宮 should produce 1 magic");
+assert(byName.fumetsu_meikyu_parsed.produces?.ore === 2, "覆没の迷宮 should produce 2 ore");
+assert(byName.fumetsu_meikyu_parsed.hasChooseExchange === false, "覆没の迷宮 should not use chooseExchange");
+assert(byName.fumetsu_meikyu_one_button.pendingChoice === false, "覆没の迷宮 should activate in one button");
+assert(byName.fumetsu_meikyu_one_button.peopleAfter === byName.fumetsu_meikyu_one_button.peopleBefore - 2, "覆没の迷宮 should consume 2 people");
+assert(byName.fumetsu_meikyu_one_button.oreAfter === byName.fumetsu_meikyu_one_button.oreBefore + 2, "覆没の迷宮 should gain 2 ore");
+assert(byName.fumetsu_meikyu_one_button.magicAfter === byName.fumetsu_meikyu_one_button.magicBefore + 1, "覆没の迷宮 should gain 1 magic");
+assert(byName.fumetsu_meikyu_one_button.structRested === true, "覆没の迷宮 should rest after activation");
 assert(byName.kiha_eho_facility_import_dedupes_catalog.catalogHits === 1, "キハエーホ import should keep one catalog entry");
 assert(byName.kiha_eho_facility_import_dedupes_catalog.inStructs === true, "キハエーホ should live in struct catalog");
 assert(byName.kiha_eho_facility_import_dedupes_catalog.inMain === false, "キハエーホ stale main entry should be removed");

@@ -36,11 +36,6 @@ for (const id of [...IMPLEMENTED_CARD_IDS].sort()) {
     continue;
   }
   if (id === "card_1755670973607") {
-    RISK.effectLost.push({
-      id,
-      name: fb.name,
-      issue: "Firebase=(効果無し)。実装は毎ターン人②金②。同期後は常駐収入が消える",
-    });
     continue;
   }
   if (id === "card_1782225519182") {
