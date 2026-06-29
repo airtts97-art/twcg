@@ -35,7 +35,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "adjacentTagBuff", "grantMobileIfAnyTag", "grantConditionalKeywordsByCounter", "goldGolemStrike",
   "payDestroyUpToEnemyCards", "registerDumpLifeGain", "enterRestedLocked", "unrestSelf",
   "summonTagFromDumpAndRest", "summonHandUnitToOpponent", "kaijuAwaken", "damageOwnCore",
-  "redirectDamageToOther", "revealTagsForResources", "surviveDamageAndOptionalBuff",
+  "redirectDamageToOther", "revealTagsForResources", "surviveDamageAndOptionalBuff", "optionalPayBuffOnDamageDealt",
   "vsTagAtkBonus", "spendCountersForBuff", "selfCounterDeathShield",
   "payOnAttackEnhance",
   "payOptionalOnSummonSearch",

@@ -101,7 +101,7 @@ const KEYWORD_DEFINITIONS = {
   arc: { label: "曲射", description: "前方へこの値まで攻撃でき、反撃を受けない。延長射程は相手コアにも届く（コアは最前線の1行奥）。" },
   legendary: { label: "伝説", description: "Only one copy should be put in a deck." },
   alert: { label: "警戒", description: "Unrests at the end of its controller's turn." },
-  guard: { label: "守護", description: "Protects adjacent allied units from ordinary attacks." },
+  guard: { label: "守護", description: "隣接する味方ユニットと、召喚行でコアに隣接するマスにいる場合はコアを通常攻撃から守る。" },
   selfDestruct: { label: "自爆", description: "When destroyed, damages adjacent units by the keyword value." },
   raid: { label: "奇襲", description: "May be summoned to the second row if that row is not enemy controlled." },
   immobile: { label: "不動", description: "Cannot move." },
@@ -738,16 +738,15 @@ const abilityEffects = {
   },
   payOnAttackEnhance({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
-    const payCost = ability.payCost || {};
-    const canPayEnhance = canPay(player, payCost);
+    const payCost = normalizePayOnAttackEnhanceCost(ability.payCost || {});
     game.pendingChoice = {
       type: "payOnAttackEnhance",
       playerId,
       unitRow: card.row,
       unitCol: card.col,
+      unitInstanceId: card.instanceId,
       cardName: card.name,
       payCost,
-      canPayEnhance,
       pierce: ability.pierce || 0,
       armor: ability.armor || 0,
       atkBuff: ability.atkBuff || 0,
@@ -2379,15 +2378,34 @@ const abilityEffects = {
 
     game.pendingChoice = {
       type: "payForBuff",
+      triggerContext: "onDamageReceived",
       playerId,
       cardName: card.name,
       unitRow: card.row,
       unitCol: card.col,
+      unitInstanceId: card.instanceId,
       resource,
       amount,
       atkBuff: ability.atkBuff || 1,
       hpBuff: ability.hpBuff || 2,
     };
+    return "pending";
+  },
+  optionalPayBuffOnDamageDealt({ game, playerId, card, ability }) {
+    game.pendingChoice = {
+      type: "payForBuff",
+      triggerContext: "onDamageDealt",
+      playerId,
+      cardName: card.name,
+      unitRow: card.row,
+      unitCol: card.col,
+      unitInstanceId: card.instanceId,
+      resource: ability.resource || "funds",
+      amount: ability.amount || 1,
+      atkBuff: ability.atkBuff || 1,
+      hpBuff: ability.hpBuff || 1,
+    };
+    game.message = `「${card.name}」: 与ダメージ後に資源を支払って強化しますか？`;
     return "pending";
   },
 };
@@ -3345,6 +3363,7 @@ function applyFirebaseDeckmakerCards(cards, {
         card.description = String(deckmakerCard.description);
       }
       const group = catalogGroupForCard(card);
+      removeCardFromOtherCatalogGroups(card.id, group);
       cardCatalog[group][card.id] = card;
       firebaseIds.add(card.id);
       count += 1;
@@ -3356,6 +3375,7 @@ function applyFirebaseDeckmakerCards(cards, {
   applySupplementalCardFallbacks(firebaseIds);
   ensureAllCardKeywords();
   refreshCatalogCompatibility(cardCatalog);
+  sanitizeCatalogCardPlacement();
   const drift = collectCardDrift({
     firebaseCards: cards,
     supplementalCards,
@@ -3471,15 +3491,74 @@ function catalogGroupForCard(card) {
   return "main";
 }
 
+const CATALOG_GROUPS = ["cores", "main", "structs"];
+
+function catalogGroupPriority(type) {
+  if (type === "core") return 3;
+  if (type === "struct") return 2;
+  return 1;
+}
+
+function preferCatalogCard(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return catalogGroupPriority(b.type) > catalogGroupPriority(a.type) ? b : a;
+}
+
+function removeCardFromOtherCatalogGroups(cardId, keepGroup) {
+  if (!cardId || !keepGroup) return;
+  for (const group of CATALOG_GROUPS) {
+    if (group === keepGroup) continue;
+    delete cardCatalog[group][cardId];
+  }
+}
+
+function removeCardFromOtherPersistedGroups(groups, cardId, keepGroup) {
+  if (!cardId || !keepGroup || !groups) return;
+  for (const group of CATALOG_GROUPS) {
+    if (group === keepGroup) continue;
+    delete groups[group]?.[cardId];
+  }
+}
+
+function upsertCatalogCard(card, groups = null) {
+  if (!card?.id) return null;
+  const normalized = applyCardCompatibility(normalizeCardResources(card));
+  const group = catalogGroupForCard(normalized);
+  removeCardFromOtherCatalogGroups(normalized.id, group);
+  cardCatalog[group][normalized.id] = normalized;
+  if (groups) {
+    removeCardFromOtherPersistedGroups(groups, normalized.id, group);
+    groups[group][normalized.id] = normalized;
+  }
+  return normalized;
+}
+
+function sanitizeCatalogCardPlacement() {
+  const winners = new Map();
+  for (const group of CATALOG_GROUPS) {
+    for (const card of Object.values(cardCatalog[group] || {})) {
+      if (!card?.id) continue;
+      winners.set(card.id, preferCatalogCard(winners.get(card.id), card));
+    }
+  }
+  for (const [cardId, card] of winners) {
+    const group = catalogGroupForCard(card);
+    removeCardFromOtherCatalogGroups(cardId, group);
+    cardCatalog[group][cardId] = card;
+  }
+}
+
 function registerImportedCards(groups = {}) {
   let count = 0;
-  for (const group of ["cores", "main", "structs"]) {
+  for (const group of CATALOG_GROUPS) {
     for (const card of Object.values(groups[group] || {})) {
       if (!card?.id) continue;
-      cardCatalog[group][card.id] = applyCardCompatibility(normalizeCardResources(card));
+      upsertCatalogCard(card);
       count += 1;
     }
   }
+  sanitizeCatalogCardPlacement();
   return count;
 }
 
@@ -3525,17 +3604,66 @@ function parseActivationCostFromText(costText) {
   return cost;
 }
 
-function parsePayOnAttackEnhanceFromText(text) {
-  const match = String(text).match(
-    /攻撃(?:時|する(?:とき|と|時))に([^を]+?)を支払(?:った|う)?場合[：:]\s*\[貫通([^\]]+)\]\s*[、,]\s*\[装甲([^\]]+)\]\s*[、,]\s*ATK[+＋]([①②③④⑤⑥⑦⑧⑨0-9０-９]+)(?:\/[±＋+]?0|の修正を得る)/,
+function parsePayBuffOnDamageDealtFromText(text) {
+  const match = String(text || "").match(
+    /与ダメージ時([金人自鉱燃電魔])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払(?:った場合|う(?:事|こ)と(?:が)?(?:出来|でき)る場合)[：:\s]*\+([0-9０-９①②③④⑤⑥⑦⑧⑨]+)[／\/]([+＋]?[0-9０-９①②③④⑤⑥⑦⑧⑨]+)の修正を得る/,
   );
   if (!match) return null;
+  const resMap = { 金: "funds", 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 电: "electric", 電: "electric", 魔: "magic" };
   return {
-    payCost: parseActivationCostFromText(match[1]),
-    pierce: parseDeckmakerKeywordValue(match[2]) || 1,
-    armor: parseDeckmakerKeywordValue(match[3]) || 1,
-    atkBuff: parseDeckmakerKeywordValue(match[4]) || 1,
+    resource: resMap[match[1]] || "funds",
+    amount: parseDeckmakerKeywordValue(match[2]) || 1,
+    atkBuff: parseDeckmakerKeywordValue(match[3]) || 1,
+    hpBuff: parseDeckmakerKeywordValue(match[4]) || 1,
   };
+}
+
+function findPayForBuffUnit(pending, game = state) {
+  if (!pending) return null;
+  if (pending.unitInstanceId != null) {
+    const byId = findUnitByInstanceId(game, pending.unitInstanceId);
+    if (byId) return byId;
+  }
+  return game.board[pending.unitRow]?.[pending.unitCol] || null;
+}
+
+function parsePayOnAttackEnhanceFromText(text) {
+  const patterns = [
+    /攻撃(?:時|する(?:とき|と|時))(?:に)?[、,]?([^を]+?)を支払(?:った|う)?場合[：:\s]*\[貫通([^\]]+)\]\s*[、,]\s*\[装甲([^\]]+)\]\s*[、,]\s*ATK[+＋]([①②③④⑤⑥⑦⑧⑨0-9０-９]+)(?:\/[±＋+]?0|の修正を得る)/,
+    /攻撃(?:時|する(?:とき|と|時))(?:に)?[、,]?([^を]+?)を支払(?:った|う)[：:\s]*\[貫通([^\]]+)\]\s*[、,]\s*\[装甲([^\]]+)\]\s*[、,]\s*ATK[+＋]([①②③④⑤⑥⑦⑧⑨0-9０-９]+)(?:\/[±＋+]?0|の修正を得る)/,
+  ];
+  for (const pattern of patterns) {
+    const match = String(text || "").match(pattern);
+    if (!match) continue;
+    const payCost = parseActivationCostFromText(match[1]);
+    if (!Object.keys(payCost).length) continue;
+    return {
+      payCost,
+      pierce: parseDeckmakerKeywordValue(match[2]) || 1,
+      armor: parseDeckmakerKeywordValue(match[3]) || 1,
+      atkBuff: parseDeckmakerKeywordValue(match[4]) || 1,
+    };
+  }
+  return null;
+}
+
+function normalizePayOnAttackEnhanceCost(cost = {}) {
+  return normalizeResourceObject(cost);
+}
+
+function findPayOnAttackEnhanceUnit(pending, game = state) {
+  if (!pending) return null;
+  if (pending.unitInstanceId != null) {
+    const byId = findUnitByInstanceId(game, pending.unitInstanceId);
+    if (byId) return byId;
+  }
+  const byPos = game.board[pending.unitRow]?.[pending.unitCol];
+  if (byPos && (pending.unitInstanceId == null || byPos.instanceId === pending.unitInstanceId)) return byPos;
+  return byPos || null;
+}
+
+function canPayOnAttackEnhance(player, payCost = {}) {
+  return canPay(player, normalizePayOnAttackEnhanceCost(payCost));
 }
 
 function fromDeckmakerCosts(costs = {}) {
@@ -4014,6 +4142,14 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // onDamageDealt resource gain: "与ダメージ時：鉱Xと燃Yを得る"
+  const payDamageDealtBuffParsed = parsePayBuffOnDamageDealtFromText(text);
+  if (payDamageDealtBuffParsed && localType === "unit" && !abilities.some((a) => a.effect === "optionalPayBuffOnDamageDealt")) {
+    abilities.push({
+      trigger: "onDamageDealt",
+      effect: "optionalPayBuffOnDamageDealt",
+      ...payDamageDealtBuffParsed,
+    });
+  }
   const dealDamageGainPatterns = [
     [/与ダメージ時[^。\n]*?金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
     [/与ダメージ時[^。\n]*?人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
@@ -4661,6 +4797,15 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onStructurePhase", effect: "drawCards", amount: 1 });
   }
 
+  if (card.id === "card_1782229353995" && !abilities.some((a) => a.effect === "destroyEnemyStructs")) {
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "destroyEnemyStructs",
+      fuelCost: 1,
+      amount: 2,
+    });
+  }
+
   if (card.id === "card_1782545233380") {
     abilities.length = 0;
     abilities.push({
@@ -4756,6 +4901,17 @@ function parseDeckmakerAbilities(card, localType) {
     if (!abilities.some((a) => a.effect === "vsArmorAtkBonus")) {
       abilities.push({ effect: "vsArmorAtkBonus", atkBonus: 2 });
     }
+  }
+
+  if (card.id === "card_1782600607874" && !abilities.some((a) => a.effect === "payOnAttackEnhance")) {
+    abilities.push({
+      trigger: "onAttack",
+      effect: "payOnAttackEnhance",
+      payCost: { people: 1, nature: 2 },
+      pierce: 3,
+      armor: 1,
+      atkBuff: 3,
+    });
   }
 
   if (card.id === "card_1782211899987") {
@@ -4899,6 +5055,16 @@ function parseDeckmakerAbilities(card, localType) {
     }
     if (!abilities.some((a) => a.effect === "gainResource" && a.trigger === "onDestroyEnemyUnit")) {
       abilities.push({ trigger: "onDestroyEnemyUnit", effect: "gainResource", resource: "funds", amount: 3 });
+    }
+    if (!abilities.some((a) => a.effect === "optionalPayBuffOnDamageDealt")) {
+      abilities.push({
+        trigger: "onDamageDealt",
+        effect: "optionalPayBuffOnDamageDealt",
+        resource: "funds",
+        amount: 6,
+        atkBuff: 1,
+        hpBuff: 1,
+      });
     }
   }
 
@@ -5102,13 +5268,13 @@ function importDeckmakerAllData(payload) {
     if (!card) continue;
     const group = catalogGroupForCard(card);
     const sourceImage = deckmakerImageUrl(deckmakerCard);
-    if (isUsableImageUrl(sourceImage)) card.imageUrl = sourceImage;
-    else if (!isUsableImageUrl(card.imageUrl)) {
+    if (isUsableImageUrl(sourceImage) && !(sourceImage.startsWith("data:image/") && /^card_\d+$/.test(card.id))) {
+      card.imageUrl = sourceImage;
+    } else if (!isUsableImageUrl(card.imageUrl)) {
       const bundled = cardCatalog[group][card.id];
       if (isUsableImageUrl(bundled?.imageUrl)) card.imageUrl = bundled.imageUrl;
     }
-    groups[group][card.id] = card;
-    cardCatalog[group][card.id] = card;
+    upsertCatalogCard(card, groups);
     importedCards += 1;
   }
   persistCustomCards(groups);
@@ -6546,11 +6712,16 @@ function groupedCardEntries(ids, catalog) {
 }
 
 function allLibraryCards() {
-  return [
+  const byId = new Map();
+  for (const card of [
     ...Object.values(cardCatalog.cores),
     ...Object.values(cardCatalog.main).filter((card) => !card.fixture),
     ...Object.values(cardCatalog.structs),
-  ];
+  ]) {
+    if (!card?.id) continue;
+    byId.set(card.id, preferCatalogCard(byId.get(card.id), card));
+  }
+  return [...byId.values()];
 }
 
 function filteredLibraryCards() {
@@ -7075,6 +7246,22 @@ function applyConditionalBuff(unit, key, active, { atk = 0, hp = 0 } = {}) {
     unit.currentHp = Math.min(unit.maxHp, Math.max(1, (unit.currentHp || 1) - (applied.hp || 0)));
     delete unit.continuousBuffs[key];
   }
+}
+
+function unitDisplayStats(card) {
+  if (!card || card.type !== "unit") return null;
+  const atk = card.atk ?? 0;
+  const maxHp = card.maxHp ?? card.hp ?? 0;
+  const currentHp = card.currentHp ?? card.hp ?? maxHp;
+  const hasRuntimeHp = card.currentHp != null || card.maxHp != null;
+  return { atk, currentHp, maxHp, hasRuntimeHp };
+}
+
+function formatUnitStatsText(card) {
+  const stats = unitDisplayStats(card);
+  if (!stats) return "";
+  if (stats.hasRuntimeHp) return `ATK ${stats.atk}  HP ${stats.currentHp}/${stats.maxHp}`;
+  return `ATK ${stats.atk}  HP ${stats.maxHp}`;
 }
 
 function applyConditionalKeywordValue(unit, key, active, keywordId, value) {
@@ -7971,10 +8158,11 @@ function resolvePayForBuff(pay) {
   const pending = state.pendingChoice;
   if (pending?.type !== "payForBuff") return false;
   const player = state.players[pending.playerId];
-  const unit = state.board[pending.unitRow]?.[pending.unitCol];
+  const unit = findPayForBuffUnit(pending);
   if (pay) {
     if ((player.resources[pending.resource] || 0) < pending.amount) {
       state.message = "資源が不足しています。";
+      render();
       return false;
     }
     addResources(player, pending.resource, -pending.amount);
@@ -9217,6 +9405,16 @@ function activateStructHPAbility(index) {
   return true;
 }
 
+function finishPendingEnemyStructChoice(pending, choice) {
+  const player = state.players[pending.playerId];
+  if (choice.remaining > 0) {
+    log(state, `${player.name}: これ以上破壊できる相手ストラクトがない`);
+  }
+  pending.pendingEnemyStructChoice = null;
+  restActivatedStructAfterChoice(pending, { cardName: choice.cardName });
+  processEffectQueue(state);
+}
+
 function activateStructInPhase(index) {
   if (!canControlActivePlayer()) return false;
   if (state.pendingChoice) return false;
@@ -9233,13 +9431,28 @@ function activateStructInPhase(index) {
   if (!hasMultiActivate && pending.activatedIndexes.includes(index)) return false;
 
   if (!canAffordStructActivation(struct, player)) return false;
-  if (!hasMultiActivate && !pending.activatedIndexes.includes(index)) {
-    pending.activatedIndexes.push(index);
-  }
+  const markActivated = !hasMultiActivate && !pending.activatedIndexes.includes(index);
+  if (markActivated) pending.activatedIndexes.push(index);
+
+  const enemyChoiceBefore = pending.pendingEnemyStructChoice;
+  const resourceChoiceBefore = pending.pendingResourceChoice;
+  const restedBefore = struct.rested;
+
   triggerAbilities(state, pending.playerId, struct, "onStructurePhase");
+
+  const effectEngaged = pending.pendingEnemyStructChoice !== enemyChoiceBefore
+    || pending.pendingResourceChoice !== resourceChoiceBefore
+    || struct.rested !== restedBefore;
+  if (markActivated && !effectEngaged) {
+    const activatedPos = pending.activatedIndexes.indexOf(index);
+    if (activatedPos >= 0) pending.activatedIndexes.splice(activatedPos, 1);
+    state.message = `「${struct.name}」: 効果を発動できませんでした。`;
+    log(state, state.message);
+  }
+
   syncOnlineAction("structActivate");
   render();
-  return true;
+  return effectEngaged;
 }
 
 function activateTactInPhase(tactIndex) {
@@ -9307,15 +9520,15 @@ function resolveEnemyStructChoice(enemyIndex) {
     return;
   }
   choice.remaining -= 1;
-  if (choice.remaining > 0 && getDestroyableEnemyStructEntries(state, opponent, sourceCard).length > 0) {
+  const player = state.players[pending.playerId];
+  const canContinue = choice.remaining > 0
+    && getDestroyableEnemyStructEntries(state, opponent, sourceCard).length > 0
+    && (player.resources.fuel || 0) >= choice.fuelCost;
+  if (canContinue) {
     enemyStructChoiceScroll = 0;
     pending.pendingEnemyStructChoice = choice;
   } else {
-    if (choice.remaining > 0) {
-      log(state, `${state.players[pending.playerId].name}: これ以上破壊できる相手ストラクトがない`);
-    }
-    pending.pendingEnemyStructChoice = null;
-    processEffectQueue(state);
+    finishPendingEnemyStructChoice(pending, choice);
   }
   syncOnlineAction("enemyStructChoice");
   render();
@@ -10760,23 +10973,30 @@ function resolvePayOptionalOnSummonSearch(pay) {
   return true;
 }
 
-function resolvePayOnAttackEnhance(pay) {
+function resolvePayOnAttackEnhance(useEnhance) {
   const pending = state.pendingChoice;
   if (pending?.type !== "payOnAttackEnhance") return false;
   if (!canControlChoicePlayer(pending.playerId)) return false;
-  const unit = state.board[pending.unitRow]?.[pending.unitCol];
+  const unit = findPayOnAttackEnhanceUnit(pending);
   const player = state.players[pending.playerId];
-  if (pay) {
-    if (!unit || !canPay(player, pending.payCost || {})) {
+  const payCost = normalizePayOnAttackEnhanceCost(pending.payCost || {});
+  if (useEnhance) {
+    if (!unit || unit.owner !== pending.playerId) {
+      state.message = "攻撃ユニットが見つかりません。";
+      render();
+      return false;
+    }
+    if (!canPayOnAttackEnhance(player, payCost)) {
       state.message = "資源が不足しています。";
       render();
       return false;
     }
-    pay(player, pending.payCost || {});
+    pay(player, payCost);
     unit.attackStrikeBonus = (unit.attackStrikeBonus || 0) + (pending.atkBuff || 0);
     unit.attackPierceBonus = (unit.attackPierceBonus || 0) + (pending.pierce || 0);
     unit.attackArmorBonus = (unit.attackArmorBonus || 0) + (pending.armor || 0);
-    const costLabel = Object.entries(pending.payCost || {})
+    const costLabel = Object.entries(payCost)
+      .filter(([, amount]) => amount > 0)
       .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
       .join("");
     log(
@@ -10786,7 +11006,7 @@ function resolvePayOnAttackEnhance(pay) {
   }
   const qi = pending.queueItem;
   state.pendingChoice = null;
-  state.selected = null;
+  state.selected = { kind: "unit", row: unit?.row ?? pending.unitRow, col: unit?.col ?? pending.unitCol };
   completeAbilitySource(state, qi);
   resumePendingAfterChoice();
   processEffectQueue(state);
@@ -10811,7 +11031,7 @@ function canAttackUnit(attacker, defender) {
   if (forwardDistance < 1 || forwardDistance > maxRows) {
     return { ok: false, reason: "攻撃範囲外です。" };
   }
-  if (hasKeyword(defender, "flying") && !hasKeyword(attacker, "flying") && !hasKeyword(attacker, "antiAir") && attacker.atk <= keywordValue(defender, "flying")) {
+  if (!canReachFlyingTarget(attacker, defender)) {
     return { ok: false, reason: "航空ユニットへ攻撃できません。" };
   }
   if (isGuardedFrom(attacker, defender)) {
@@ -10830,7 +11050,7 @@ function isGuardedFrom(attacker, defender) {
     const guardian = state.board[defender.row]?.[defender.col + delta];
     if (!guardian || guardian.owner !== defender.owner || !hasKeyword(guardian, "guard")) continue;
     // 守護ユニットが航空を持ち、攻撃者がそこへ攻撃できない場合はガード無効
-    if (hasKeyword(guardian, "flying") && !hasKeyword(attacker, "flying") && !hasKeyword(attacker, "antiAir") && attacker.atk <= keywordValue(guardian, "flying")) continue;
+    if (hasKeyword(guardian, "flying") && !canReachFlyingTarget(attacker, guardian)) continue;
     return true;
   }
   return false;
@@ -10858,6 +11078,33 @@ function unitHasArmorEffect(unit) {
   return keywordValue(unit, "armor") > 0 || Number(unit.armor) > 0;
 }
 
+function effectiveAttackPower(attacker, defender = null) {
+  if (!attacker) return 0;
+  let atk = (attacker.atk || 0) + (attacker.attackStrikeBonus || 0);
+  if (!defender) return atk;
+  for (const ability of attacker.abilities || []) {
+    if (ability.effect === "vsTagAtkBonus" && ability.vsTag && (defender.tags || []).includes(ability.vsTag)) {
+      atk += ability.atkBonus || 1;
+    }
+    if (ability.effect === "vsArmorAtkBonus" && unitHasArmorEffect(defender)) {
+      atk += ability.atkBonus || 1;
+    }
+  }
+  return atk;
+}
+
+function canReachFlyingTarget(attacker, flyingTarget) {
+  if (!hasKeyword(flyingTarget, "flying")) return true;
+  if (hasKeyword(attacker, "flying") || hasKeyword(attacker, "antiAir")) return true;
+  return effectiveAttackPower(attacker, flyingTarget) > keywordValue(flyingTarget, "flying");
+}
+
+function canCounterFlyingAttacker(defender, flyingAttacker) {
+  if (!hasKeyword(flyingAttacker, "flying")) return true;
+  if (hasKeyword(defender, "flying") || hasKeyword(defender, "antiAir")) return true;
+  return effectiveAttackPower(defender, flyingAttacker) > keywordValue(flyingAttacker, "flying");
+}
+
 function applySuppressionToTarget(attacker, target, game = state) {
   const amount = keywordValue(attacker, "suppression");
   if (amount <= 0 || !target || target.owner === attacker.owner) return;
@@ -10867,15 +11114,7 @@ function applySuppressionToTarget(attacker, target, game = state) {
 }
 
 function calculateAttackDamage(attacker, defender, { useCharge = false } = {}) {
-  let atk = (attacker.atk || 0) + (attacker.attackStrikeBonus || 0);
-  for (const ability of attacker.abilities || []) {
-    if (ability.effect === "vsTagAtkBonus" && ability.vsTag && (defender?.tags || []).includes(ability.vsTag)) {
-      atk += ability.atkBonus || 1;
-    }
-    if (ability.effect === "vsArmorAtkBonus" && unitHasArmorEffect(defender)) {
-      atk += ability.atkBonus || 1;
-    }
-  }
+  let atk = effectiveAttackPower(attacker, defender);
   const ignoresArmor = useCharge && hasKeyword(attacker, "charge");
   const armorVal = defenderArmorValue(defender, attacker, { useCharge });
   const pierce = keywordValue(attacker, "pierce") + (attacker.attackPierceBonus || 0);
@@ -10886,7 +11125,7 @@ function calculateAttackDamage(attacker, defender, { useCharge = false } = {}) {
 function canCounterAttack(defender, attacker) {
   if (defender.rested) return false;
   if (hasKeyword(attacker, "arc")) return false;
-  if (hasKeyword(attacker, "flying") && !hasKeyword(defender, "flying") && defender.atk <= keywordValue(attacker, "flying")) return false;
+  if (!canCounterFlyingAttacker(defender, attacker)) return false;
   return true;
 }
 
@@ -11039,7 +11278,10 @@ function shouldDeferUnitDestruction(game, unit) {
   if (unit.noDestroyDuringEffectResolution) return true;
   const pending = game.pendingChoice;
   if (!pending) return false;
-  if (pending.type === "payForBuff" && pending.unitRow === unit.row && pending.unitCol === unit.col) return true;
+  if (pending.type === "payForBuff") {
+    if (pending.unitInstanceId != null && unit?.instanceId === pending.unitInstanceId) return true;
+    if (pending.unitRow === unit.row && pending.unitCol === unit.col) return true;
+  }
   if (pending.type === "revealPick" && pending.queueItem?.card?.instanceId === unit.instanceId) return true;
   return false;
 }
@@ -11094,22 +11336,26 @@ function cleanupAllDestroyed(killer = null, game) {
   refreshContinuousEffects(g);
 }
 
-function coreGuardRows(defenderPlayerId) {
-  const defender = state.players[defenderPlayerId];
-  return [...new Set([defender.directRow, defender.summonRow].filter(
-    (row) => Number.isInteger(row) && row >= 0 && row < ROWS,
-  ))];
+function coreGuardAdjacentCols(row) {
+  return [BOARD_CORE_COL - 1, BOARD_CORE_COL, BOARD_CORE_COL + 1]
+    .filter((col) => unitFieldColsForRow(row).includes(col));
+}
+
+function isUnitGuardingCore(guardian, defenderPlayerId) {
+  if (!guardian || guardian.owner !== defenderPlayerId || !hasKeyword(guardian, "guard")) return false;
+  const summonRow = PLAYERS[defenderPlayerId].summonRow;
+  if (guardian.row !== summonRow) return false;
+  return coreGuardAdjacentCols(summonRow).includes(guardian.col);
 }
 
 function isCoreGuardedFrom(attacker, defenderPlayerId) {
   if (hasKeyword(attacker, "arc") || hasKeyword(attacker, "flying")) return false;
-  for (const row of coreGuardRows(defenderPlayerId)) {
-    for (let col = 0; col < COLS; col += 1) {
-      const guardian = state.board[row]?.[col];
-      if (!guardian || guardian.owner !== defenderPlayerId || !hasKeyword(guardian, "guard")) continue;
-      if (hasKeyword(guardian, "flying") && !hasKeyword(attacker, "flying") && !hasKeyword(attacker, "antiAir") && attacker.atk <= keywordValue(guardian, "flying")) continue;
-      return true;
-    }
+  const summonRow = PLAYERS[defenderPlayerId].summonRow;
+  for (const col of coreGuardAdjacentCols(summonRow)) {
+    const guardian = state.board[summonRow]?.[col];
+    if (!guardian || !isUnitGuardingCore(guardian, defenderPlayerId)) continue;
+    if (hasKeyword(guardian, "flying") && !canReachFlyingTarget(attacker, guardian)) continue;
+    return true;
   }
   return false;
 }
@@ -12386,8 +12632,8 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
 
   // ATK / HP / HP bar をカードの外（セル下部）に表示
   if (unit.type === "unit") {
-    const maxHp = unit.maxHp ?? unit.hp;
-    const curHp = unit.currentHp ?? unit.hp;
+    const unitStats = unitDisplayStats(unit);
+    const { atk, currentHp: curHp, maxHp } = unitStats;
     const hpRatio = maxHp > 0 ? Math.max(0, curHp / maxHp) : 0;
     const hpCol = hpRatio > 0.5 ? "#30c060" : hpRatio > 0.25 ? "#e0a020" : "#e02020";
     const sy = cy + cellH - statsH;
@@ -12396,7 +12642,7 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
     // ATK
     ctx.fillStyle = "#a0c8ff";
     ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(`⚔${unit.atk}`, cx + 5, sy + 14);
+    ctx.fillText(`⚔${atk}`, cx + 5, sy + 14);
     // HP
     ctx.textAlign = "right";
     ctx.fillStyle = hpCol;
@@ -14238,28 +14484,38 @@ function drawPayOptionalOnSummonSearchPanel(pending) {
 
 function drawPayOnAttackEnhancePanel(pending) {
   const x = 420, y = 280, w = 620, h = 240;
+  addHit(0, 0, W, H, () => {});
   drawChoicePanelBase(x, y, w, h, "rgba(80,60,40,0.82)", "#d0a060");
   ctx.fillStyle = "#ffe8c8";
   ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`「${pending.cardName}」の攻撃`, x + 28, y + 36);
   ctx.fillStyle = "rgba(255,230,200,0.92)";
   ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
-  const costLabel = Object.entries(pending.payCost || {})
+  const payCost = normalizePayOnAttackEnhanceCost(pending.payCost || {});
+  const costLabel = Object.entries(payCost)
+    .filter(([, amount]) => amount > 0)
     .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
     .join("");
-  ctx.fillText(`強化攻撃：${costLabel} → 貫通${pending.pierce}・装甲${pending.armor}・+${pending.atkBuff}/±0`, x + 28, y + 64);
+  ctx.fillText(`強化攻撃：${costLabel || "—"} → 貫通${pending.pierce}・装甲${pending.armor}・+${pending.atkBuff}/±0`, x + 28, y + 64);
   ctx.fillText("通常攻撃：追加コストなし", x + 28, y + 86);
+  ctx.fillStyle = "rgba(255,220,180,0.85)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("※アクトコストは攻撃開始時に支払い済みです", x + 28, y + 108);
   const isController = canControlChoicePlayer(pending.playerId);
   if (isController) {
     const player = state.players[pending.playerId];
-    const canPayEnhance = canPay(player, pending.payCost || {});
+    const payCost = normalizePayOnAttackEnhanceCost(pending.payCost || {});
+    const canPayEnhance = canPayOnAttackEnhance(player, payCost);
+    const resLine = RESOURCE_KEYS.map((key) => `${RESOURCE_LABELS[key]}${player.resources[key] || 0}`).join(" ");
+    ctx.fillStyle = "rgba(255,220,180,0.85)";
+    ctx.fillText(`所持資源：${resLine}`, x + 28, y + 128);
     drawButton(
       x + 28,
       y + h - 58,
       280,
       36,
-      `強化攻撃（${costLabel}）`,
-      canPayEnhance ? () => { resolvePayOnAttackEnhance(true); } : null,
+      `強化攻撃（${costLabel || "—"}）`,
+      () => { resolvePayOnAttackEnhance(true); },
       null,
       canPayEnhance ? { accent: "p1" } : { accent: "dim" },
     );
@@ -14267,8 +14523,12 @@ function drawPayOnAttackEnhancePanel(pending) {
     if (!canPayEnhance) {
       ctx.fillStyle = "rgba(255,200,160,0.9)";
       ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-      ctx.fillText("強化攻撃に必要な資源が不足しています。", x + 28, y + 112);
+      ctx.fillText("強化攻撃に必要な資源が不足しています。", x + 28, y + 148);
     }
+  } else {
+    ctx.fillStyle = "rgba(255,220,180,0.9)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("相手の選択を待っています。", x + 28, y + 112);
   }
 }
 
@@ -14640,10 +14900,12 @@ function drawDumpWarBondReturnPanel(pending) {
 
 function drawPayForBuffPanel(pending) {
   const x = 420, y = 300, w = 600, h = 260;
+  addHit(0, 0, W, H, () => {});
   drawChoicePanelBase(x, y, w, h, "rgba(40,80,140,0.85)", "#5090ff");
   ctx.fillStyle = "#e0f0ff";
   ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`「${pending.cardName}」被ダメージ時効果`, x + 28, y + 36);
+  const title = pending.triggerContext === "onDamageDealt" ? "与ダメージ時効果" : "被ダメージ時効果";
+  ctx.fillText(`「${pending.cardName}」${title}`, x + 28, y + 36);
   ctx.fillStyle = "rgba(200,230,255,0.95)";
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   const resLabel = RESOURCE_LABELS[pending.resource] || pending.resource;
@@ -14662,8 +14924,17 @@ function drawPayForBuffPanel(pending) {
   const isController = canControlChoicePlayer(pending.playerId);
   if (isController) {
     const canPay = curRes >= pending.amount;
-    drawButton(x + 20, y + h - 52, 270, 38, `${resLabel}${pending.amount}を支払い強化`, canPay ? () => resolvePayForBuff(true) : null, null, canPay ? { accent: "p1" } : { accent: "dim" });
-    drawButton(x + 310, y + h - 52, 270, 38, "スキップ", () => resolvePayForBuff(false));
+    drawButton(
+      x + 20,
+      y + h - 52,
+      270,
+      38,
+      `${resLabel}${pending.amount}を支払い強化`,
+      () => { resolvePayForBuff(true); },
+      null,
+      canPay ? { accent: "p1" } : { accent: "dim" },
+    );
+    drawButton(x + 310, y + h - 52, 270, 38, "スキップ", () => { resolvePayForBuff(false); });
   }
 }
 
@@ -15240,7 +15511,8 @@ function drawHandConfirmOverlay() {
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   ctx.fillStyle = theme.text;
   const typeLabel = { unit: "ユニット", tact: "指令", wild: "Wild", grand: "Grand", struct: "施設" }[card.type] || card.type;
-  const stats = card.type === "unit" ? ` / ATK ${card.atk} / HP ${card.hp}` : "";
+  const unitStats = unitDisplayStats(card);
+  const stats = unitStats ? ` / ATK ${unitStats.atk} / HP ${unitStats.currentHp}/${unitStats.maxHp}` : "";
   ctx.fillText(`${typeLabel} / ${card.faction || "ニュートラル"} / コスト ${formatCost(card.cost)}${stats}`, x + 212, y + 62, w - 228);
 
   let nextY = y + 90;
@@ -15348,7 +15620,8 @@ function drawFieldCardDetailOverlay() {
 
   const controller = card.owner ? state.players[card.owner]?.name : (selected.kind === "fieldStruct" || selected.kind === "fieldTact") ? state.players[selected.playerId]?.name : "";
   const typeLabel = { unit: "ユニット", struct: "施設", tact: "タクト" }[card.type] || card.type;
-  const stats = card.type === "unit" ? ` / ATK ${card.atk} / HP ${card.currentHp}/${card.maxHp}` : "";
+  const unitStats = unitDisplayStats(card);
+  const stats = unitStats ? ` / ATK ${unitStats.atk} / HP ${unitStats.currentHp}/${unitStats.maxHp}` : "";
   const status = (card.type === "unit" || selected.kind === "fieldTact") ? ` / ${card.rested ? "レスト" : "非レスト"}` : "";
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   ctx.fillStyle = theme.text;
@@ -15766,8 +16039,9 @@ function drawCard(x, y, w, h, card, options = {}) {
     ctx.fillStyle = "rgba(4,8,20,0.85)";
     ctx.fillRect(x + 2, statsY, w - 4, statsH);
     if (card.type === "unit" || card.type === "core") {
-      const maxHp = card.maxHp ?? card.hp;
-      const curHp = card.currentHp ?? card.hp;
+      const unitStats = card.type === "unit" ? unitDisplayStats(card) : null;
+      const maxHp = unitStats?.maxHp ?? card.maxHp ?? card.hp;
+      const curHp = unitStats?.currentHp ?? card.currentHp ?? card.hp;
       const hpRatio = maxHp > 0 ? Math.max(0, curHp / maxHp) : 0;
       const barX = x + 4; const barY = statsY + statsH - 8; const barW = w - 8;
       ctx.fillStyle = "rgba(20,20,40,0.8)"; ctx.fillRect(barX, barY, barW, 5);
@@ -15776,7 +16050,7 @@ function drawCard(x, y, w, h, card, options = {}) {
       if (card.type === "unit") {
         ctx.fillStyle = "#c0d8ff";
         ctx.font = `700 ${fs}px 'Yu Gothic UI', sans-serif`;
-        ctx.fillText(`${card.atk}`, x + 5, statsY + 12);
+        ctx.fillText(`${unitStats.atk}`, x + 5, statsY + 12);
       }
       ctx.textAlign = "right";
       ctx.fillStyle = hpRatio < 0.5 ? "#ff8080" : "#80e080";
@@ -15921,7 +16195,7 @@ function drawCardTooltip(card, mx, my) {
   const typeLabel = `${CARD_TYPE_LABELS[card.type] || card.type} / ${card.faction || "ニュートラル"}`;
   lines.push({ text: typeLabel, font: "600 11px 'Yu Gothic UI', sans-serif", color: tipTheme.text });
   if (card.type === "unit") {
-    lines.push({ text: `ATK ${card.atk}  HP ${card.hp}`, font: "700 13px 'Yu Gothic UI', sans-serif", color: "#80d0ff" });
+    lines.push({ text: formatUnitStatsText(card), font: "700 13px 'Yu Gothic UI', sans-serif", color: "#80d0ff" });
   }
   const tags = tagLabels(card);
   if (tags.length) lines.push({ text: `[${tags.join("] [")}]`, font: "600 11px 'Yu Gothic UI', sans-serif", color: "#80c0a0" });
@@ -16395,8 +16669,10 @@ const testing = {
   resolveSearchDeckPick,
   resolveChargeAttack,
   resolvePayOnAttackEnhance,
+  resolvePayForBuff,
   resolveDestroyEnemyStructChoice,
   resolveDestroyEnemyStructSkip,
+  resolveEnemyStructChoice,
   selectHandCard: selectHandCardForTest,
   selectStructDeckCard: selectStructDeckCardForTest,
   useSelectedHandCard,
@@ -16454,6 +16730,12 @@ const testing = {
   selectCoreCard,
   resetDeckBuilder,
   summary: gameSummary,
+  formatUnitStatsText,
+  effectiveAttackPower,
+  refreshContinuousEffects: () => {
+    refreshContinuousEffects(state);
+    render();
+  },
 };
 
 window.render_game_to_text = () => JSON.stringify(gameSummary());

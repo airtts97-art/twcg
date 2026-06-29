@@ -79,6 +79,23 @@ const results = await page.evaluate(() => {
   out.push(snapshot("flying_blocks_low_ground_attack"));
 
   reset();
+  api.testing.placeUnit("militia", "p1", 2, 0, { rested: false });
+  api.state.board[2][0].attackStrikeBonus = 2;
+  api.testing.placeUnit("reconPlane", "p2", 1, 0, { rested: true });
+    const flyingHpBefore = api.state.board[1][0].currentHp;
+    api.testing.selectUnit(2, 0);
+    api.testing.attack({ kind: "unit", row: 1, col: 0 });
+    out.push({
+      name: "flying_allows_buffed_ground_attack",
+      summary: {
+        effectiveAtk: api.testing.effectiveAttackPower(api.state.board[2][0], api.state.board[1][0]),
+        flyingHpBefore,
+        flyingHpAfter: api.state.board[1][0]?.currentHp,
+        attackerRested: api.state.board[2][0]?.rested,
+      },
+    });
+
+  reset();
   api.testing.placeUnit("armoredCar", "p1", 3, 0, { rested: false });
   api.testing.selectUnit(3, 0);
   api.testing.move();
@@ -684,6 +701,49 @@ const results = await page.evaluate(() => {
     },
   });
 
+  reset();
+  api.state.phase = "structure";
+  api.state.activePlayer = "p1";
+  api.state.pendingStructPhase = {
+    playerId: "p1",
+    activatedIndexes: [],
+    activatedTactIndexes: [],
+    resourcesBefore: { ...api.state.players.p1.resources },
+    handBefore: api.state.players.p1.hand.length,
+  };
+  api.testing.setResources("p1", { funds: 5, people: 5, nature: 5, ore: 0, fuel: 3, electric: 0, magic: 0 });
+  const artilleryRuntime = api.testing.catalogCard("card_1782229353995");
+  api.state.players.p1.structs = [artilleryRuntime];
+  api.state.players.p2.structs = [{
+    id: "card_1753904622342",
+    name: "銅鉱山",
+    type: "struct",
+    faction: "ニュートラル",
+    abilities: [],
+  }];
+  const enemyStructsBefore = api.state.players.p2.structs.length;
+  const fuelBefore = api.state.players.p1.resources.fuel;
+  const activated = api.testing.activateStructInPhase(0);
+  const pendingEnemyChoice = !!api.state.pendingStructPhase?.pendingEnemyStructChoice;
+  let enemyStructsAfter = enemyStructsBefore;
+  let artilleryRested = false;
+  if (pendingEnemyChoice) {
+    api.testing.resolveEnemyStructChoice(0);
+    enemyStructsAfter = api.state.players.p2.structs.length;
+    artilleryRested = api.state.players.p1.structs[0]?.rested === true;
+  }
+  out.push({
+    name: "long_range_artillery_struct_phase_activates",
+    summary: {
+      activated,
+      pendingEnemyChoice,
+      enemyStructsBefore,
+      enemyStructsAfter,
+      fuelSpent: fuelBefore - api.state.players.p1.resources.fuel,
+      artilleryRested,
+    },
+  });
+
   const sabotageCard = api.cardCatalog.main["card_1753659700866"];
   const sabotageAbility = (sabotageCard?.abilities || []).find((a) => a.effect === "destroyTargetStruct");
   out.push({
@@ -732,24 +792,77 @@ const results = await page.evaluate(() => {
   reset();
   api.state.activePlayer = "p1";
   api.state.phase = "main";
+  api.testing.setResources("p1", { funds: 5, people: 5, nature: 8, ore: 0, fuel: 0, electric: 0, magic: 0 });
   api.testing.placeUnit("card_1782600607874", "p1", 2, 2, { rested: false });
   api.testing.placeUnit("militia", "p2", 1, 2, { rested: true, hp: 20 });
+  const atlasPeopleBefore = api.state.players.p1.resources.people;
+  const atlasNatureBefore = api.state.players.p1.resources.nature;
+  const atlasFundsBefore = api.state.players.p1.resources.funds;
   const defenderHpBefore = api.state.board[1][2].currentHp;
   api.testing.selectUnit(2, 2);
   api.testing.attack({ kind: "unit", row: 1, col: 2 });
   const pendingEnhance = api.state.pendingChoice?.type === "payOnAttackEnhance";
   let defenderHpAfter = defenderHpBefore;
+  let enhanceDamage = 0;
   if (pendingEnhance) {
     api.testing.resolvePayOnAttackEnhance(true);
     defenderHpAfter = api.state.board[1][2]?.currentHp ?? 0;
+    enhanceDamage = defenderHpBefore - defenderHpAfter;
   }
   out.push({
     name: "pay_on_attack_enhance_applies_before_damage",
     summary: {
       pendingEnhance,
+      fundsSpentOnAct: atlasFundsBefore - api.state.players.p1.resources.funds,
+      peopleSpentOnEnhance: atlasPeopleBefore - api.state.players.p1.resources.people,
+      natureSpentTotal: atlasNatureBefore - api.state.players.p1.resources.nature,
+      enhanceDamage,
       defenderHpBefore,
       defenderHpAfter,
-      damageDealt: defenderHpBefore - defenderHpAfter,
+    },
+  });
+
+  const guardCard = api.cardCatalog.main["card_1782592972506"];
+  const guardBuffAbility = (guardCard?.abilities || []).find((a) => a.effect === "optionalPayBuffOnDamageDealt");
+  out.push({
+    name: "guard_optional_pay_buff_on_damage_dealt_parsed",
+    summary: {
+      found: !!guardBuffAbility,
+      resource: guardBuffAbility?.resource,
+      amount: guardBuffAbility?.amount,
+      atkBuff: guardBuffAbility?.atkBuff,
+      hpBuff: guardBuffAbility?.hpBuff,
+    },
+  });
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.testing.setResources("p1", { funds: 10, people: 0, nature: 4, ore: 4, fuel: 0, electric: 0, magic: 0 });
+  api.testing.placeUnit("card_1782592972506", "p1", 2, 2, { rested: false });
+  api.testing.placeUnit("militia", "p2", 1, 2, { rested: true, hp: 20 });
+  const guardUnit = api.state.board[2][2];
+  const guardAtkBefore = guardUnit.atk;
+  const guardHpBefore = guardUnit.currentHp;
+  const guardFundsBefore = api.state.players.p1.resources.funds;
+  api.testing.selectUnit(2, 2);
+  api.testing.attack({ kind: "unit", row: 1, col: 2 });
+  const pendingGuardBuff = api.state.pendingChoice?.type === "payForBuff"
+    && api.state.pendingChoice?.triggerContext === "onDamageDealt";
+  let guardBuffApplied = false;
+  if (pendingGuardBuff) {
+    guardBuffApplied = api.testing.resolvePayForBuff(true);
+  }
+  out.push({
+    name: "guard_optional_pay_buff_on_damage_dealt_applies",
+    summary: {
+      pendingGuardBuff,
+      guardBuffApplied,
+      fundsSpent: guardFundsBefore - api.state.players.p1.resources.funds,
+      atkAfter: api.state.board[2][2]?.atk,
+      hpAfter: api.state.board[2][2]?.currentHp,
+      atkGain: (api.state.board[2][2]?.atk ?? 0) - guardAtkBefore,
+      hpGain: (api.state.board[2][2]?.currentHp ?? 0) - guardHpBefore,
     },
   });
 
@@ -824,6 +937,7 @@ const results = await page.evaluate(() => {
   reset();
   api.state.activePlayer = "p1";
   api.state.phase = "main";
+  api.testing.setResources("p1", highResources);
   api.testing.placeUnit("guardian", "p2", 0, 5, { rested: true });
   api.testing.placeUnit("mageBattery", "p1", 2, 5, { rested: false });
   const guardedCoreHpBefore = api.state.players.p2.core.hp;
@@ -834,6 +948,24 @@ const results = await page.evaluate(() => {
     summary: {
       coreHpBefore: guardedCoreHpBefore,
       coreHpAfter: api.state.players.p2.core.hp,
+    },
+  });
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.testing.setResources("p1", highResources);
+  api.testing.placeUnit("guardian", "p2", 0, 8, { rested: true });
+  api.testing.placeUnit("mageBattery", "p1", 2, 5, { rested: false });
+  const distantGuardCoreHpBefore = api.state.players.p2.core.hp;
+  api.testing.selectUnit(2, 5);
+  api.testing.attack({ kind: "core", playerId: "p2" });
+  out.push({
+    name: "guard_far_from_core_does_not_block",
+    summary: {
+      coreHpBefore: distantGuardCoreHpBefore,
+      coreHpAfter: api.state.players.p2.core.hp,
+      coreDamaged: distantGuardCoreHpBefore > api.state.players.p2.core.hp,
     },
   });
 
@@ -915,6 +1047,28 @@ const results = await page.evaluate(() => {
       baseStoredUnderneath: overlaidStruct?.underlyingStruct?.name === "覆没の迷宮",
     },
   });
+
+  reset();
+  if (api.cardCatalog.main["card_1782236231218"] && api.cardCatalog.main["card_1782500000000"]) {
+    api.testing.placeUnit("card_1782236231218", "p1", 2, 2);
+    api.testing.placeUnit("card_1782500000000", "p1", 2, 1);
+    api.testing.placeUnit("card_1782500000000", "p1", 2, 3);
+    api.testing.refreshContinuousEffects();
+    const buffed = api.state.board[2][2];
+    out.push({
+      name: "adjacent_tag_buff_stats_display",
+      summary: {
+        atk: buffed?.atk,
+        hp: buffed?.hp,
+        maxHp: buffed?.maxHp,
+        currentHp: buffed?.currentHp,
+        statsText: api.testing.formatUnitStatsText(buffed),
+        buffActive: Boolean(buffed?.continuousBuffs && Object.keys(buffed.continuousBuffs).some((k) => k.startsWith("adjTagBuff_"))),
+      },
+    });
+  } else {
+    out.push({ name: "adjacent_tag_buff_stats_display", summary: { skipped: true } });
+  }
 
   const mobilizationCard = api.cardCatalog.main["card_1782682744095"];
   const mobilizationAbility = (mobilizationCard?.abilities || []).find((a) => a.effect === "tactPayRestDraw");
@@ -1001,6 +1155,49 @@ const results = await page.evaluate(() => {
     },
   });
 
+  api.cardCatalog.main["card_1782681464783"] = {
+    id: "card_1782681464783",
+    name: "キハエーホ陸軍施設",
+    type: "tact",
+    faction: "ユニフォール",
+    tags: [],
+    cost: {},
+    actCost: {},
+    text: "stale duplicate",
+    flavor: "stale duplicate",
+    keywords: [],
+    abilities: [],
+    limit: 4,
+  };
+  api.testing.importDeckmakerAllData({
+    id: "card_1782681464783",
+    name: "キハエーホ陸軍施設",
+    type: "ストラクト",
+    world: "ユニフォール",
+    description: "金①自①を支払う：人⑤を得る",
+    costs: {
+      play: { gold: 1, human: 1, nature: 1, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+      act: {},
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { gold: 0, human: 5, nature: 0, mineral: 0, fuel: 0, electric: 0, magic: 0 },
+  });
+  const kihaCatalogHits = [
+    api.cardCatalog.main["card_1782681464783"],
+    api.cardCatalog.structs["card_1782681464783"],
+    api.cardCatalog.cores["card_1782681464783"],
+  ].filter(Boolean);
+  out.push({
+    name: "kiha_eho_facility_import_dedupes_catalog",
+    summary: {
+      catalogHits: kihaCatalogHits.length,
+      inStructs: !!api.cardCatalog.structs["card_1782681464783"],
+      inMain: !!api.cardCatalog.main["card_1782681464783"],
+      structType: api.cardCatalog.structs["card_1782681464783"]?.type,
+    },
+  });
+
   return out;
 });
 
@@ -1020,6 +1217,9 @@ assert(byName.pierce_and_shock.board[2][0].hp === 4, "shock-rested target should
 
 assert(byName.flying_blocks_low_ground_attack.board[1][0].hp === 3, "low ATK non-flying unit should not damage flying unit");
 assert(byName.flying_blocks_low_ground_attack.board[2][0].rested === false, "failed flying attack should not rest attacker");
+assert(byName.flying_allows_buffed_ground_attack.effectiveAtk === 4, "buffed militia should reach flying threshold");
+assert(byName.flying_allows_buffed_ground_attack.flyingHpAfter < byName.flying_allows_buffed_ground_attack.flyingHpBefore, "buffed ground unit should damage flying unit");
+assert(byName.flying_allows_buffed_ground_attack.attackerRested === true, "successful flying attack should rest attacker");
 
 assert(byName.mobile_move_does_not_rest_once.board[2][0]?.name === "装甲車", "mobile unit should advance");
 assert(byName.mobile_move_does_not_rest_once.board[2][0].rested === false, "first mobile move should not rest");
@@ -1311,6 +1511,11 @@ assert(byName.deckmaker_draw_pattern_parsed.amount === 2, "deckmaker draw amount
 assert(byName.long_range_artillery_struct_phase.found === true, "長距離砲撃陣 should parse struct-phase destroyEnemyStructs");
 assert(byName.long_range_artillery_struct_phase.fuelCost === 1, "長距離砲撃陣 fuel cost should be 1");
 assert(byName.long_range_artillery_struct_phase.amount === 2, "長距離砲撃陣 destroy amount should be 2");
+assert(byName.long_range_artillery_struct_phase_activates.activated === true, "長距離砲撃陣 should open struct-phase destroy choice");
+assert(byName.long_range_artillery_struct_phase_activates.pendingEnemyChoice === true, "長距離砲撃陣 should offer enemy struct choice");
+assert(byName.long_range_artillery_struct_phase_activates.enemyStructsAfter === byName.long_range_artillery_struct_phase_activates.enemyStructsBefore - 1, "長距離砲撃陣 should destroy 1 enemy struct");
+assert(byName.long_range_artillery_struct_phase_activates.fuelSpent === 1, "長距離砲撃陣 should spend 1 fuel per destroy");
+assert(byName.long_range_artillery_struct_phase_activates.artilleryRested === true, "長距離砲撃陣 should rest after struct-phase activation resolves");
 assert(byName.sabotage_destroy_target_struct_parsed.found === true, "破壊工作 should parse destroyTargetStruct");
 assert(byName.sabotage_destroy_target_struct_parsed.trigger === "onPlay", "破壊工作 destroyTargetStruct should trigger on play");
 assert(byName.sabotage_play_offers_struct_choice.pendingDestroyStruct === true, "破壊工作 should open enemy struct choice");
@@ -1320,7 +1525,17 @@ assert(byName.pay_on_attack_enhance_parsed.found === true, "payOnAttackEnhance s
 assert(byName.pay_on_attack_enhance_parsed.payCost?.people === 1, "payOnAttackEnhance people cost should be 1");
 assert(byName.pay_on_attack_enhance_parsed.payCost?.nature === 2, "payOnAttackEnhance nature cost should be 2");
 assert(byName.pay_on_attack_enhance_applies_before_damage.pendingEnhance === true, "attack should open payOnAttackEnhance choice");
-assert(byName.pay_on_attack_enhance_applies_before_damage.damageDealt > 0, "enhanced attack should deal damage after choice");
+assert(byName.pay_on_attack_enhance_applies_before_damage.peopleSpentOnEnhance === 1, "enhance should spend 1 people");
+assert(byName.pay_on_attack_enhance_applies_before_damage.natureSpentTotal === 4, "act+enhance should spend 4 nature total");
+assert(byName.pay_on_attack_enhance_applies_before_damage.enhanceDamage >= 6, "enhanced attack should deal at least 6 damage to militia");
+assert(byName.guard_optional_pay_buff_on_damage_dealt_parsed.found === true, "北東軍親衛隊 should parse optionalPayBuffOnDamageDealt");
+assert(byName.guard_optional_pay_buff_on_damage_dealt_parsed.resource === "funds", "北東軍親衛隊 buff cost should be funds");
+assert(byName.guard_optional_pay_buff_on_damage_dealt_parsed.amount === 6, "北東軍親衛隊 buff cost should be 6 funds");
+assert(byName.guard_optional_pay_buff_on_damage_dealt_applies.pendingGuardBuff === true, "北東軍親衛隊 attack should open payForBuff choice after damage");
+assert(byName.guard_optional_pay_buff_on_damage_dealt_applies.guardBuffApplied === true, "北東軍親衛隊 payForBuff should resolve");
+assert(byName.guard_optional_pay_buff_on_damage_dealt_applies.fundsSpent === 6, "北東軍親衛隊 should spend 6 funds for buff");
+assert(byName.guard_optional_pay_buff_on_damage_dealt_applies.atkGain === 1, "北東軍親衛隊 should gain +1 ATK");
+assert(byName.guard_optional_pay_buff_on_damage_dealt_applies.hpGain === 1, "北東軍親衛隊 should gain +1 HP");
 assert(byName.deckmaker_mill_on_summon.millDumpAfter === byName.deckmaker_mill_on_summon.millDumpBefore + 2, "deckmaker mill ability should send 2 cards to dump on summon");
 assert(byName.deckmaker_struct_destroy_gain.peopleAfter === byName.deckmaker_struct_destroy_gain.peopleBefore + 1, "deckmaker struct should gain 1 people on enemy unit destroyed");
 assert(byName.shock_battalion_attack_rests_attacker.pendingReveal === true, "302 shock battalion should trigger reveal pick on damage");
@@ -1330,6 +1545,7 @@ assert(byName.shock_battalion_attack_rests_attacker.attackerRestedAfter === true
 assert(byName.long_term_investment_parsed.found === true, "長期投資 should parse longTermInvestmentPlay");
 assert(byName.long_term_investment_draw_bonus.handCount === byName.long_term_investment_draw_bonus.expectedDraw, "長期投資 should add +2 draw on the following turn");
 assert(byName.guard_on_summon_row_blocks_core.coreHpAfter === byName.guard_on_summon_row_blocks_core.coreHpBefore, "守護 on summon row should block core attacks");
+assert(byName.guard_far_from_core_does_not_block.coreDamaged === true, "守護 far from core should not block core attacks");
 if (!byName.fumetsu_golem_summon_from_deck_only.skipped) {
   assert(byName.fumetsu_golem_summon_from_deck_only.pendingChoice === true, "覆没の大暴走 should ask for resource payment");
   assert(byName.fumetsu_golem_summon_from_deck_only.oreAfter === byName.fumetsu_golem_summon_from_deck_only.oreBefore - 2, "覆没の大暴走 should consume ore on activation");
@@ -1342,6 +1558,13 @@ assert(byName.tact_overlay_suppresses_base_struct.overlayId === "card_1753660736
 assert(byName.tact_overlay_suppresses_base_struct.baseStoredUnderneath === true, "base struct should be stored underneath overlay");
 assert(byName.tact_overlay_suppresses_base_struct.baseProduceSuppressed === true, "base struct abilities should not remain active on face");
 
+if (!byName.adjacent_tag_buff_stats_display.skipped) {
+  assert(byName.adjacent_tag_buff_stats_display.buffActive === true, "adjacent tag buff should apply with two tagged neighbors");
+  assert(byName.adjacent_tag_buff_stats_display.statsText.includes(`ATK ${byName.adjacent_tag_buff_stats_display.atk}`), "tooltip stats should use effective ATK");
+  assert(byName.adjacent_tag_buff_stats_display.statsText.includes(`${byName.adjacent_tag_buff_stats_display.currentHp}/${byName.adjacent_tag_buff_stats_display.maxHp}`), "tooltip stats should use effective HP, not base hp");
+  assert(byName.adjacent_tag_buff_stats_display.maxHp === byName.adjacent_tag_buff_stats_display.hp + 1, "adjacent tag buff should raise maxHp above printed hp");
+}
+
 assert(byName.mobilization_plan_parsed.found === true, "動員計画 should parse tactPayRestDraw");
 assert(byName.mobilization_plan_parsed.draw === 2, "動員計画 draw amount should be 2");
 assert(byName.mobilization_plan_draw_on_activate.fundsAfter === byName.mobilization_plan_draw_on_activate.fundsBefore - 1, "動員計画 should consume gold on activation");
@@ -1353,5 +1576,9 @@ assert(byName.kiha_eho_facility_paid_produce.fundsAfter === byName.kiha_eho_faci
 assert(byName.kiha_eho_facility_paid_produce.natureAfter === byName.kiha_eho_facility_paid_produce.natureBefore - 1, "キハエーホ should consume nature");
 assert(byName.kiha_eho_facility_paid_produce.peopleAfter === byName.kiha_eho_facility_paid_produce.peopleBefore + 5, "キハエーホ should gain 5 people");
 assert(byName.kiha_eho_facility_paid_produce.structRested === true, "キハエーホ should rest after activation");
+assert(byName.kiha_eho_facility_import_dedupes_catalog.catalogHits === 1, "キハエーホ import should keep one catalog entry");
+assert(byName.kiha_eho_facility_import_dedupes_catalog.inStructs === true, "キハエーホ should live in struct catalog");
+assert(byName.kiha_eho_facility_import_dedupes_catalog.inMain === false, "キハエーホ stale main entry should be removed");
+assert(byName.kiha_eho_facility_import_dedupes_catalog.structType === "struct", "キハエーホ should stay a struct");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));
