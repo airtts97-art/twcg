@@ -980,6 +980,8 @@ const abilityEffects = {
       playerId,
       unitRow: card.row,
       unitCol: card.col,
+      defenderRow: defender.row,
+      defenderCol: defender.col,
       cardName: card.name,
       defenderName: defender.name,
       defenderActCost: actCost,
@@ -987,7 +989,7 @@ const abilityEffects = {
       queueItem: { playerId, card, ability, source },
     };
     game.selected = { kind: "choice", choice: "payDefenderActCostBonus" };
-    game.message = `「${card.name}」: 「${defender.name}」のアクトコスト${total}を支払い、相手コアに追加ダメージ？`;
+    game.message = `「${card.name}」: 「${defender.name}」のアクトコスト${total}を支払い、追加ダメージ？`;
     return "pending";
   },
   buffSelfAtk({ game, playerId, card, ability }) {
@@ -11583,17 +11585,38 @@ function resolvePayDefenderActCostBonus(pay) {
       return false;
     }
     pay(player, pending.defenderActCost || {});
-    const opponent = opponentOf(pending.playerId);
-    state.players[opponent].core.hp -= pending.total || 0;
+    const attacker = state.board[pending.unitRow]?.[pending.unitCol];
+    const defender = state.board[pending.defenderRow]?.[pending.defenderCol];
     const costLabel = Object.entries(pending.defenderActCost || {})
       .filter(([, amount]) => amount > 0)
       .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
       .join("");
-    log(
-      state,
-      `${player.name}: 「${pending.cardName}」${costLabel}支払い → 相手コアに${pending.total}ダメージ`,
-    );
-    checkWinner(state);
+    if (attacker && defender && defender.owner !== pending.playerId) {
+      const result = dealDamageToUnit(
+        state,
+        defender,
+        pending.total || 0,
+        { source: attacker },
+        { cleanup: false },
+      );
+      log(
+        state,
+        `${player.name}: 「${pending.cardName}」${costLabel}支払い → 「${defender.name}」に追加${result.damage}ダメージ`,
+      );
+      if (result.pending) {
+        state.pendingChoice = null;
+        state.selected = { kind: "unit", row: pending.unitRow, col: pending.unitCol };
+        completeAbilitySource(state, qi);
+        resumePendingAfterChoice();
+        processEffectQueue(state);
+        syncOnlineAction("resolveChoice", pending.playerId);
+        render();
+        return true;
+      }
+      cleanupAllDestroyed(attacker, state);
+    } else {
+      log(state, `${player.name}: 「${pending.cardName}」${costLabel}支払い — 対象ユニットがいない`);
+    }
   }
   state.pendingChoice = null;
   state.selected = { kind: "unit", row: pending.unitRow, col: pending.unitCol };
@@ -15229,7 +15252,7 @@ function drawPayDefenderActCostBonusPanel(pending) {
     .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
     .join("");
   ctx.fillText(`「${pending.defenderName}」のアクトコスト${costLabel}を支払い`, x + 28, y + 64);
-  ctx.fillText(`相手コアに追加${pending.total}ダメージ`, x + 28, y + 86);
+  ctx.fillText(`「${pending.defenderName}」に追加${pending.total}ダメージ`, x + 28, y + 86);
   const isController = canControlChoicePlayer(pending.playerId);
   if (isController) {
     const player = state.players[pending.playerId];
