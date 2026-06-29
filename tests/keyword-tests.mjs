@@ -228,6 +228,18 @@ const results = await page.evaluate(() => {
         costs: { play: { gold: 1 }, act: {}, choice: [], choiceAct: [] },
         generates: { nature: 2 },
       },
+      {
+        id: "dm_armor15_test",
+        name: "Deckmaker Armor Fifteen Test",
+        type: "ユニット",
+        world: "ニュートラル",
+        tags: ["歩兵"],
+        description: "[装甲⑮]",
+        costs: { play: { gold: 1 }, act: {}, choice: [], choiceAct: [] },
+        generates: {},
+        attack: 0,
+        defense: 20,
+      },
     ],
     decks: [
       {
@@ -247,6 +259,7 @@ const results = await page.evaluate(() => {
       deck: { core: api.app.deck.core, main: [...api.app.deck.main], struct: [...api.app.deck.struct] },
       core: api.testing.catalogCard("dm_core_test"),
       unit: api.testing.catalogCard("dm_unit_test"),
+      armor15: api.testing.catalogCard("dm_armor15_test"),
       struct: api.testing.catalogCard("dm_struct_test"),
     },
   });
@@ -258,6 +271,14 @@ const results = await page.evaluate(() => {
   });
   window.__deckmakerExportPayload = api.testing.deckmakerAllDataPayload();
   out.push({ name: "deckmaker_all_data_exports", summary: { exportPayload: window.__deckmakerExportPayload } });
+
+  reset();
+  api.testing.placeUnit("dm_armor15_test", "p2", 1, 0, { rested: true });
+  api.testing.placeUnit("lightInfantry", "p1", 2, 0, { rested: false });
+  api.state.board[2][0].atk = 20;
+  api.testing.selectUnit(2, 0);
+  api.testing.attack({ kind: "unit", row: 1, col: 0 });
+  out.push(snapshot("armor_fifteen_reduces_damage"));
 
   reset();
   api.testing.placeUnit("guardian", "p1", 3, 0, { rested: true });
@@ -383,6 +404,7 @@ const results = await page.evaluate(() => {
       atk: card.atk,
       hp: card.hp,
       keywords: card.keywords,
+      abilities: card.abilities,
       variant: card.variant || null,
     };
   });
@@ -1053,6 +1075,29 @@ const results = await page.evaluate(() => {
     api.testing.placeUnit("card_1782236231218", "p1", 2, 2);
     api.testing.placeUnit("card_1782500000000", "p1", 2, 1);
     api.testing.placeUnit("card_1782500000000", "p1", 2, 3);
+    delete api.state.board[2][2].text;
+    delete api.state.board[2][2].description;
+    api.state.board[2][1].tags = [];
+    api.state.board[2][3].tags = [];
+    api.testing.refreshContinuousEffects();
+    const buffed = api.state.board[2][2];
+    out.push({
+      name: "adjacent_tag_buff_catalog_fallback",
+      summary: {
+        atk: buffed?.atk,
+        maxHp: buffed?.maxHp,
+        buffActive: Boolean(buffed?.continuousBuffs && Object.keys(buffed.continuousBuffs).some((k) => k.startsWith("adjTagBuff_"))),
+      },
+    });
+  } else {
+    out.push({ name: "adjacent_tag_buff_catalog_fallback", summary: { skipped: true } });
+  }
+
+  reset();
+  if (api.cardCatalog.main["card_1782236231218"] && api.cardCatalog.main["card_1782500000000"]) {
+    api.testing.placeUnit("card_1782236231218", "p1", 2, 2);
+    api.testing.placeUnit("card_1782500000000", "p1", 2, 1);
+    api.testing.placeUnit("card_1782500000000", "p1", 2, 3);
     api.testing.refreshContinuousEffects();
     const buffed = api.state.board[2][2];
     out.push({
@@ -1155,6 +1200,54 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const donaCard = api.cardCatalog.structs["card_1782226032497"];
+  const donaAbility = (donaCard?.abilities || []).find((a) => a.effect === "structPayProduce");
+  out.push({
+    name: "dona_camp_parsed",
+    summary: {
+      found: !!donaAbility,
+      cost: donaAbility?.cost,
+      produces: donaAbility?.produces,
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { people: 2, funds: 0, nature: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.state.players.p1.structs = [{
+    id: "card_1782226032497",
+    name: "ドーナー強制収容所",
+    type: "struct",
+    rested: false,
+    abilities: [{
+      trigger: "onStructurePhase",
+      effect: "structPayProduce",
+      cost: { people: 1 },
+      produces: { funds: 5 },
+    }],
+  }];
+  api.state.pendingStructPhase = {
+    playerId: "p1",
+    activatedIndexes: [],
+    activatedTactIndexes: [],
+    resourcesBefore: { ...api.state.players.p1.resources },
+    handBefore: api.state.players.p1.hand.length,
+  };
+  api.state.phase = "structure";
+  api.state.activePlayer = "p1";
+  const donaPeopleBefore = api.state.players.p1.resources.people;
+  const donaFundsBefore = api.state.players.p1.resources.funds;
+  api.testing.activateStructInPhase(0);
+  out.push({
+    name: "dona_camp_paid_produce",
+    summary: {
+      peopleBefore: donaPeopleBefore,
+      peopleAfter: api.state.players.p1.resources.people,
+      fundsBefore: donaFundsBefore,
+      fundsAfter: api.state.players.p1.resources.funds,
+      structRested: api.state.players.p1.structs[0]?.rested,
+    },
+  });
+
   api.cardCatalog.main["card_1782681464783"] = {
     id: "card_1782681464783",
     name: "キハエーホ陸軍施設",
@@ -1195,6 +1288,159 @@ const results = await page.evaluate(() => {
       inStructs: !!api.cardCatalog.structs["card_1782681464783"],
       inMain: !!api.cardCatalog.main["card_1782681464783"],
       structType: api.cardCatalog.structs["card_1782681464783"]?.type,
+    },
+  });
+
+  const mortarCard = api.cardCatalog.main["card_1782237267608"];
+  const mortarVsInfantry = (mortarCard?.abilities || []).find((a) => a.effect === "vsTagAtkBonus" && a.vsTag === "歩兵");
+  const artilleryCard = api.cardCatalog.main["card_1782307790847"];
+  const artilleryVsInfantry = (artilleryCard?.abilities || []).find((a) => a.effect === "vsTagAtkBonus" && a.vsTag === "歩兵");
+  out.push({
+    name: "vs_tag_infantry_atk_bonus_parsed",
+    summary: {
+      mortarFound: !!mortarVsInfantry,
+      mortarBonus: mortarVsInfantry?.atkBonus,
+      artilleryFound: !!artilleryVsInfantry,
+      artilleryBonus: artilleryVsInfantry?.atkBonus,
+    },
+  });
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.testing.setResources("p1", { nature: 5, people: 0, funds: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  if (api.cardCatalog.main["card_1782237267608"] && api.cardCatalog.main["card_1782500000000"]) {
+    api.testing.placeUnit("card_1782237267608", "p1", 2, 2, { rested: false });
+    api.state.board[2][2].abilities = [];
+    api.testing.placeUnit("card_1782500000000", "p2", 1, 2, { rested: true, hp: 3 });
+    api.state.board[1][2].tags = [];
+    const defenderHpBefore = api.state.board[1][2].currentHp;
+    api.testing.selectUnit(2, 2);
+    api.testing.attack({ kind: "unit", row: 1, col: 2 });
+    out.push({
+      name: "vs_tag_infantry_atk_bonus_catalog_fallback",
+      summary: {
+        defenderHpBefore,
+        defenderHpAfter: api.state.board[1][2]?.currentHp ?? 0,
+        damageDealt: defenderHpBefore - (api.state.board[1][2]?.currentHp ?? 0),
+      },
+    });
+  } else {
+    out.push({ name: "vs_tag_infantry_atk_bonus_catalog_fallback", summary: { skipped: true } });
+  }
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.testing.setResources("p1", { nature: 5, people: 0, funds: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  if (api.cardCatalog.main["card_1782237267608"] && api.cardCatalog.main["card_1782500000000"]) {
+    api.testing.placeUnit("card_1782237267608", "p1", 2, 2, { rested: false });
+    api.testing.placeUnit("card_1782500000000", "p2", 1, 2, { rested: true, hp: 3 });
+    const defenderHpBefore = api.state.board[1][2].currentHp;
+    api.testing.selectUnit(2, 2);
+    api.testing.attack({ kind: "unit", row: 1, col: 2 });
+    out.push({
+      name: "vs_tag_infantry_atk_bonus_applies",
+      summary: {
+        defenderHpBefore,
+        defenderHpAfter: api.state.board[1][2]?.currentHp ?? 0,
+        damageDealt: defenderHpBefore - (api.state.board[1][2]?.currentHp ?? 0),
+      },
+    });
+  } else {
+    out.push({ name: "vs_tag_infantry_atk_bonus_applies", summary: { skipped: true } });
+  }
+
+  reset();
+  api.state.phase = "main";
+  const commanderCatalog = api.testing.catalogCard("card_1782225519182");
+  const commanderDamageBuff = (commanderCatalog?.abilities || []).find(
+    (ability) => ability.trigger === "onDamageReceived" && ability.effect === "optionalPayBuffOnDamageReceived",
+  );
+  const commanderLifeSurvive = (commanderCatalog?.abilities || []).find(
+    (ability) => ability.trigger === "onActivate" && ability.effect === "spendLifeCounterSurviveBuff",
+  );
+  out.push({
+    name: "northeast_commander_damage_buff_parsed",
+    summary: {
+      found: !!commanderDamageBuff,
+      atkBuff: commanderDamageBuff?.atkBuff,
+      hpBuff: commanderDamageBuff?.hpBuff,
+      armorBuff: commanderDamageBuff?.armorBuff,
+      amount: commanderDamageBuff?.amount,
+    },
+  });
+  out.push({
+    name: "northeast_commander_life_survive_parsed",
+    summary: {
+      found: !!commanderLifeSurvive,
+      costCounters: commanderLifeSurvive?.costCounters,
+      hpBuff: commanderLifeSurvive?.hpBuff,
+      exclusiveGroup: commanderLifeSurvive?.exclusiveGroup,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { nature: 10, people: 0, funds: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  const commanderWithCounter = api.testing.placeUnit("card_1782225519182", "p1", 2, 2, { rested: false, counters: 1 });
+  const hpBeforeLife = commanderWithCounter.currentHp;
+  api.testing.selectUnit(2, 2);
+  api.testing.activateSelectedUnit();
+  const commanderAfterLife = api.state.board[2][2];
+  out.push({
+    name: "northeast_commander_life_survive_activate",
+    summary: {
+      countersBefore: 1,
+      countersAfter: commanderAfterLife?.counters ?? 0,
+      hpBefore: hpBeforeLife,
+      hpAfter: commanderAfterLife?.currentHp,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p2";
+  api.testing.setResources("p1", { nature: 10, people: 0, funds: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.testing.setResources("p2", { funds: 10, people: 0, nature: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.testing.placeUnit("card_1782225519182", "p1", 2, 2, { rested: false });
+  api.testing.placeUnit("militia", "p2", 1, 3, { rested: false });
+  api.state.board[1][3].atk = 20;
+  const commanderBeforeDamage = api.state.board[2][2];
+  const armorBefore = Math.max(
+    0,
+    ...(commanderBeforeDamage.keywords || []).filter((keyword) => keyword.id === "armor").map((keyword) => keyword.value || 1),
+  );
+  const hpBefore = commanderBeforeDamage.currentHp;
+  const atkBefore = commanderBeforeDamage.atk;
+  const natureBefore = api.state.players.p1.resources.nature;
+  api.testing.selectUnit(1, 3);
+  api.testing.attack({ kind: "unit", row: 2, col: 2 });
+  const pendingDamageBuff = api.state.pendingChoice?.type === "payForBuff"
+    && api.state.pendingChoice?.triggerContext === "onDamageReceived";
+  let paid = false;
+  if (pendingDamageBuff) {
+    paid = api.testing.resolvePayForBuff(true);
+  }
+  const commanderAfterDamage = api.state.board[2][2];
+  const armorAfter = Math.max(
+    0,
+    ...(commanderAfterDamage?.keywords || []).filter((keyword) => keyword.id === "armor").map((keyword) => keyword.value || 1),
+  );
+  out.push({
+    name: "northeast_commander_damage_buff",
+    summary: {
+      pendingDamageBuff,
+      paid,
+      hpBefore,
+      hpAfter: commanderAfterDamage?.currentHp,
+      atkBefore,
+      atkAfter: commanderAfterDamage?.atk,
+      armorBefore,
+      armorAfter,
+      natureBefore,
+      natureAfter: api.state.players.p1.resources.nature,
     },
   });
 
@@ -1288,6 +1534,11 @@ assert(byName.deckmaker_all_data_imports_cards.core.startResources.people === 0,
 assert(byName.deckmaker_all_data_imports_cards.core.startResources.nature === 0, "Deckmaker core import should preserve explicit initial resources instead of defaulting nature");
 assert(byName.deckmaker_all_data_imports_cards.core.income.funds === 2, "Deckmaker core import should default turn funds income");
 assert(byName.deckmaker_all_data_imports_cards.unit.keywords.some((keyword) => keyword.id === "armor" && keyword.value === 3), "Deckmaker all-data import should parse armor keyword");
+assert(
+  byName.deckmaker_all_data_imports_cards.armor15.keywords.some((keyword) => keyword.id === "armor" && keyword.value === 15),
+  "Deckmaker import should parse circled armor fifteen",
+);
+assert(byName.armor_fifteen_reduces_damage.board[1][0].hp === 15, "armor fifteen should reduce twenty damage to five");
 assert(byName.deckmaker_all_data_imports_cards.unit.cost.people === 1 && byName.deckmaker_all_data_imports_cards.unit.cost.nature === 1, "Deckmaker all-data import should map human and nature costs");
 assert(byName.deckmaker_all_data_imports_cards.struct.abilities.some((ability) => ability.resource === "nature" && ability.amount === 2), "Deckmaker all-data import should map generated nature resources");
 assert(byName.deckmaker_bundled_core_initial_resources.meatCastle?.name === "肉の王城", "Bundled Deckmaker core should include 肉の王城");
@@ -1406,6 +1657,10 @@ assert(initialCards.knowledgeFairy.cost.magic === 1 && initialCards.knowledgeFai
 assert(Boolean(initialCards.mysticCapture.name), "mystic capture name should exist");
 assert(Boolean(initialCards.mysticCapture.faction), "mystic capture faction should exist");
 assert(initialCards.mysticCapture.cost.electric === 1, "mystic capture cost should be electric 1");
+assert(
+  initialCards.mysticCapture.abilities?.some((ability) => ability.effect === "mysticCapture"),
+  "mystic capture catalog should include mysticCapture onPlay ability",
+);
 
 assert(byName.life_fairy_buffs_friendly_units.board[3][0].hp === 3, "life fairy should raise existing friendly hp");
 assert(byName.life_fairy_buffs_friendly_units.board[3][1].hp === 2, "life fairy should also raise its own hp after entering");
@@ -1564,6 +1819,11 @@ if (!byName.adjacent_tag_buff_stats_display.skipped) {
   assert(byName.adjacent_tag_buff_stats_display.statsText.includes(`${byName.adjacent_tag_buff_stats_display.currentHp}/${byName.adjacent_tag_buff_stats_display.maxHp}`), "tooltip stats should use effective HP, not base hp");
   assert(byName.adjacent_tag_buff_stats_display.maxHp === byName.adjacent_tag_buff_stats_display.hp + 1, "adjacent tag buff should raise maxHp above printed hp");
 }
+if (!byName.adjacent_tag_buff_catalog_fallback.skipped) {
+  assert(byName.adjacent_tag_buff_catalog_fallback.buffActive === true, "adjacent tag buff should use catalog text/tags when board copies are missing");
+  assert(byName.adjacent_tag_buff_catalog_fallback.atk === 2, "adjacent tag buff should add +1 ATK with two atlas neighbors");
+  assert(byName.adjacent_tag_buff_catalog_fallback.maxHp === 5, "adjacent tag buff should add +1 max HP with two atlas neighbors");
+}
 
 assert(byName.mobilization_plan_parsed.found === true, "動員計画 should parse tactPayRestDraw");
 assert(byName.mobilization_plan_parsed.draw === 2, "動員計画 draw amount should be 2");
@@ -1576,9 +1836,42 @@ assert(byName.kiha_eho_facility_paid_produce.fundsAfter === byName.kiha_eho_faci
 assert(byName.kiha_eho_facility_paid_produce.natureAfter === byName.kiha_eho_facility_paid_produce.natureBefore - 1, "キハエーホ should consume nature");
 assert(byName.kiha_eho_facility_paid_produce.peopleAfter === byName.kiha_eho_facility_paid_produce.peopleBefore + 5, "キハエーホ should gain 5 people");
 assert(byName.kiha_eho_facility_paid_produce.structRested === true, "キハエーホ should rest after activation");
+assert(byName.dona_camp_parsed.found === true, "ドーナー強制収容所 should parse structPayProduce");
+assert(byName.dona_camp_parsed.cost?.people === 1, "ドーナー強制収容所 should cost 1 people");
+assert(byName.dona_camp_parsed.produces?.funds === 5, "ドーナー強制収容所 should produce 5 funds");
+assert(byName.dona_camp_paid_produce.peopleAfter === byName.dona_camp_paid_produce.peopleBefore - 1, "ドーナー強制収容所 should consume 1 people");
+assert(byName.dona_camp_paid_produce.fundsAfter === byName.dona_camp_paid_produce.fundsBefore + 5, "ドーナー強制収容所 should gain 5 funds");
+assert(byName.dona_camp_paid_produce.structRested === true, "ドーナー強制収容所 should rest after activation");
 assert(byName.kiha_eho_facility_import_dedupes_catalog.catalogHits === 1, "キハエーホ import should keep one catalog entry");
 assert(byName.kiha_eho_facility_import_dedupes_catalog.inStructs === true, "キハエーホ should live in struct catalog");
 assert(byName.kiha_eho_facility_import_dedupes_catalog.inMain === false, "キハエーホ stale main entry should be removed");
 assert(byName.kiha_eho_facility_import_dedupes_catalog.structType === "struct", "キハエーホ should stay a struct");
+assert(byName.vs_tag_infantry_atk_bonus_parsed.mortarFound === true, "迫撃砲分隊 should parse vsTagAtkBonus vs 歩兵");
+assert(byName.vs_tag_infantry_atk_bonus_parsed.artilleryFound === true, "砲中隊 should parse vsTagAtkBonus vs 歩兵");
+if (!byName.vs_tag_infantry_atk_bonus_applies.skipped) {
+  assert(byName.vs_tag_infantry_atk_bonus_applies.damageDealt >= 2, "vsTagAtkBonus should increase damage vs 歩兵");
+  assert(byName.vs_tag_infantry_atk_bonus_applies.damageDealt === 3, "迫撃砲分隊 should deal 3 damage to 3HP 歩兵 with +2 bonus");
+}
+if (!byName.vs_tag_infantry_atk_bonus_catalog_fallback.skipped) {
+  assert(byName.vs_tag_infantry_atk_bonus_catalog_fallback.damageDealt === 3, "vsTagAtkBonus should fall back to catalog abilities/tags");
+}
+
+assert(byName.northeast_commander_damage_buff_parsed.found === true, "北東軍最高司令官 should parse on-damage buff");
+assert(byName.northeast_commander_damage_buff_parsed.hpBuff === 10, "北東軍最高司令官 on-damage buff should grant HP+10");
+assert(byName.northeast_commander_damage_buff_parsed.armorBuff === 5, "北東軍最高司令官 on-damage buff should grant armor+5");
+assert(byName.northeast_commander_damage_buff_parsed.atkBuff === 5, "北東軍最高司令官 on-damage buff should grant ATK+5");
+assert(byName.northeast_commander_life_survive_parsed.found === true, "北東軍最高司令官 should parse life counter survive activate");
+assert(byName.northeast_commander_life_survive_parsed.hpBuff === 10, "北東軍最高司令官 life survive should grant HP+10");
+assert(byName.northeast_commander_life_survive_activate.countersAfter === 0, "北東軍最高司令官 life survive should consume 1 counter");
+assert(byName.northeast_commander_life_survive_activate.hpAfter === byName.northeast_commander_life_survive_activate.hpBefore + 10, "北東軍最高司令官 life survive should increase HP by 10");
+assert(byName.northeast_commander_damage_buff.pendingDamageBuff === true, "北東軍最高司令官 should offer on-damage buff choice");
+assert(byName.northeast_commander_damage_buff.paid === true, "北東軍最高司令官 damage buff choice should resolve");
+assert(byName.northeast_commander_damage_buff.atkAfter === byName.northeast_commander_damage_buff.atkBefore + 5, "北東軍最高司令官 damage buff should increase ATK by 5");
+assert(byName.northeast_commander_damage_buff.armorAfter === byName.northeast_commander_damage_buff.armorBefore + 5, "北東軍最高司令官 damage buff should increase armor by 5");
+assert(byName.northeast_commander_damage_buff.natureAfter === byName.northeast_commander_damage_buff.natureBefore - 2, "北東軍最高司令官 damage buff should cost nature 2");
+assert(
+  byName.northeast_commander_damage_buff.hpAfter === byName.northeast_commander_damage_buff.hpBefore + 5,
+  "北東軍最高司令官 damage buff should net +5 HP after combat damage and HP+10 buff",
+);
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));

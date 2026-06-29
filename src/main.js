@@ -145,7 +145,7 @@ function isPermanentTactCard(card) {
   const descText = card.description || card.text || "";
   if (descText.includes("永続")) return true;
   if ((card.abilities || []).some((a) => a.isPermanent)) return true;
-  if (/[0-9０-９①②③④⑤⑥⑦⑧⑨⑩]+回目.*発動/.test(descText)) return true;
+  if (/[0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+回目.*発動/.test(descText)) return true;
   const catalog = catalogCardFor(card);
   if (catalog && catalog !== card) return isPermanentTactCard(catalog);
   return false;
@@ -685,7 +685,7 @@ const abilityEffects = {
   },
   gainResource({ game, playerId, ability, target }) {
     if (ability.vsTag) {
-      if (!target || !(target.tags || []).includes(ability.vsTag)) return;
+      if (!target || !unitHasTag(target, ability.vsTag)) return;
     }
     addResources(game.players[playerId], ability.resource, ability.amount);
     log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
@@ -1002,6 +1002,11 @@ const abilityEffects = {
     refreshCounterConditionalKeywords(card);
     log(game, `${game.players[playerId].name}: 「${card.name}」カウンター +${ability.amount || 1}`);
   },
+  addLifeCounter({ game, playerId, card, ability }) {
+    card.counters = (card.counters || 0) + (ability.amount || 1);
+    refreshCounterConditionalKeywords(card);
+    log(game, `${game.players[playerId].name}: 「${card.name}」残機カウンター +${ability.amount || 1}`);
+  },
   addCounterOnFirstAttack({ game, playerId, card, ability }) {
     if (card.hasAttackedEver) return;
     card.hasAttackedEver = true;
@@ -1028,7 +1033,7 @@ const abilityEffects = {
     card.rested = false;
     card.permanentTact = true;
     card.abilities = [
-      { trigger: "onMainPhase", effect: "bigConstructionPlanActivate", isPermanent: true },
+      { trigger: "onStructurePhase", effect: "bigConstructionPlanActivate", isPermanent: true },
       { trigger: "onDestroy", effect: "searchDeckMinCostToHand", minCost: 18 },
     ];
     log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
@@ -1155,10 +1160,15 @@ const abilityEffects = {
   gainStatBuff({ game, playerId, card, ability }) {
     card.atk = (card.atk || 0) + (ability.atkBuff || 0);
     if (ability.hpBuff) {
-      card.currentHp = (card.currentHp || 0) + ability.hpBuff;
-      card.maxHp = (card.maxHp || card.hp || 0) + ability.hpBuff;
+      card.hp = (card.hp || 0) + ability.hpBuff;
+      card.currentHp = (card.currentHp ?? card.hp ?? 0) + ability.hpBuff;
+      card.maxHp = (card.maxHp ?? card.hp ?? 0) + ability.hpBuff;
     }
-    log(game, `${game.players[playerId].name}: 「${card.name}」+${ability.atkBuff || 0}/+${ability.hpBuff || 0}の修正`);
+    if (ability.armorBuff) {
+      ensureKeyword(card, "armor", keywordValue(card, "armor") + ability.armorBuff);
+    }
+    const armorNote = ability.armorBuff ? `、装甲+${ability.armorBuff}` : "";
+    log(game, `${game.players[playerId].name}: 「${card.name}」+${ability.atkBuff || 0}/+${ability.hpBuff || 0}の修正${armorNote}`);
   },
   coreStructStartDiscardOrHP({ game, playerId, card, ability }) {
     const player = game.players[playerId];
@@ -1215,7 +1225,7 @@ const abilityEffects = {
         const totalCost = totalCostAmount(c.cost || {});
         return { card: c, handIdx: i, totalCost, minGold: Math.ceil(totalCost / 2) };
       })
-      .filter((opt) => opt.card.type === "unit" && matchesCond(opt.card, heroCond));
+      .filter((opt) => isUnitCard(opt.card) && matchesCond(opt.card, heroCond));
     if (!heroOptions.length) {
       log(game, `${player.name}: 「${card.name}」手札に[勇者]ユニットなし`);
       return;
@@ -1225,7 +1235,15 @@ const abilityEffects = {
       { row: card.row + 1, col: card.col },
       { row: card.row, col: card.col - 1 },
       { row: card.row, col: card.col + 1 },
-    ].filter(({ row, col }) => row >= 0 && row < ROWS && col >= 0 && col < COLS && !game.board[row][col] && canSummonUnitTo(playerId, row, col, card.col));
+    ].filter(({ row, col }) =>
+      row >= 0
+      && row < ROWS
+      && col >= 0
+      && col < COLS
+      && isUnitFieldCell(row, col)
+      && !game.board[row][col]
+      && canSummonUnitTo(playerId, row),
+    );
     if (!adjCells.length) {
       log(game, `${player.name}: 「${card.name}」隣接する空きマスなし`);
       return;
@@ -1241,7 +1259,10 @@ const abilityEffects = {
       adjCells,
       selectedHeroIdx: null,
       goldToPay: 0,
+      queueItem: { playerId, card, ability, source: { zone: "board" } },
     };
+    game.selected = { kind: "choice", choice: "deployHeroFromAttack" };
+    game.message = `「${card.name}」: 支払う金を選択`;
     return "pending";
   },
   healSelfAndRemoveCounter({ game, playerId, card, ability }) {
@@ -1616,8 +1637,8 @@ const abilityEffects = {
   },
   exileTargetNonNeutralNonUnifall({ game, target }) {
     if (!target) return;
-    const faction = target.faction || "";
-    if (faction === "ニュートラル" || faction === "ユニフォール") return;
+    const world = unitWorld(target);
+    if (!world || world === "ニュートラル" || world === "ユニフォール") return;
     game.board[target.row][target.col] = null;
     game.players[target.owner].exileZone.push(stripRuntime(target));
     log(game, `「${target.name}」を除外`);
@@ -1628,14 +1649,15 @@ const abilityEffects = {
       for (let col = 0; col < COLS; col++) {
         const unit = game.board[row][col];
         if (!unit) continue;
-        const faction = unit.faction || "";
-        if (faction === "ニュートラル" || faction === "ユニフォール") continue;
+        const world = unitWorld(unit);
+        if (!world || world === "ニュートラル" || world === "ユニフォール") continue;
         game.board[row][col] = null;
         game.players[unit.owner].exileZone.push(stripRuntime(unit));
         exiled.push(unit.name);
       }
     }
     if (exiled.length > 0) log(game, `除外：${exiled.join("、")}`);
+    else log(game, "除外対象のユニットはいなかった");
     cleanupAllDestroyed();
   },
   reviveFromExile({ game, playerId, card }) {
@@ -2200,7 +2222,7 @@ const abilityEffects = {
     const tag = ability.tag;
     const count = adjacentCells(card.row, card.col).filter(([row, col]) => {
       const unit = game.board[row]?.[col];
-      return unit?.owner === playerId && (!tag || (unit.tags || []).includes(tag));
+      return unit?.owner === playerId && (!tag || unitHasTag(unit, tag));
     }).length;
     if (count < (ability.min || 1)) return;
     card.atk = (card.atk || 0) + (ability.atk || 0);
@@ -2406,6 +2428,28 @@ const abilityEffects = {
       hpBuff: ability.hpBuff || 1,
     };
     game.message = `「${card.name}」: 与ダメージ後に資源を支払って強化しますか？`;
+    return "pending";
+  },
+  optionalPayBuffOnDamageReceived({ game, playerId, card, ability }) {
+    const resource = ability.resource || "nature";
+    const amount = ability.amount || 1;
+    const player = game.players[playerId];
+    if ((player.resources[resource] || 0) < amount) return;
+    game.pendingChoice = {
+      type: "payForBuff",
+      triggerContext: "onDamageReceived",
+      playerId,
+      cardName: card.name,
+      unitRow: card.row,
+      unitCol: card.col,
+      unitInstanceId: card.instanceId,
+      resource,
+      amount,
+      atkBuff: ability.atkBuff || 0,
+      hpBuff: ability.hpBuff || 0,
+      armorBuff: ability.armorBuff || 0,
+    };
+    game.message = `「${card.name}」: 被ダメージ後に資源を支払って強化しますか？`;
     return "pending";
   },
 };
@@ -3029,6 +3073,33 @@ let onlineOpenCallbacks = [];
 let applyingRemoteState = false;
 let nextOnlineOpId = 1;
 let queuedOnlineAction = null;
+
+// Deckmaker numeric tokens: ASCII/fullwidth digits, circled ①-⑳ (U+2460-2473), ⓪, ⓵-⓾
+const DECKMAKER_NUM_CHAR_CLASS = "0-9０-９\\u2460-\\u2473\\u24EA\\u24F5-\\u24FE";
+
+function parseCircledNumberChar(char) {
+  const code = char.codePointAt(0);
+  if (code >= 0x2460 && code <= 0x2473) return code - 0x245f;
+  if (code === 0x24ea) return 0;
+  if (code >= 0x24f5 && code <= 0x24fe) return code - 0x24f4;
+  return undefined;
+}
+
+function parseDeckmakerKeywordValue(raw = "") {
+  const text = String(raw);
+  const tokenRe = new RegExp(`[${DECKMAKER_NUM_CHAR_CLASS}]+`, "u");
+  const match = text.match(tokenRe);
+  if (!match) return undefined;
+  const token = match[0];
+  if (token.length === 1) {
+    const circled = parseCircledNumberChar(token);
+    if (circled != null) return circled;
+  }
+  const normalized = token.replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0));
+  if (/^\d+$/.test(normalized)) return Number(normalized);
+  return undefined;
+}
+
 loadCustomCardsIntoCatalog();
 loadBundledDeckData();
 const app = createAppState();
@@ -3592,10 +3663,14 @@ function deckmakerTypeToLocal(cardOrType) {
   return "tact";
 }
 
+function isUnitCard(card) {
+  return deckmakerTypeToLocal(card) === "unit";
+}
+
 function parseActivationCostFromText(costText) {
   const cost = {};
   const RES_MAP = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
-  const re = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+  const re = /([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)/g;
   let m;
   while ((m = re.exec(costText)) !== null) {
     const res = RES_MAP[m[1]];
@@ -3604,9 +3679,25 @@ function parseActivationCostFromText(costText) {
   return cost;
 }
 
+function parseVsTagAtkBonusFromText(text) {
+  const patterns = [
+    /「([^」]+)」タグを持っているユニットに対し(?:時)?(?:与)?攻撃時[：:\s]*ATK[+＋]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)(?:\/[±＋+\-]?0|の修正を得る)?/,
+    /\[([^\]]+)\]タグ(?:を持っている|の)ユニットに対し(?:時)?(?:与)?攻撃時[：:\s]*ATK[+＋]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)(?:\/[±＋+\-]?0|の修正を得る)?/,
+  ];
+  for (const pattern of patterns) {
+    const match = String(text || "").match(pattern);
+    if (!match) continue;
+    return {
+      vsTag: match[1].trim(),
+      atkBonus: parseDeckmakerKeywordValue(match[2]) || 1,
+    };
+  }
+  return null;
+}
+
 function parsePayBuffOnDamageDealtFromText(text) {
   const match = String(text || "").match(
-    /与ダメージ時([金人自鉱燃電魔])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払(?:った場合|う(?:事|こ)と(?:が)?(?:出来|でき)る場合)[：:\s]*\+([0-9０-９①②③④⑤⑥⑦⑧⑨]+)[／\/]([+＋]?[0-9０-９①②③④⑤⑥⑦⑧⑨]+)の修正を得る/,
+    /与ダメージ時([金人自鉱燃電魔])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を支払(?:った場合|う(?:事|こ)と(?:が)?(?:出来|でき)る場合)[：:\s]*\+([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)[／\/]([+＋]?[0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)の修正を得る/,
   );
   if (!match) return null;
   const resMap = { 金: "funds", 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 电: "electric", 電: "electric", 魔: "magic" };
@@ -3629,8 +3720,8 @@ function findPayForBuffUnit(pending, game = state) {
 
 function parsePayOnAttackEnhanceFromText(text) {
   const patterns = [
-    /攻撃(?:時|する(?:とき|と|時))(?:に)?[、,]?([^を]+?)を支払(?:った|う)?場合[：:\s]*\[貫通([^\]]+)\]\s*[、,]\s*\[装甲([^\]]+)\]\s*[、,]\s*ATK[+＋]([①②③④⑤⑥⑦⑧⑨0-9０-９]+)(?:\/[±＋+]?0|の修正を得る)/,
-    /攻撃(?:時|する(?:とき|と|時))(?:に)?[、,]?([^を]+?)を支払(?:った|う)[：:\s]*\[貫通([^\]]+)\]\s*[、,]\s*\[装甲([^\]]+)\]\s*[、,]\s*ATK[+＋]([①②③④⑤⑥⑦⑧⑨0-9０-９]+)(?:\/[±＋+]?0|の修正を得る)/,
+    /攻撃(?:時|する(?:とき|と|時))(?:に)?[、,]?([^を]+?)を支払(?:った|う)?場合[：:\s]*\[貫通([^\]]+)\]\s*[、,]\s*\[装甲([^\]]+)\]\s*[、,]\s*ATK[+＋]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)(?:\/[±＋+]?0|の修正を得る)/,
+    /攻撃(?:時|する(?:とき|と|時))(?:に)?[、,]?([^を]+?)を支払(?:った|う)[：:\s]*\[貫通([^\]]+)\]\s*[、,]\s*\[装甲([^\]]+)\]\s*[、,]\s*ATK[+＋]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)(?:\/[±＋+]?0|の修正を得る)/,
   ];
   for (const pattern of patterns) {
     const match = String(text || "").match(pattern);
@@ -3675,19 +3766,6 @@ function fromDeckmakerCosts(costs = {}) {
   return Object.fromEntries(Object.entries(result).filter(([, amount]) => amount));
 }
 
-function parseDeckmakerKeywordValue(raw = "") {
-  const text = String(raw);
-  const match = text.match(/[0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]+/);
-  if (!match) return undefined;
-  const token = match[0];
-  const circled = {
-    "①": 1, "②": 2, "③": 3, "④": 4, "⑤": 5, "⑥": 6, "⑦": 7, "⑧": 8, "⑨": 9, "⑩": 10,
-    "⓵": 1, "⓶": 2, "⓷": 3, "⓸": 4, "⓹": 5, "⓺": 6, "⓻": 7, "⓼": 8, "⓽": 9, "⓾": 10,
-  };
-  if (circled[token]) return circled[token];
-  return Number(token.replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))) || undefined;
-}
-
 function extractDeckmakerKeywordBlocks(description = "") {
   const blocks = [];
   const leading = String(description).match(/^(?:\s*\[[^\]]+\])+/);
@@ -3709,7 +3787,7 @@ function parseDeckmakerKeywords(card) {
   // because the mobile keyword is only active when summoned from graveyard
 
   const text = `${descKeywordBlock}\n${(card.keywords || []).join(" ")}`;
-  const NUM = String.raw`[①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾0-9０-９]*`;
+  const NUM = String.raw`[${DECKMAKER_NUM_CHAR_CLASS}]*`;
   const numRe = (label) => new RegExp(`${label}${NUM}`, "g");
   const patterns = [
     ["armor", numRe("装甲")],
@@ -3764,15 +3842,15 @@ function parseDeckmakerKeywords(card) {
 
 function parseDeckmakerAbilities(card, localType) {
   const abilities = [];
-  const text = String(card.description || "");
+  const text = String(card.description || card.text || "");
   if (localType === "struct") {
     const structResMap = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
     const structPayRestDrawGainMatch = text.match(
-      /((?:[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+(?:と)?)+)を支払いレストし[、,]?\s*(?:\n)?([0-9０-９一二三四五六七八九]+)枚ドローする[、,]?\s*(?:\n)?([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/,
+      /((?:[人自鉱燃電魔金][0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+(?:と)?)+)を支払いレストし[、,]?\s*(?:\n)?([0-9０-９一二三四五六七八九]+)枚ドローする[、,]?\s*(?:\n)?([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を得る/,
     );
     if (structPayRestDrawGainMatch) {
       const cost = {};
-      const costRe = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+      const costRe = /([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)/g;
       let costMatch;
       while ((costMatch = costRe.exec(structPayRestDrawGainMatch[1].replace(/[と、]/g, "")))) {
         const resource = structResMap[costMatch[1]];
@@ -3792,7 +3870,7 @@ function parseDeckmakerAbilities(card, localType) {
         });
       }
     }
-    const structRestOrMagicMatch = text.match(/レストする[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)か魔([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/);
+    const structRestOrMagicMatch = text.match(/レストする[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)か魔([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を得る/);
     if (structRestOrMagicMatch) {
       const primaryChar = structRestOrMagicMatch[1];
       const primaryResource = structResMap[primaryChar];
@@ -3820,11 +3898,11 @@ function parseDeckmakerAbilities(card, localType) {
       }
     }
     const structPayProduceMatch = text.match(
-      /((?:[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+(?:と)?)+)を支払う[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/,
+      /((?:[人自鉱燃電魔金][0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+(?:と)?)+)を支払う[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を得る/,
     );
     if (structPayProduceMatch && !abilities.some((a) => a.effect === "structPayProduce")) {
       const cost = {};
-      const costRe = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+      const costRe = /([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)/g;
       let costMatch;
       while ((costMatch = costRe.exec(structPayProduceMatch[1].replace(/[と、]/g, "")))) {
         const resource = structResMap[costMatch[1]];
@@ -3865,13 +3943,13 @@ function parseDeckmakerAbilities(card, localType) {
       const phaseMatch = phaseText.match(/ストラクチャーフェーズ[：:]([^\n。]+)/);
       const sourceText = phaseMatch ? phaseMatch[1] : phaseText;
       const structPhaseGains = [
-        [/金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
-        [/人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
-        [/自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
-        [/鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
-        [/燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
-        [/電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
-        [/魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+        [/金([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "funds"],
+        [/人([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "people"],
+        [/自([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "nature"],
+        [/鉱([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "ore"],
+        [/燃([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "fuel"],
+        [/電([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "electric"],
+        [/魔([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "magic"],
       ];
       for (const [pattern, resource] of structPhaseGains) {
         const match = sourceText.match(pattern);
@@ -3893,7 +3971,7 @@ function parseDeckmakerAbilities(card, localType) {
         amount: parseDeckmakerKeywordValue(structRestDrawMatch[1]) || 1,
       });
     }
-    const structDestroyEnemyMatch = text.match(/燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を支払[^。\n]*相手のストラクト(?:カード)?を([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚破壊/);
+    const structDestroyEnemyMatch = text.match(/燃([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を支払[^。\n]*相手のストラクト(?:カード)?を([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)枚破壊/);
     if (structDestroyEnemyMatch && !abilities.some((a) => a.effect === "destroyEnemyStructs")) {
       abilities.push({
         trigger: "onStructurePhase",
@@ -3902,9 +3980,9 @@ function parseDeckmakerAbilities(card, localType) {
         amount: parseDeckmakerKeywordValue(structDestroyEnemyMatch[2]) || 1,
       });
     }
-    const structMagicPayRestMatch = text.match(/魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を支払いレストする[：:]([^。\n]+)/);
+    const structMagicPayRestMatch = text.match(/魔([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を支払いレストする[：:]([^。\n]+)/);
     if (structMagicPayRestMatch && !abilities.some((a) => a.effect === "structPayRestChooseResource")) {
-      const produceMatch = structMagicPayRestMatch[2].match(/([0-9０-９①②③④⑤⑥⑦⑧⑨]+)個/);
+      const produceMatch = structMagicPayRestMatch[2].match(/([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)個/);
       const produceAmount = produceMatch ? (parseDeckmakerKeywordValue(produceMatch[1]) || 5) : 5;
       abilities.push({
         trigger: "onStructurePhase",
@@ -3920,11 +3998,11 @@ function parseDeckmakerAbilities(card, localType) {
       });
     }
     const structPayRestGolemMatch = text.match(
-      /((?:「)?[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+(?:または[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+)?(?:」)?を支払い).*?レストする[：:]デッキ(?:・墓地)?からコスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨]+)以下.*\[ゴーレム\]/,
+      /((?:「)?[人自鉱燃電魔金][0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+(?:または[人自鉱燃電魔金][0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)?(?:」)?を支払い).*?レストする[：:]デッキ(?:・墓地)?からコスト総量([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)以下.*\[ゴーレム\]/,
     );
     if (structPayRestGolemMatch && !abilities.some((a) => a.effect === "chooseSummonGolem")) {
       const costOptions = [];
-      const costOptionRe = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+      const costOptionRe = /([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)/g;
       let costMatch;
       while ((costMatch = costOptionRe.exec(structPayRestGolemMatch[1]))) {
         const resource = structResMap[costMatch[1]];
@@ -3959,12 +4037,12 @@ function parseDeckmakerAbilities(card, localType) {
   const tactPayRestDrawText = localType === "tact" && /を支払い、?レストする[：:].*デッキから.*枚ドロー/.test(text);
   if (localType === "tact" && tactPayRestDrawText && !abilities.some((a) => a.effect === "tactPayRestDraw")) {
     const tactPayRestDrawMatch = text.match(
-      /((?:[人自鉱燃電魔金][①②③④⑤⑥⑦⑧⑨0-9０-９]+(?:、|,)?)+)を支払い、?レストする[：:]デッキから([0-9０-９一二三四五六七八九]+)枚ドロー/,
+      /((?:[人自鉱燃電魔金][0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+(?:、|,)?)+)を支払い、?レストする[：:]デッキから([0-9０-９一二三四五六七八九]+)枚ドロー/,
     );
     if (tactPayRestDrawMatch) {
       const tactResMap = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
       const cost = {};
-      const costRe = /([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)/g;
+      const costRe = /([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)/g;
       let costMatch;
       while ((costMatch = costRe.exec(tactPayRestDrawMatch[1].replace(/[、,]/g, "")))) {
         const resource = tactResMap[costMatch[1]];
@@ -3989,11 +4067,11 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: baseTrigger, effect: "drawCards", amount });
   }
 
-  const buffAllHpMatch = text.match(/出撃時[：:].*?味方ユニット全体.*?HP.*?[＋+]([0-9０-９①②③④⑤⑥⑦⑧⑨]+)/s);
+  const buffAllHpMatch = text.match(/出撃時[：:].*?味方ユニット全体.*?HP.*?[＋+]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)/s);
   if (buffAllHpMatch) {
     abilities.push({ trigger: "onSummon", effect: "buffFriendlyUnitsHp", amount: parseDeckmakerKeywordValue(buffAllHpMatch[1]) || 1 });
   }
-  const dmgEnemyOnSummonMatch = text.match(/出撃時[：:].*?敵ユニット1体に([0-9０-９①②③④⑤⑥⑦⑧⑨]+)ダメージ/s);
+  const dmgEnemyOnSummonMatch = text.match(/出撃時[：:].*?敵ユニット1体に([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)ダメージ/s);
   if (dmgEnemyOnSummonMatch) {
     abilities.push({
       trigger: "onSummon",
@@ -4003,7 +4081,7 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
-  const destroyStructsOnPlayMatch = text.match(/相手のストラクト(?:カード)?を([0-9０-９①②③④⑤⑥⑦⑧⑨⑩]+)枚破壊/);
+  const destroyStructsOnPlayMatch = text.match(/相手のストラクト(?:カード)?を([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)枚破壊/);
   if (destroyStructsOnPlayMatch && localType === "tact") {
     if (!abilities.some((a) => a.effect === "destroyEnemyStructsOnPlay")) {
       abilities.push({
@@ -4019,14 +4097,14 @@ function parseDeckmakerAbilities(card, localType) {
   if (millOnSummonMatch) {
     abilities.push({ trigger: "onSummon", effect: "millCards", amount: parseDeckmakerKeywordValue(millOnSummonMatch[1]) || 1 });
   } else {
-    const millMatch = text.match(/デッキの上から([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚を墓地へ送る/);
+    const millMatch = text.match(/デッキの上から([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)枚を墓地へ送る/);
     if (millMatch && !/破壊された時/.test(text)) {
       abilities.push({ trigger: baseTrigger, effect: "millCards", amount: parseDeckmakerKeywordValue(millMatch[1]) || 1 });
     }
   }
 
   // On-destroy mill: "破壊された時：デッキの上からX枚を墓地へ送る"
-  const onDestroyMillMatch = text.match(/破壊された時[：:].*?デッキの上から([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚を墓地へ送る/s);
+  const onDestroyMillMatch = text.match(/破壊された時[：:].*?デッキの上から([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)枚を墓地へ送る/s);
   if (onDestroyMillMatch) {
     abilities.push({ trigger: "onDestroy", effect: "millCards", amount: parseDeckmakerKeywordValue(onDestroyMillMatch[1]) || 1 });
   }
@@ -4054,7 +4132,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // Search self to hand: "デッキから「<self>」をX枚まで手札に加える"
-  const searchSelfMatch = text.match(/デッキから「(.+?)」を([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚まで手札に加える/);
+  const searchSelfMatch = text.match(/デッキから「(.+?)」を([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)枚まで手札に加える/);
   if (searchSelfMatch && card.name) {
     const searched = searchSelfMatch[1].trim();
     const cardName = String(card.name).trim();
@@ -4066,21 +4144,21 @@ function parseDeckmakerAbilities(card, localType) {
   // Destroy target enemy struct: "フィールドの相手の施設カードを1枚選び、破壊する"
   const destroyTargetStructMatch = /相手.*施設.*破壊/.test(text)
     || /フィールドの相手.*施設/.test(text)
-    || /相手のストラクト(?:カード)?を[0-9０-９①②③④⑤⑥⑦⑧⑨]+枚選び[^。\n]*破壊/.test(text)
-    || /相手の施設(?:カード)?を[0-9０-９①②③④⑤⑥⑦⑧⑨]+枚選び[^。\n]*破壊/.test(text);
+    || /相手のストラクト(?:カード)?を[0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+枚選び[^。\n]*破壊/.test(text)
+    || /相手の施設(?:カード)?を[0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+枚選び[^。\n]*破壊/.test(text);
   if (destroyTargetStructMatch && !abilities.some((a) => a.effect === "destroyTargetStruct" || a.effect === "destroyEnemyStructsOnPlay")) {
     abilities.push({ trigger: baseTrigger, effect: "destroyTargetStruct" });
   }
 
   // Buff tag units ATK: "X[タグ]ユニット全ては+Y/±0の修正"
-  const buffTagMatch = text.match(/\[([^\]]+)\]ユニット全ては[＋+]([0-9０-９①②③④⑤⑥⑦⑧⑨]+)\/[±＋+0０][0-9]*/);
+  const buffTagMatch = text.match(/\[([^\]]+)\]ユニット全ては[＋+]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)\/[±＋+0０][0-9]*/);
   if (buffTagMatch) {
     const amount = parseDeckmakerKeywordValue(buffTagMatch[2]) || 1;
     abilities.push({ trigger: baseTrigger, effect: "buffTagUnitsAtk", tag: buffTagMatch[1], amount });
   }
 
   const adjacentEffectProtectMatch = text.match(
-    /(?:このユニットに)?隣接する(?:味方)?ユニット(?:は|に)\[効果保護([①②③④⑤⑥⑦⑧⑨0-9０-９]*)\](?:を得る|を与える)/,
+    /(?:このユニットに)?隣接する(?:味方)?ユニット(?:は|に)\[効果保護([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)\](?:を得る|を与える)/,
   );
   if (adjacentEffectProtectMatch && !abilities.some((a) => a.effect === "grantEffectProtectToAdjacent")) {
     abilities.push({
@@ -4091,7 +4169,7 @@ function parseDeckmakerAbilities(card, localType) {
 
   // "「破壊された時：金③を得る」を与える" → grant onDestroy gainResource to target unit
   const DESC_RESOURCE_MAP_LOCAL = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
-  const grantDestroyGainMatch = text.match(/「破壊された時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る」を与える/);
+  const grantDestroyGainMatch = text.match(/「破壊された時[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る」を与える/);
   if (grantDestroyGainMatch) {
     const resource = DESC_RESOURCE_MAP_LOCAL[grantDestroyGainMatch[1]] || "funds";
     const amount = parseDeckmakerKeywordValue(grantDestroyGainMatch[2]) || 1;
@@ -4105,13 +4183,13 @@ function parseDeckmakerAbilities(card, localType) {
       .replace(/(?:相手.*?破壊|敵撃破時)[^。\n]*/g, "")
       .replace(/与ダメージ時[^。\n]*/g, "");
     const resourceGainPatterns = [
-      [/金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
-      [/人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
-      [/自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
-      [/鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
-      [/燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
-      [/電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
-      [/魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+      [/金([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "funds"],
+      [/人([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "people"],
+      [/自([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "nature"],
+      [/鉱([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "ore"],
+      [/燃([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "fuel"],
+      [/電([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "electric"],
+      [/魔([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "magic"],
     ];
     for (const [pattern, resource] of resourceGainPatterns) {
       const match = textForGain.match(pattern);
@@ -4125,13 +4203,13 @@ function parseDeckmakerAbilities(card, localType) {
 
   // onDestroyEnemyUnit resource gain (structs and units): "相手ユニットを破壊するたび" / "敵撃破時"
   const destroyGainPatterns = [
-    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
-    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
-    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
-    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
-    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
-    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
-    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?人([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "people"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?金([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "funds"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?自([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "nature"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?鉱([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "ore"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?燃([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "fuel"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?電([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "electric"],
+    [/(?:相手.*?破壊|敵撃破時)[^。\n]*?魔([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "magic"],
   ];
   for (const [pattern, resource] of destroyGainPatterns) {
     const match = text.match(pattern);
@@ -4151,13 +4229,13 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
   const dealDamageGainPatterns = [
-    [/与ダメージ時[^。\n]*?金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
-    [/与ダメージ時[^。\n]*?人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
-    [/与ダメージ時[^。\n]*?自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
-    [/与ダメージ時[^。\n]*?鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
-    [/与ダメージ時[^。\n]*?燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
-    [/与ダメージ時[^。\n]*?電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
-    [/与ダメージ時[^。\n]*?魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+    [/与ダメージ時[^。\n]*?金([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "funds"],
+    [/与ダメージ時[^。\n]*?人([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "people"],
+    [/与ダメージ時[^。\n]*?自([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "nature"],
+    [/与ダメージ時[^。\n]*?鉱([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "ore"],
+    [/与ダメージ時[^。\n]*?燃([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "fuel"],
+    [/与ダメージ時[^。\n]*?電([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "electric"],
+    [/与ダメージ時[^。\n]*?魔([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "magic"],
   ];
   for (const [pattern, resource] of dealDamageGainPatterns) {
     const match = text.match(pattern);
@@ -4168,7 +4246,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   const discardMillOnDamageMatch = text.match(
-    /与ダメージ時[^。\n]*手札([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚を捨てる[^。\n]*相手の山札を([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚墓地/,
+    /与ダメージ時[^。\n]*手札([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)枚を捨てる[^。\n]*相手の山札を([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)枚墓地/,
   );
   if (discardMillOnDamageMatch) {
     abilities.push({
@@ -4182,7 +4260,7 @@ function parseDeckmakerAbilities(card, localType) {
   // 手札の[tag]/「name」を見せて発動 + タグカードを見せて人・金×N
   const revealHeroTagMatch = text.match(/手札の\[([^\]]+)\]ユニットを相手に見せて発動/);
   const revealHeroNameMatch = text.match(/手札の「([^」]+)」ユニットを相手に見せて発動/);
-  const revealTagGainMatch = text.match(/手札から(.+?)カードをそれぞれ、1枚まで.*?見せてもよい.*?枚数×([0-9０-９①②③④⑤⑥⑦⑧⑨⑩]*)だけ([人金自鉱燃電魔]+)と([人金自鉱燃電魔]+)を得る/);
+  const revealTagGainMatch = text.match(/手札から(.+?)カードをそれぞれ、1枚まで.*?見せてもよい.*?枚数×([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)だけ([人金自鉱燃電魔]+)と([人金自鉱燃電魔]+)を得る/);
   const revealHeroMatch = revealHeroTagMatch || revealHeroNameMatch;
   if (revealHeroMatch && revealTagGainMatch) {
     const heroCond = revealHeroTagMatch
@@ -4198,9 +4276,9 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // 被ダメージ時：効果処理中は破壊されない + 資源支払いで+N/+M
-  let takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊され(?:ず|ない)[^。\n]*?([金人自鉱燃電魔])を支払うことで[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/\+?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
+  let takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊され(?:ず|ない)[^。\n]*?([金人自鉱燃電魔])を支払うことで[^。\n]*?\+([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)\/\+?([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)/);
   if (!takeDamageSurviveBuff) {
-    takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊され(?:ず|ない)[^。\n]*?([金人自鉱燃電魔])を支払[^。\n]*?\+([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)\/(\+)?([0-9０-９①②③④⑤⑥⑦⑧⑨⑩⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾]*)/);
+    takeDamageSurviveBuff = text.match(/被ダメージ時[^。\n]*?破壊され(?:ず|ない)[^。\n]*?([金人自鉱燃電魔])を支払[^。\n]*?\+([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)\/(\+)?([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)/);
   }
   if (takeDamageSurviveBuff) {
     const resMap = { 金: "funds", 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic" };
@@ -4212,13 +4290,56 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onDamageReceived", effect: "surviveDamageAndOptionalBuff", resource, amount: 1, atkBuff, hpBuff });
   }
 
+  const payBuffOnDamageReceivedMatch = text.match(
+    /被ダメージ時[、,]\s*自([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を支払う[：:]ATK\+([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)[、,]\s*HP\+([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)(?:[、,]\s*\[装甲([^\]]+)\]の修正を得る)?/,
+  );
+  if (payBuffOnDamageReceivedMatch && localType === "unit") {
+    const armorBuff = payBuffOnDamageReceivedMatch[4]
+      ? (parseDeckmakerKeywordValue(payBuffOnDamageReceivedMatch[4]) || 1)
+      : 0;
+    abilities.push({
+      trigger: "onDamageReceived",
+      effect: "optionalPayBuffOnDamageReceived",
+      resource: "nature",
+      amount: parseDeckmakerKeywordValue(payBuffOnDamageReceivedMatch[1]) || 2,
+      atkBuff: parseDeckmakerKeywordValue(payBuffOnDamageReceivedMatch[2]) || 0,
+      hpBuff: parseDeckmakerKeywordValue(payBuffOnDamageReceivedMatch[3]) || 0,
+      armorBuff,
+    });
+  }
+
+  const lifeCounterOnSummonMatch = text.match(/出撃時[：:]残機カウンターを([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)得る/);
+  if (lifeCounterOnSummonMatch && localType === "unit") {
+    abilities.push({
+      trigger: "onSummon",
+      effect: "addLifeCounter",
+      amount: parseDeckmakerKeywordValue(lifeCounterOnSummonMatch[1]) || 1,
+    });
+  }
+
+  const lifeCounterSurviveMatch = text.match(
+    /残機カウンターを([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)取り除き１度のみ発動できる[：:]この処理中はユニットは破壊され(?:ず|ない)[、,]\s*HP\+([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)の補正を得る/,
+  );
+  if (lifeCounterSurviveMatch && localType === "unit") {
+    abilities.push({
+      trigger: "onActivate",
+      effect: "spendLifeCounterSurviveBuff",
+      costCounters: parseDeckmakerKeywordValue(lifeCounterSurviveMatch[1]) || 1,
+      hpBuff: parseDeckmakerKeywordValue(lifeCounterSurviveMatch[2]) || 10,
+      surviveDuringEffect: true,
+      noRest: true,
+      exclusiveGroup: "lifeCounterSurviveOnce",
+      choiceLabel: `残機${lifeCounterSurviveMatch[1] || "1"}：HP+${lifeCounterSurviveMatch[2] || "10"}（1度のみ）`,
+    });
+  }
+
   // [降臨]: treat as onSummon trigger + descentEffect
   if (/\[降臨\]/.test(text)) {
     abilities.push({ trigger: "onSummon", effect: "descentEffect" });
   }
 
   // Search by tag to hand: "[タグ]タグのカードをN枚デッキから手札に加える"
-  const tagDeckToHandMatch = text.match(/\[([^\]]+)\]タグのカードを([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚デッキから手札に加える/);
+  const tagDeckToHandMatch = text.match(/\[([^\]]+)\]タグのカードを([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)枚デッキから手札に加える/);
   if (tagDeckToHandMatch) {
     abilities.push({
       trigger: baseTrigger,
@@ -4229,7 +4350,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   const payOptionalSummonSearchMatch = text.match(
-    /出撃時([金人自鉱燃電魔])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払[^：:\n]*[：:]「([^」]+)」をデッキから手札に加える/,
+    /出撃時([金人自鉱燃電魔])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を支払[^：:\n]*[：:]「([^」]+)」をデッキから手札に加える/,
   );
   if (payOptionalSummonSearchMatch && localType === "unit") {
     const optionalSummonResMap = { 金: "funds", 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic" };
@@ -4244,7 +4365,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   const payBraveBloodSummonMatch = text.match(
-    /出撃時[：:]\s*魔([①②③④⑤⑥⑦⑧⑨0-9０-９]+)と電([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払[\s\S]*?勇血カウンター([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/,
+    /出撃時[：:]\s*魔([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)と電([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を支払[\s\S]*?勇血カウンター([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を得る/,
   );
   if (payBraveBloodSummonMatch && localType === "unit") {
     abilities.push({
@@ -4259,7 +4380,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // Search other card by name to hand: "デッキから「X」を1枚まで手札に加える" (not self)
-  const searchOtherMatch = text.match(/デッキから「(.+?)」を([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚まで手札に加える/);
+  const searchOtherMatch = text.match(/デッキから「(.+?)」を([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)枚まで手札に加える/);
   if (searchOtherMatch && card.name) {
     const searched = searchOtherMatch[1].trim();
     const cardName = String(card.name).trim();
@@ -4269,7 +4390,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // Search by cost limit to hand: "デッキからコスト総量X以下の[タグ]ユニットカードを手札に加える"
-  const searchCostMatch = text.match(/デッキからコスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)以下(?:の\[([^\]]+)\])?ユニット.*手札に加える/);
+  const searchCostMatch = text.match(/デッキからコスト総量([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)以下(?:の\[([^\]]+)\])?ユニット.*手札に加える/);
   if (searchCostMatch) {
     const maxCost = parseDeckmakerKeywordValue(searchCostMatch[1]) || 1;
     const tag = searchCostMatch[2] || null;
@@ -4277,7 +4398,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // Search min total cost to hand: "コスト18以上のカードを2枚、手札に加える"
-  const searchMinCostMatch = text.match(/コスト([0-9０-９①②③④⑤⑥⑦⑧⑨]+)以上のカードを([0-9０-９①②③④⑤⑥⑦⑧⑨]+)枚[、,]?手札に加える/);
+  const searchMinCostMatch = text.match(/コスト([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)以上のカードを([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)枚[、,]?手札に加える/);
   if (searchMinCostMatch) {
     abilities.push({
       trigger: baseTrigger,
@@ -4287,25 +4408,16 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
-  // vs-tag attack bonus: "「歩兵」タグを持っているユニットに対し与攻撃時：ATK+①"
-  const vsTagAtkMatch = text.match(/「([^」]+)」タグを持っているユニットに対し(?:与)?攻撃時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
-  if (vsTagAtkMatch && localType === "unit") {
+  // vs-tag attack bonus: "「歩兵」/ [歩兵] … 与攻撃時：ATK+①"
+  const vsTagAtkParsed = parseVsTagAtkBonusFromText(text);
+  if (vsTagAtkParsed && localType === "unit" && !abilities.some((a) => a.effect === "vsTagAtkBonus")) {
     abilities.push({
       effect: "vsTagAtkBonus",
-      vsTag: vsTagAtkMatch[1],
-      atkBonus: parseDeckmakerKeywordValue(vsTagAtkMatch[2]) || 1,
-    });
-  }
-  const vsTagAtkBracketMatch = text.match(/\[([^\]]+)\]タグのユニットに対し(?:与)?攻撃時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
-  if (vsTagAtkBracketMatch && localType === "unit" && !abilities.some((a) => a.effect === "vsTagAtkBonus")) {
-    abilities.push({
-      effect: "vsTagAtkBonus",
-      vsTag: vsTagAtkBracketMatch[1],
-      atkBonus: parseDeckmakerKeywordValue(vsTagAtkBracketMatch[2]) || 1,
+      ...vsTagAtkParsed,
     });
   }
 
-  const vsTagDamageGainMatch = text.match(/\[([^\]]+)\]タグのユニットに対し(?:与)?ダメージ時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/);
+  const vsTagDamageGainMatch = text.match(/\[([^\]]+)\]タグ(?:を持っている|の)ユニットに対し(?:与)?ダメージ時[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を得る/);
   if (vsTagDamageGainMatch && localType === "unit") {
     const vsTagResMap = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
     abilities.push({
@@ -4317,7 +4429,7 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
-  const vsTagDestroyGainMatch = text.match(/\[([^\]]+)\]タグのユニットに対し撃破時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/);
+  const vsTagDestroyGainMatch = text.match(/\[([^\]]+)\]タグのユニットに対し撃破時[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を得る/);
   if (vsTagDestroyGainMatch && localType === "unit") {
     const vsTagResMap = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
     abilities.push({
@@ -4339,7 +4451,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // vs-armor attack bonus: "[装甲]効果を持っているユニットに対し与攻撃時：ATK+②"
-  const vsArmorAtkMatch = text.match(/\[装甲\]効果を持っているユニットに対し与攻撃時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
+  const vsArmorAtkMatch = text.match(/\[装甲\]効果を持っているユニットに対し与攻撃時[：:]ATK\+([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)の修正を得る/);
   if (vsArmorAtkMatch && localType === "unit") {
     abilities.push({
       effect: "vsArmorAtkBonus",
@@ -4362,7 +4474,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // onTurnStart: "ターン開始時：人Xを支払うか、コアにYダメージ" (幾龍)
-  const turnStartPayMatch = text.match(/ターン開始時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払うか[、,].*?コアに([0-9０-９①②③④⑤⑥⑦⑧⑨]+)ダメージ/);
+  const turnStartPayMatch = text.match(/ターン開始時[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を支払うか[、,].*?コアに([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)ダメージ/);
   if (turnStartPayMatch) {
     const DESC_RES = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
     const resource = DESC_RES[turnStartPayMatch[1]] || "people";
@@ -4377,7 +4489,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // Reveal top N and pick 1: "デッキの上からN枚を...公開し、1枚を...手札に加える"
-  const revealPickMatch = text.match(/デッキの上から([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚.*公開.*(?:1枚|一枚).*手札に加える/s);
+  const revealPickMatch = text.match(/デッキの上から([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)枚.*公開.*(?:1枚|一枚).*手札に加える/s);
   if (revealPickMatch) {
     const amount = parseDeckmakerKeywordValue(revealPickMatch[1]) || 3;
     const tagFilterMatch = text.match(/\[([^\]]+)\](?:カード)?(?:があれば|のカードを)/);
@@ -4386,7 +4498,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // Reveal top N and pick 1: "自身のデッキをN枚めくり1枚を手札に加える"
-  const deckMillPickMatch = text.match(/(?:自身の)?デッキ(?:の上)?(?:を|から)([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)枚(?:を)?(?:めくり|めくって).*(?:1枚|一枚).*手札に加える/s);
+  const deckMillPickMatch = text.match(/(?:自身の)?デッキ(?:の上)?(?:を|から)([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)枚(?:を)?(?:めくり|めくって).*(?:1枚|一枚).*手札に加える/s);
   if (deckMillPickMatch && !abilities.some((a) => a.effect === "revealTopNPick")) {
     abilities.push({
       trigger: baseTrigger,
@@ -4435,27 +4547,32 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // onFirstDraw (struct): "ターンで始めてカードを引いた時...コスト総量N以下のユニット...フィールドに出す"
-  const firstDrawReviveMatch = text.match(/ターンで始めてカードを引いた時.*?コスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)以下のユニットカードを.*フィールドに出す.*?(?:\[([^\]]+)\]を与える)?/s);
+  const firstDrawReviveMatch = text.match(/ターンで始めてカードを引いた時.*?コスト総量([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)以下のユニットカードを.*フィールドに出す.*?(?:\[([^\]]+)\]を与える)?/s);
   if (firstDrawReviveMatch) {
     const maxCost = parseDeckmakerKeywordValue(firstDrawReviveMatch[1]) || 1;
     const grantTag = firstDrawReviveMatch[2] || "屍人";
     abilities.push({ trigger: "onFirstDraw", effect: "reviveUnitFromDump", maxCost, grantTag });
   }
 
-  const payHpBuffMatch = text.match(/(?:非ダメージ時[、,]\s*)?自([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払う[：:]HP([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/);
+  const payHpBuffMatch = text.match(
+    /(?:非ダメージ時[、,]\s*)?自([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を支払う[：:]HP([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)の修正を得る(?:[、,]\s*\[装甲([^\]]+)\]を得る)?/,
+  );
   if (payHpBuffMatch && localType === "unit") {
+    const hpBuff = parseDeckmakerKeywordValue(payHpBuffMatch[2]) || 5;
+    const armorBuff = payHpBuffMatch[3] ? (parseDeckmakerKeywordValue(payHpBuffMatch[3]) || 1) : 0;
     abilities.push({
       trigger: "onActivate",
       effect: "gainStatBuff",
       activationCost: { nature: parseDeckmakerKeywordValue(payHpBuffMatch[1]) || 2 },
       atkBuff: 0,
-      hpBuff: parseDeckmakerKeywordValue(payHpBuffMatch[2]) || 5,
+      hpBuff,
+      armorBuff,
       noRest: true,
       nonDamageOnly: /非ダメージ時/.test(text),
     });
   }
 
-  const payAtkBuffMatch = text.match(/([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を支払う[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)を得る/);
+  const payAtkBuffMatch = text.match(/([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を支払う[：:]ATK\+([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を得る/);
   if (payAtkBuffMatch && localType === "unit") {
     const DESC_RES = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
     abilities.push({
@@ -4467,15 +4584,15 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // onActivate: "任意の資源①を支払い、このユニットをレストする：...ユニットをレストする"
-  if (localType === "unit" && /任意の資源([①②③④⑤⑥⑦⑧⑨0-9]+)を支払い.*レストする/.test(text)) {
-    const amountStr = text.match(/任意の資源([①②③④⑤⑥⑦⑧⑨0-9]+)/)?.[1] || "①";
+  if (localType === "unit" && /任意の資源([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を支払い.*レストする/.test(text)) {
+    const amountStr = text.match(/任意の資源([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)/)?.[1] || "①";
     const amount = parseDeckmakerKeywordValue(amountStr) || 1;
     abilities.push({ trigger: "onActivate", effect: "restTargetNoUnrest", activationCostType: "anyOne", activationCostAmount: amount });
   }
 
   // struct HP-cost ability: "ライフをN支払う(1ターンに1度)：資源X得る" — uses onStructurePhaseHP (separate from normal rest activation)
   if (localType === "struct") {
-    const hpCostMatch = text.match(/ライフを([0-9０-９①②③④⑤⑥⑦⑧⑨]+)支払う.*?[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/);
+    const hpCostMatch = text.match(/ライフを([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)支払う.*?[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/);
     if (hpCostMatch) {
       const DESC_RES2 = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
       const hpCost = parseDeckmakerKeywordValue(hpCostMatch[1]) || 3;
@@ -4497,7 +4614,7 @@ function parseDeckmakerAbilities(card, localType) {
       } else if (/クォーツトークン/.test(effectText)) {
         abilities.push({ trigger: "onActivate", effect: "summonToken", tokenId: "quartzToken", activationCost });
       } else if (/デッキからコスト総量/.test(effectText)) {
-        const m2 = effectText.match(/コスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)以下(?:の\[([^\]]+)\])?ユニット/);
+        const m2 = effectText.match(/コスト総量([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)以下(?:の\[([^\]]+)\])?ユニット/);
         if (m2) {
           abilities.push({ trigger: "onActivate", effect: "searchUnitToCostHand", maxCost: parseDeckmakerKeywordValue(m2[1]) || 3, tag: m2[2] || null, amount: 1, activationCost });
         }
@@ -4508,7 +4625,7 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   const onAttackSummonGolemSameRowMatch = text.match(
-    /攻撃する(?:とき|と|時)[：:].*同じ行.*コスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨]+)以下.*\[ゴーレム\].*デッキ・墓地から出す/,
+    /攻撃する(?:とき|と|時)[：:].*同じ行.*コスト総量([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)以下.*\[ゴーレム\].*デッキ・墓地から出す/,
   );
   if (onAttackSummonGolemSameRowMatch && localType === "unit" && !abilities.some((a) => a.effect === "summonGolemToSameRow")) {
     abilities.push({
@@ -4518,7 +4635,7 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
-  const onAttackSelfAtkMatch = text.match(/攻撃する(?:とき|と|時)[：:][＋+]?(\d+|[①②③④⑤⑥⑦⑧⑨0-9０-９]+)\/[±＋+]?0/u);
+  const onAttackSelfAtkMatch = text.match(/攻撃する(?:とき|と|時)[：:][＋+]?(\d+|[0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)\/[±＋+]?0/u);
   if (onAttackSelfAtkMatch && localType === "unit" && !abilities.some((a) => a.effect === "buffSelfAtkThisAttack")) {
     abilities.push({
       trigger: "onAttack",
@@ -4539,7 +4656,7 @@ function parseDeckmakerAbilities(card, localType) {
       } else if (/クォーツトークン/.test(effectText)) {
         abilities.push({ trigger: "onActivate", effect: "summonToken", tokenId: "quartzToken", activationCost, noRest: true });
       } else if (/デッキからコスト総量/.test(effectText)) {
-        const m2 = effectText.match(/コスト総量([0-9０-９①②③④⑤⑥⑦⑧⑨一二三四五六七八九]+)以下(?:の\[([^\]]+)\])?ユニット/);
+        const m2 = effectText.match(/コスト総量([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE一二三四五六七八九]+)以下(?:の\[([^\]]+)\])?ユニット/);
         if (m2) {
           abilities.push({ trigger: "onActivate", effect: "searchUnitToCostHand", maxCost: parseDeckmakerKeywordValue(m2[1]) || 3, tag: m2[2] || null, amount: 1, activationCost, noRest: true });
         }
@@ -4903,6 +5020,20 @@ function parseDeckmakerAbilities(card, localType) {
     }
   }
 
+  if (card.id === "card_1782237267608") {
+    const vsInfantry = { effect: "vsTagAtkBonus", vsTag: "歩兵", atkBonus: 2 };
+    const idx = abilities.findIndex((a) => a.effect === "vsTagAtkBonus");
+    if (idx >= 0) abilities[idx] = vsInfantry;
+    else abilities.push(vsInfantry);
+  }
+
+  if (card.id === "card_1782307790847") {
+    const vsInfantry = { effect: "vsTagAtkBonus", vsTag: "歩兵", atkBonus: 1 };
+    const idx = abilities.findIndex((a) => a.effect === "vsTagAtkBonus");
+    if (idx >= 0) abilities[idx] = vsInfantry;
+    else abilities.push(vsInfantry);
+  }
+
   if (card.id === "card_1782600607874" && !abilities.some((a) => a.effect === "payOnAttackEnhance")) {
     abilities.push({
       trigger: "onAttack",
@@ -4975,6 +5106,11 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onPlay", effect: "reviveFromExile" });
   }
 
+  if (card.id === "turbulentRepatriation") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "exileAllNonNeutralNonUnifall" });
+  }
+
   if (card.id === "card_1782561876492") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "otherworldKinTactPlay" });
@@ -4987,18 +5123,37 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1782225519182") {
     for (let i = abilities.length - 1; i >= 0; i--) {
-      if (abilities[i].trigger === "onPlay" && abilities[i].effect === "gainResource") abilities.splice(i, 1);
+      const ability = abilities[i];
+      if (ability.trigger === "onPlay" && ability.effect === "gainResource") abilities.splice(i, 1);
+      if (ability.trigger === "onActivate" && ability.effect === "gainStatBuff") abilities.splice(i, 1);
+      if (ability.trigger === "onDamageDealt" && ability.effect === "gainResource") abilities.splice(i, 1);
     }
-    if (!abilities.some((a) => a.trigger === "onActivate" && a.effect === "gainStatBuff" && a.hpBuff)) {
-      abilities.push({
+    const requiredAbilities = [
+      { trigger: "onSummon", effect: "addLifeCounter", amount: 1 },
+      {
+        trigger: "onDamageReceived",
+        effect: "optionalPayBuffOnDamageReceived",
+        resource: "nature",
+        amount: 2,
+        atkBuff: 5,
+        hpBuff: 10,
+        armorBuff: 5,
+      },
+      {
         trigger: "onActivate",
-        effect: "gainStatBuff",
-        activationCost: { nature: 2 },
-        atkBuff: 0,
-        hpBuff: 5,
+        effect: "spendLifeCounterSurviveBuff",
+        costCounters: 1,
+        hpBuff: 10,
+        surviveDuringEffect: true,
         noRest: true,
-        nonDamageOnly: true,
-      });
+        exclusiveGroup: "lifeCounterSurviveOnce",
+        choiceLabel: "残機1：HP+⑩（1度のみ）",
+      },
+    ];
+    for (const required of requiredAbilities) {
+      if (!abilities.some((a) => a.trigger === required.trigger && a.effect === required.effect)) {
+        abilities.push(required);
+      }
     }
   }
 
@@ -5033,8 +5188,16 @@ function parseDeckmakerAbilities(card, localType) {
       cost: { funds: 1, nature: 1 },
       produces: { people: 5 },
     });
+  } else if (card.id === "card_1782226032497") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "structPayProduce",
+      cost: { people: 1 },
+      produces: { funds: 5 },
+    });
   } else {
-    const nextTurnDrawBonusMatch = text.match(/次のターン.*?ドロー.*?[＋+]([0-9０-９①②③④⑤⑥⑦⑧⑨]+)/);
+    const nextTurnDrawBonusMatch = text.match(/次のターン.*?ドロー.*?[＋+]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)/);
     if (nextTurnDrawBonusMatch && localType === "tact" && !abilities.some((a) => a.effect === "longTermInvestmentPlay")) {
       abilities.push({
         trigger: "onPlay",
@@ -5112,6 +5275,15 @@ function parseDeckmakerAbilities(card, localType) {
         exclusiveGroup: "goltenaOnce",
         choiceLabel: "砲撃照準を指定",
       });
+    }
+  }
+
+  if (
+    card.id === "mysticCapture"
+    || /手札.*(?:\[神秘\]|神秘).*タグ.*ユニット.*(?:好きなだけ)?捨て/.test(text)
+  ) {
+    if (!abilities.some((a) => a.effect === "mysticCapture")) {
+      abilities.push({ trigger: "onPlay", effect: "mysticCapture" });
     }
   }
 
@@ -5196,7 +5368,7 @@ function fromDeckmakerCard(card) {
     base.deckMax = Number(card.deckMax) || 60;
     base.startResources = fromDeckmakerCosts(card.startResources || card.initialResources || {});
     base.income = fromDeckmakerCosts(card.income || card.generates || {});
-    const turnStartIncomeMatch = coreText.match(/ターン開始時[：:]([人自鉱燃電魔金])([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/);
+    const turnStartIncomeMatch = coreText.match(/ターン開始時[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/);
     if (turnStartIncomeMatch) {
       const coreIncomeRes = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
       const resource = coreIncomeRes[turnStartIncomeMatch[1]];
@@ -5208,13 +5380,13 @@ function fromDeckmakerCard(card) {
       const coreIncomeRes = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
       const segment = perTurnIncomeMatch[1];
       const perTurnPatterns = [
-        [/金([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "funds"],
-        [/人([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "people"],
-        [/自([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "nature"],
-        [/鉱([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "ore"],
-        [/燃([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "fuel"],
-        [/電([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "electric"],
-        [/魔([①②③④⑤⑥⑦⑧⑨0-9０-９]*)を得る/, "magic"],
+        [/金([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "funds"],
+        [/人([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "people"],
+        [/自([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "nature"],
+        [/鉱([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "ore"],
+        [/燃([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "fuel"],
+        [/電([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "electric"],
+        [/魔([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る/, "magic"],
       ];
       for (const [pattern, resource] of perTurnPatterns) {
         const match = segment.match(pattern);
@@ -6515,6 +6687,7 @@ function applyRemoteGameState(remoteState) {
   try {
     Object.assign(state, normalizeGameResources(JSON.parse(JSON.stringify(remoteState))));
     nextInstanceId = Math.max(nextInstanceId, highestInstanceId(state) + 1);
+    refreshContinuousEffects(state);
   } finally {
     applyingRemoteState = false;
   }
@@ -6931,13 +7104,18 @@ function consolidatePlayCostToResource(cost, resource) {
 }
 
 function makeUnit(cardId, owner, row, col, options = {}) {
-  const card = cloneCard(cardCatalog.main[cardId]);
+  const template = findCatalogCard(cardId);
+  const card = cloneCard(template || cardCatalog.main[cardId]);
   if (options.fromDump && cardId === "card_1753658925940") {
     card.atk = (card.atk || 0) + 1;
     card.hp = (card.hp || 0) + 1;
   }
+  syncPassiveCombatAbilitiesFromCatalog(card);
   return {
     ...card,
+    tags: [...(card.tags || template?.tags || [])],
+    text: card.text || template?.text || template?.description || "",
+    description: card.description || template?.description || card.text || "",
     instanceId: nextInstanceId++,
     owner,
     row,
@@ -7284,31 +7462,46 @@ function applyConditionalKeywordValue(unit, key, active, keywordId, value) {
 }
 
 function parseAdjacentTagBuff(text) {
-  const combinedMatch = String(text || "").match(
-    /隣接するユニットのうち([0-9０-９①②③④⑤⑥⑦⑧⑨]+)つが\[([^\]]+)\](?:のタグ)?のユニットの時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)[、,]HP\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/,
-  );
-  if (combinedMatch) {
+  const patterns = [
+    /隣接するユニットのうち([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)つが\[([^\]]+)\](?:のタグ)?(?:を持っている|の)?ユニット(?:の時|になった時|の場合)?[：:\s]*ATK[+＋]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)[、,，]HP[+＋]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)の修正を得る/,
+    /隣接するユニットのうち([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)つが\[([^\]]+)\](?:のタグ)?(?:を持っている|の)?ユニット(?:の時|になった時|の場合)?[：:\s]*ATK[+＋]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)の修正を得る[、,，]?HP[+＋]([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)の修正を得る/,
+  ];
+  for (const pattern of patterns) {
+    const match = String(text || "").match(pattern);
+    if (!match) continue;
     return {
-      count: parseDeckmakerKeywordValue(combinedMatch[1]) || 2,
-      tag: combinedMatch[2],
-      atk: parseDeckmakerKeywordValue(combinedMatch[3]) || 1,
-      hp: parseDeckmakerKeywordValue(combinedMatch[4]) || 1,
+      count: parseDeckmakerKeywordValue(match[1]) || 2,
+      tag: match[2].trim(),
+      atk: parseDeckmakerKeywordValue(match[3]) || 1,
+      hp: parseDeckmakerKeywordValue(match[4]) || 1,
     };
   }
-  const match = String(text || "").match(
-    /隣接するユニットのうち([0-9０-９①②③④⑤⑥⑦⑧⑨]+)つが\[([^\]]+)\](?:のタグ)?のユニットの時[：:]ATK\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る[、,]?HP\+([①②③④⑤⑥⑦⑧⑨0-9０-９]+)の修正を得る/,
-  );
-  if (!match) return null;
-  return {
-    count: parseDeckmakerKeywordValue(match[1]) || 2,
-    tag: match[2],
-    atk: parseDeckmakerKeywordValue(match[3]) || 1,
-    hp: parseDeckmakerKeywordValue(match[4]) || 1,
-  };
+  return null;
 }
 
+const ADJACENT_TAG_BUFF_BY_CARD_ID = {
+  card_1782236231218: { count: 2, tag: "アトラス北東軍", atk: 1, hp: 1 },
+  card_1782307790847: { count: 2, tag: "アトラス北東軍", atk: 1, hp: 1 },
+  card_1782500000000: { count: 2, tag: "アトラス北東軍", atk: 1, hp: 1 },
+  card_1782600607874: { count: 2, tag: "アトラス北東軍", atk: 1, hp: 1 },
+};
+
 function unitCardTextForContinuousEffects(unit) {
-  return unit?.text || unit?.description || catalogCardFor(unit)?.text || "";
+  const catalog = findCatalogCard(unit?.id);
+  return unit?.text || unit?.description || catalog?.text || catalog?.description || "";
+}
+
+function adjacentTagBuffRuleFor(unit) {
+  const hardcoded = ADJACENT_TAG_BUFF_BY_CARD_ID[unit?.id];
+  if (hardcoded) return { ...hardcoded };
+  return parseAdjacentTagBuff(unitCardTextForContinuousEffects(unit));
+}
+
+function countAdjacentAlliesWithTag(unit, playerId, tagName, game = state) {
+  return adjacentCells(unit.row, unit.col).filter(([row, col]) => {
+    const adjacent = game.board[row]?.[col];
+    return adjacent?.owner === playerId && unitHasTag(adjacent, tagName);
+  }).length;
 }
 
 function refreshContinuousEffects(game = state) {
@@ -7319,32 +7512,31 @@ function refreshContinuousEffects(game = state) {
     const coreTagSet = coreBuffTags?.length ? new Set(coreBuffTags) : null;
     for (const unit of unitsOwnedBy(pid, game)) {
       if (coreTagSet && coreBuffAtk) {
-        const hasTag = (unit.tags || []).some((t) => coreTagSet.has(t));
+        const hasTag = unitTags(unit).some((t) => coreTagSet.has(t));
         applyConditionalBuff(unit, `corePassive_${core.id}`, hasTag, { atk: coreBuffAtk, hp: 0 });
       }
       if (unit.id === "card_1753680748888") {
-        const adjacentPureHumans = adjacentCells(unit.row, unit.col).filter(([row, col]) => {
-          const adjacent = game.board[row]?.[col];
-          return adjacent?.owner === pid && (adjacent.tags || []).includes("\u7d14\u4eba\u9593");
-        }).length;
-        applyConditionalBuff(unit, "unitedKingdomInfantry", adjacentPureHumans >= 2, { atk: 1, hp: 0 });
+        applyConditionalBuff(
+          unit,
+          "unitedKingdomInfantry",
+          countAdjacentAlliesWithTag(unit, pid, "純人間", game) >= 2,
+          { atk: 1, hp: 0 },
+        );
       }
       if (unit.id === "card_1753716897980") {
         applyConditionalBuff(unit, "angronaOpponentTurn", game.activePlayer === opponentOf(pid), { atk: 3, hp: 0 });
       }
       if (unit.id === "card_1782192967652") {
-        const adjacentPureHumans = adjacentCells(unit.row, unit.col).filter(([row, col]) => {
-          const adjacent = game.board[row]?.[col];
-          return adjacent?.owner === pid && (adjacent.tags || []).includes("純人間");
-        }).length;
-        applyConditionalBuff(unit, "108thBattalionBuff", adjacentPureHumans >= 2, { atk: 2, hp: 0 });
+        applyConditionalBuff(
+          unit,
+          "108thBattalionBuff",
+          countAdjacentAlliesWithTag(unit, pid, "純人間", game) >= 2,
+          { atk: 2, hp: 0 },
+        );
       }
-      const adjacentTagBuff = parseAdjacentTagBuff(unitCardTextForContinuousEffects(unit));
+      const adjacentTagBuff = adjacentTagBuffRuleFor(unit);
       if (adjacentTagBuff) {
-        const adjacentTagged = adjacentCells(unit.row, unit.col).filter(([row, col]) => {
-          const adjacent = game.board[row]?.[col];
-          return adjacent?.owner === pid && (adjacent.tags || []).includes(adjacentTagBuff.tag);
-        }).length;
+        const adjacentTagged = countAdjacentAlliesWithTag(unit, pid, adjacentTagBuff.tag, game);
         applyConditionalBuff(
           unit,
           `adjTagBuff_${unit.id}_${adjacentTagBuff.tag}`,
@@ -7615,7 +7807,8 @@ function payForCard(player, cost = {}, card = null) {
 }
 
 function totalCostAmount(cost = {}) {
-  return Object.values(cost).reduce((sum, amount) => sum + amount, 0);
+  const normalized = normalizeResourceObject(cost);
+  return Object.values(normalized).reduce((sum, amount) => sum + amount, 0);
 }
 
 function canDeployHeroWithGold(player, heroOption, goldToPay = 0) {
@@ -7849,12 +8042,13 @@ function mysticCaptureChoices(game = state) {
   const player = game.players[pending.playerId];
   return player.hand
     .map((card, handIndex) => ({ card, handIndex }))
-    .filter(({ card }) => card.type === "unit" && tagLabels(card).includes("神秘"));
+    .filter(({ card }) => card.type === "unit" && unitHasTag(card, "神秘"));
 }
 
 function toggleMysticCaptureChoice(handIndex) {
   const pending = state.pendingChoice;
   if (pending?.type !== "mysticCapture") return;
+  if (!canControlChoicePlayer(pending.playerId)) return;
   const choices = mysticCaptureChoices();
   if (!choices.some((choice) => choice.handIndex === handIndex)) return;
   const selected = new Set(pending.selectedHandIndexes);
@@ -7867,12 +8061,13 @@ function toggleMysticCaptureChoice(handIndex) {
 function resolveMysticCaptureChoice({ exile = false } = {}) {
   const pending = state.pendingChoice;
   if (pending?.type !== "mysticCapture") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
   const player = state.players[pending.playerId];
   const selectedIndexes = [...pending.selectedHandIndexes].sort((a, b) => b - a);
   const selectedCards = [];
   for (const handIndex of selectedIndexes) {
     const card = player.hand[handIndex];
-    if (card?.type === "unit" && tagLabels(card).includes("神秘")) {
+    if (card?.type === "unit" && unitHasTag(card, "神秘")) {
       selectedCards.unshift(player.hand.splice(handIndex, 1)[0]);
     }
   }
@@ -8170,7 +8365,11 @@ function resolvePayForBuff(pay) {
       unit.atk = (unit.atk || 0) + (pending.atkBuff || 0);
       unit.currentHp = (unit.currentHp || 0) + (pending.hpBuff || 0);
       unit.maxHp = (unit.maxHp || unit.hp || 0) + (pending.hpBuff || 0);
-      log(state, `${player.name}: 「${unit.name}」+${pending.atkBuff}/+${pending.hpBuff}の修正`);
+      if (pending.armorBuff) {
+        ensureKeyword(unit, "armor", keywordValue(unit, "armor") + pending.armorBuff);
+      }
+      const armorNote = pending.armorBuff ? `、装甲+${pending.armorBuff}` : "";
+      log(state, `${player.name}: 「${unit.name}」+${pending.atkBuff || 0}/+${pending.hpBuff || 0}の修正${armorNote}`);
     }
   } else {
     log(state, `${player.name}: 「${pending.cardName}」バフをスキップ`);
@@ -8241,6 +8440,7 @@ function resolveDeployHeroChooseHero(heroIdx) {
   }
   pending.selectedHeroIdx = heroIdx;
   pending.step = "chooseCell";
+  state.selected = { kind: "choice", choice: "deployHeroFromAttack" };
   state.message = "出撃させるマスを選択してください。";
   render();
   return true;
@@ -8251,6 +8451,11 @@ function resolveDeployHeroCell(row, col) {
   if (pending?.type !== "deployHeroFromAttack" || pending.step !== "chooseCell") return false;
   const isEligible = (pending.adjCells || []).some((c) => c.row === row && c.col === col);
   if (!isEligible) { state.message = "そのマスには出撃できません。"; render(); return false; }
+  if (!isUnitFieldCell(row, col)) {
+    state.message = "そのマスには出撃できません。";
+    render();
+    return false;
+  }
   if (!canSummonUnitTo(pending.playerId, row)) {
     state.message = isOpponentSummonRow(pending.playerId, row)
       ? "相手のサモンフィールドには配置できません。"
@@ -9337,12 +9542,32 @@ function ensureStructPhaseAbilities(card) {
   return card;
 }
 
+function ensureTactPhaseAbilities(card) {
+  if (!card) return card;
+  const catalogCard = catalogCardFor(card);
+  if (!catalogCard?.abilities?.length) return card;
+  const missing = catalogCard.abilities.filter((a) =>
+    (STRUCT_PHASE_TRIGGERS.includes(a.trigger) || MAIN_PHASE_TACT_TRIGGERS.includes(a.trigger))
+    && !(card.abilities || []).some((existing) => existing.trigger === a.trigger && existing.effect === a.effect),
+  );
+  if (!missing.length) return card;
+  card.abilities = [...(card.abilities || []), ...cloneCard({ abilities: missing }).abilities];
+  return card;
+}
+
 function structPhaseActivatables(player) {
   const items = [];
   (player.structs || []).forEach((card, index) => {
     ensureStructPhaseAbilities(card);
     if (cardHasStructPhaseActivation(card)) {
       items.push({ kind: "struct", index, card });
+    }
+  });
+  (player.tactZone || []).forEach((card, index) => {
+    ensureTactPhaseAbilities(card);
+    markPermanentTactIfNeeded(card);
+    if (isPermanentTactCard(card) && cardHasStructPhaseActivation(card)) {
+      items.push({ kind: "tact", index, card });
     }
   });
   return items;
@@ -9455,7 +9680,46 @@ function activateStructInPhase(index) {
   return effectEngaged;
 }
 
+function activateTactInStructPhase(tactIndex) {
+  if (!canControlActivePlayer()) return false;
+  if (state.pendingChoice) return false;
+  const pending = state.pendingStructPhase;
+  if (!pending) return false;
+  if (pending.pendingResourceChoice) return false;
+  if (pending.pendingEnemyStructChoice) return false;
+  const player = state.players[pending.playerId];
+  const tact = player.tactZone[tactIndex];
+  if (!tact) return false;
+  if (tact.rested) return fail("このタクトはレスト中です。");
+  if (pending.activatedTactIndexes.includes(tactIndex)) return false;
+  if (!canAffordStructActivation(tact, player)) return false;
+
+  pending.activatedTactIndexes.push(tactIndex);
+  const enemyChoiceBefore = pending.pendingEnemyStructChoice;
+  const resourceChoiceBefore = pending.pendingResourceChoice;
+  const restedBefore = tact.rested;
+  const activationCountBefore = tact.activationCount || 0;
+
+  triggerAbilities(state, pending.playerId, tact, "onStructurePhase", { zone: "tact" });
+
+  const effectEngaged = pending.pendingEnemyStructChoice !== enemyChoiceBefore
+    || pending.pendingResourceChoice !== resourceChoiceBefore
+    || tact.rested !== restedBefore
+    || (tact.activationCount || 0) !== activationCountBefore;
+  if (!effectEngaged) {
+    const activatedPos = pending.activatedTactIndexes.indexOf(tactIndex);
+    if (activatedPos >= 0) pending.activatedTactIndexes.splice(activatedPos, 1);
+    state.message = `「${tact.name}」: 効果を発動できませんでした。`;
+    log(state, state.message);
+  }
+
+  syncOnlineAction("activateTactInStructPhase", pending.playerId);
+  render();
+  return effectEngaged;
+}
+
 function activateTactInPhase(tactIndex) {
+  if (state.pendingStructPhase) return activateTactInStructPhase(tactIndex);
   return activatePermanentTact(tactIndex);
 }
 
@@ -9920,6 +10184,8 @@ function playTactFromHand(handIndex) {
     }
   }
   if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
+  const tactSlots = tactZoneSlotCoords(state.activePlayer).length;
+  if (player.tactZone.length >= tactSlots) return fail(`TACTゾーンは${tactSlots}枚までです。`);
   revealCardUse(state.activePlayer, card, "play");
   player.hand.splice(handIndex, 1);
   syncBundledRuntimeCard(card);
@@ -10669,14 +10935,22 @@ function executeUnitActivate(unit, ability) {
   }
   if (ability.costCounters) {
     const counterCost = ability.costCounters;
-    if ((unit.counters || 0) < counterCost) return fail(`カウンターが不足しています（必要: ${counterCost}）。`);
+    if ((unit.counters || 0) < counterCost) {
+      return fail(`残機カウンターが不足しています（必要: ${counterCost}）。`);
+    }
+    if (ability.surviveDuringEffect) unit.noDestroyDuringEffectResolution = true;
     unit.counters -= counterCost;
     unit.atk = (unit.atk || 0) + (ability.atkBuff || 0);
     unit.currentHp = (unit.currentHp || 0) + (ability.hpBuff || 0);
     unit.maxHp = (unit.maxHp || unit.hp || 0) + (ability.hpBuff || 0);
     if (!ability.noRest) unit.rested = true;
     if (ability.exclusiveGroup) unit.exclusiveActivateUsed = ability.exclusiveGroup;
-    log(state, `${player.name}: 「${unit.name}」カウンター${counterCost}消費 → +${ability.atkBuff || 0}/+${ability.hpBuff || 0}`);
+    const counterLabel = ability.effect === "spendLifeCounterSurviveBuff" ? "残機カウンター" : "カウンター";
+    log(state, `${player.name}: 「${unit.name}」${counterLabel}${counterCost}消費 → +${ability.atkBuff || 0}/+${ability.hpBuff || 0}`);
+    if (ability.surviveDuringEffect) {
+      clearEffectResolutionIndestructible(state);
+      cleanupAllDestroyed(null, state);
+    }
     state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" } });
     processEffectQueue(state);
     syncOnlineAction("activateUnit", unit.owner);
@@ -11078,12 +11352,62 @@ function unitHasArmorEffect(unit) {
   return keywordValue(unit, "armor") > 0 || Number(unit.armor) > 0;
 }
 
+const PASSIVE_COMBAT_ABILITY_EFFECTS = new Set(["vsTagAtkBonus", "vsArmorAtkBonus"]);
+
+function normalizeTagName(tag) {
+  return String(tag || "").replace(/^\[|\]$/g, "").trim();
+}
+
+function unitTags(unit) {
+  if (!unit) return [];
+  if (Array.isArray(unit.tags) && unit.tags.length) return unit.tags;
+  return findCatalogCard(unit.id)?.tags || [];
+}
+
+function unitHasTag(unit, tagName) {
+  const wanted = normalizeTagName(tagName);
+  if (!wanted || !unit) return false;
+  return unitTags(unit).some((tag) => normalizeTagName(tag) === wanted);
+}
+
+function passiveCombatAbilitiesFor(unit) {
+  const merged = [];
+  const seen = new Set();
+  const addAbility = (ability) => {
+    if (!ability || !PASSIVE_COMBAT_ABILITY_EFFECTS.has(ability.effect)) return;
+    const key = `${ability.effect}:${ability.vsTag || ""}:${ability.atkBonus || 1}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(ability);
+  };
+  for (const ability of unit?.abilities || []) addAbility(ability);
+  for (const ability of findCatalogCard(unit?.id)?.abilities || []) addAbility(ability);
+  return merged;
+}
+
+function syncPassiveCombatAbilitiesFromCatalog(card) {
+  if (!card?.id) return card;
+  const template = findCatalogCard(card.id);
+  if (!template?.abilities?.length) return card;
+  const abilities = [...(card.abilities || [])];
+  for (const ability of template.abilities) {
+    if (!PASSIVE_COMBAT_ABILITY_EFFECTS.has(ability.effect)) continue;
+    const idx = abilities.findIndex(
+      (entry) => entry.effect === ability.effect && (entry.vsTag || "") === (ability.vsTag || ""),
+    );
+    if (idx >= 0) abilities[idx] = { ...ability };
+    else abilities.push({ ...ability });
+  }
+  card.abilities = abilities;
+  return card;
+}
+
 function effectiveAttackPower(attacker, defender = null) {
   if (!attacker) return 0;
   let atk = (attacker.atk || 0) + (attacker.attackStrikeBonus || 0);
   if (!defender) return atk;
-  for (const ability of attacker.abilities || []) {
-    if (ability.effect === "vsTagAtkBonus" && ability.vsTag && (defender.tags || []).includes(ability.vsTag)) {
+  for (const ability of passiveCombatAbilitiesFor(attacker)) {
+    if (ability.effect === "vsTagAtkBonus" && ability.vsTag && unitHasTag(defender, ability.vsTag)) {
       atk += ability.atkBonus || 1;
     }
     if (ability.effect === "vsArmorAtkBonus" && unitHasArmorEffect(defender)) {
@@ -11854,10 +12178,9 @@ function render() {
   drawStructZoneRow(opp,    layout.oppStruct, true);
   drawBoard();
   drawBoardActionButtons();
-  drawTactZoneActionButtons();
-  // 自分エリア (board → struct zone → hand)
   drawStructZoneRow(viewer, layout.playerStruct, false);
   drawHand();
+  drawTactZoneActionButtons();
   drawActionPanel();
   drawLog();
   drawAnimations();
@@ -13815,6 +14138,8 @@ function drawTactZoneActionButtons() {
   let btnX = Math.round(cellX + (cW - btnW) / 2);
   let btnY = isViewerTact ? cellY + cH + 4 : cellY - btnH - 4;
   if (btnY < layout.board.y) btnY = cellY + cH + 4;
+  if (btnY + btnH > layout.board.y + layout.board.h - 2) btnY = cellY - btnH - 4;
+  btnX = Math.max(layout.board.x + 2, Math.min(btnX, layout.board.x + layout.board.w - btnW - 2));
 
   drawButton(btnX, btnY, btnW, btnH, "発動", () => activatePermanentTact(index), null, { accent: "p2" });
 }
@@ -14173,7 +14498,7 @@ function drawImposterTactPanel(pending) {
 }
 
 function drawOtherworldKinPanel(pending) {
-  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const isController = canControlChoicePlayer(pending.playerId);
   const x = 388, y = 160, w = 664, h = 360;
   drawChoicePanelBase(x, y, w, h);
   ctx.fillStyle = "#c8d8f0";
@@ -14182,7 +14507,12 @@ function drawOtherworldKinPanel(pending) {
   ctx.fillStyle = "rgba(190,210,240,0.85)";
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
   ctx.fillText("選ばなくても確定できます。", x + 28, y + 54);
-  const candidates = pending.pureHumanCandidates || [];
+  const candidates = otherworldKinPureHumanCandidates(state, pending.playerId);
+  if (!candidates.length) {
+    ctx.fillStyle = "rgba(190,210,240,0.85)";
+    ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("除外できる[純人間]ユニットがいません。", x + 28, y + 80);
+  }
   candidates.forEach((unit, i) => {
     const selected = (pending.selectedInstanceIds || []).includes(unit.instanceId);
     drawSelectableChoiceCard(x + 28 + (i % 4) * 154, y + 72 + Math.floor(i / 4) * 150, 140, 196, unit, {
@@ -14300,6 +14630,7 @@ function drawImposterSummonPanel(pending) {
 }
 
 function drawMysticCapturePanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
   const x = 388, y = 202, w = 664, h = 392;
   drawChoicePanelBase(x, y, w, h, "rgba(100,50,200,0.7)");
   ctx.fillStyle = "#d0b0ff";
@@ -14326,16 +14657,18 @@ function drawMysticCapturePanel(pending) {
     ctx.fillText(`${selected ? "✓ " : ""}${card.name}`, cardX + 10, cardY + 20, 260);
     ctx.fillStyle = "rgba(140,130,180,0.7)";
     ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
-    ctx.fillText(`${tagLabels(card).join("/")} / ${formatCost(card.cost)}`, cardX + 10, cardY + 38, 260);
-    addHit(cardX, cardY, 282, 48, () => toggleMysticCaptureChoice(handIndex));
+    ctx.fillText(`${unitTags(card).join("/")} / ${formatCost(card.cost)}`, cardX + 10, cardY + 38, 260);
+    if (isController) addHit(cardX, cardY, 282, 48, () => toggleMysticCaptureChoice(handIndex));
   });
   const selectedCount = pending.selectedHandIndexes.length;
   ctx.fillStyle = "rgba(180,160,220,0.8)";
   ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`${selectedCount}枚選択中`, x + 28, y + h - 82);
-  drawButton(x + 28, y + h - 58, 150, 36, "選ばず解決", () => resolveMysticCaptureChoice({ exile: false }));
-  drawButton(x + 196, y + h - 58, 180, 36, "捨てて1回発動", () => resolveMysticCaptureChoice({ exile: false }));
-  drawButton(x + 394, y + h - 58, 210, 36, "除外して2回発動", () => resolveMysticCaptureChoice({ exile: true }), null, { accent: "p1" });
+  if (isController) {
+    drawButton(x + 28, y + h - 58, 150, 36, "選ばず解決", () => resolveMysticCaptureChoice({ exile: false }));
+    drawButton(x + 196, y + h - 58, 180, 36, "捨てて1回発動", () => resolveMysticCaptureChoice({ exile: false }));
+    drawButton(x + 394, y + h - 58, 210, 36, "除外して2回発動", () => resolveMysticCaptureChoice({ exile: true }), null, { accent: "p1" });
+  }
 }
 
 function drawSearchDeckPickPanel(pending) {
@@ -14696,12 +15029,16 @@ function drawRevealTagsForResourcesPanel(pending) {
 }
 
 function drawDeployHeroFromAttackPanel(pending) {
-  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const isController = canControlChoicePlayer(pending.playerId);
   if (pending.step === "chooseGold") {
     // Gold selection step
     const player = state.players[pending.playerId];
     const availableGold = player.resources.funds || 0;
-    const maxGold = Math.max(...(pending.heroOptions || []).map(h => h.minGold || 1));
+    const heroOptions = pending.heroOptions || [];
+    const maxNeededGold = heroOptions.length
+      ? Math.max(...heroOptions.map((h) => Math.ceil((h.totalCost || 0) / 2)))
+      : 0;
+    const maxGold = Math.min(availableGold, maxNeededGold);
     const px = W / 2 - 240, py = H / 2 - 120;
     const pw = 480, ph = 240;
     drawChoicePanelBase(px, py, pw, ph, "rgba(200,160,20,0.7)", "#d4a020");
@@ -14909,8 +15246,10 @@ function drawPayForBuffPanel(pending) {
   ctx.fillStyle = "rgba(200,230,255,0.95)";
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   const resLabel = RESOURCE_LABELS[pending.resource] || pending.resource;
+  const buffParts = [`+${pending.atkBuff || 0}/+${pending.hpBuff || 0}`];
+  if (pending.armorBuff) buffParts.push(`装甲+${pending.armorBuff}`);
   ctx.fillText(
-    `${resLabel}を${pending.amount}支払うことで、+${pending.atkBuff}/+${pending.hpBuff}の修正を得ます。`,
+    `${resLabel}を${pending.amount}支払うことで、${buffParts.join("、")}の修正を得ます。`,
     x + 28, y + 64, w - 56
   );
   const player = state.players[pending.playerId];
@@ -15302,17 +15641,20 @@ function drawStructPhaseOverlay() {
   const choice = pending.pendingResourceChoice;
   const waitingChoice = choice || enemyChoice;
   let enemyStructPager = null;
-  visibleItems.forEach(({ index, card: struct }, i) => {
-    const hasMultiActivate = (struct.abilities || []).some((a) => a.multiActivate);
-    const activated = !hasMultiActivate && pending.activatedIndexes.includes(index);
-    const affordable = canAffordStructActivation(struct, player) && !struct.rested;
+  visibleItems.forEach((item, i) => {
+    const { kind, index, card } = item;
+    const hasMultiActivate = kind === "struct" && (card.abilities || []).some((a) => a.multiActivate);
+    const activated = kind === "tact"
+      ? pending.activatedTactIndexes.includes(index)
+      : !hasMultiActivate && pending.activatedIndexes.includes(index);
+    const affordable = canAffordStructActivation(card, player) && !card.rested;
     const cx = cardsAreaX + i * (cardW + cardGap);
     const cy = cardsAreaY;
 
     // カード画像（メイン）
     ctx.save();
     if (activated) { ctx.shadowColor = "#50e890"; ctx.shadowBlur = 18; }
-    drawCard(cx, cy, cardW, cardH, struct, { noHover: !isController, small: true, artOnly: true });
+    drawCard(cx, cy, cardW, cardH, card, { noHover: !isController, small: true, artOnly: true });
     ctx.shadowBlur = 0;
     ctx.restore();
 
@@ -15322,23 +15664,25 @@ function drawStructPhaseOverlay() {
     }
 
     // 効果テキスト
-    const phaseAbilities = (struct.abilities || []).filter((a) => STRUCT_PHASE_TRIGGERS.includes(a.trigger));
+    const phaseAbilities = (card.abilities || []).filter((a) => STRUCT_PHASE_TRIGGERS.includes(a.trigger));
     const abText = phaseAbilities
       .map((a) => abilityText({ abilities: [a] }))
       .join(" / ");
     ctx.fillStyle = activated ? "#60c890" : affordable ? "#a0d8b8" : "#a07070";
     ctx.font = "600 10px 'Yu Gothic UI', sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText(abText || struct.text || "", cx + cardW / 2, cy + cardH + 14, cardW);
+    const zoneLabel = kind === "tact" ? "TACT · " : "";
+    ctx.fillText(zoneLabel + (abText || card.text || ""), cx + cardW / 2, cy + cardH + 14, cardW);
     ctx.textAlign = "left";
 
     // 発動ボタン
-    const hpAbility = (struct.abilities || []).find((a) => a.trigger === "onStructurePhaseHP");
-    const hasRestActivate = (struct.abilities || []).some((a) => a.trigger === "onStructurePhase");
+    const hpAbility = kind === "struct" ? (card.abilities || []).find((a) => a.trigger === "onStructurePhaseHP") : null;
+    const hasRestActivate = phaseAbilities.some((a) => a.trigger === "onStructurePhase");
     const btnY = cy + cardH + 22;
+    const activateFn = kind === "tact" ? () => activateTactInStructPhase(index) : () => activateStructInPhase(index);
     if (isController && (!activated || hasMultiActivate)) {
       if (hasRestActivate && affordable && !waitingChoice) {
-        drawButton(cx, btnY, cardW, btnH, hasMultiActivate ? "再発動" : "発動", () => activateStructInPhase(index));
+        drawButton(cx, btnY, cardW, btnH, hasMultiActivate ? "再発動" : "発動", activateFn);
       } else if (hasRestActivate) {
         drawButton(cx, btnY, cardW, btnH, affordable ? "選択中..." : "発動不可", null, null, { accent: "dim" });
       }
@@ -15349,7 +15693,7 @@ function drawStructPhaseOverlay() {
       ctx.fillText("✓ 発動済", cx + cardW / 2, btnY + 18);
       ctx.textAlign = "left";
     }
-    if (hpAbility && isController && !struct.hpActivatedThisTurn) {
+    if (hpAbility && isController && !card.hpActivatedThisTurn) {
       const hpCanAfford = player.core.hp > hpAbility.hpCost;
       const hpLabel = `ライフ${hpAbility.hpCost}`;
       drawButton(cx, btnY + btnH + 4, cardW, 22, hpLabel,
@@ -16653,6 +16997,7 @@ const testing = {
   playStruct,
   activateStructInPhase,
   activateTactInPhase,
+  activateTactInStructPhase,
   activatePermanentTact,
   resolveMarketChoice,
   resolveChooseGainResource,
