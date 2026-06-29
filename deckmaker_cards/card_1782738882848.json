@@ -1,0 +1,41 @@
+{
+  "roles": [],
+  "tags": [
+    "産業",
+    "食料",
+    "恵み"
+  ],
+  "generates": {
+    "gold": 0,
+    "nature": 3,
+    "fuel": 0,
+    "electric": 0,
+    "mineral": 0,
+    "human": 0,
+    "magic": 0
+  },
+  "description": "以下の条件のうちいずれか一つを選ぶ\nレストする：自③を得る\n金②を支払い、レストする：自⑤を得る",
+  "type": "ストラクト",
+  "tactSubType": null,
+  "imageUrl": "assets/cards/card_1782738882848.jpeg",
+  "name": "大農園",
+  "world": "ニュートラル",
+  "costs": {
+    "act": {},
+    "choice": [],
+    "play": {
+      "electric": 0,
+      "mineral": 1,
+      "magic": 0,
+      "human": 1,
+      "gold": 1,
+      "fuel": 0,
+      "nature": 0
+    },
+    "choiceAct": []
+  },
+  "id": "card_1782738882848",
+  "flavorText": "機械化された農業は作業効率の上昇は勿論の事\n広大な農地とそれに比例した収穫量が期待できる",
+  "limit": 4,
+  "rarity": "通常"
+}

@@ -1311,15 +1311,28 @@ const abilityEffects = {
     }
     log(game, `${opponent.name}: 手札を${amount}枚捨てる`);
   },
-  drawPlusPayResource({ game, playerId, ability }) {
+  drawPlusPayResource({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
-    let extra = 0;
-    const maxPay = Math.min(player.resources[ability.resource] || 0, ability.maxPay || 99);
-    if (maxPay > 0) {
-      player.resources[ability.resource] -= maxPay;
-      extra = maxPay;
+    const resource = ability.resource || "ore";
+    const maxPay = Math.min(player.resources[resource] || 0, ability.maxPay || 99);
+    if (maxPay <= 0) {
+      drawCards(game, playerId, ability.baseDraw || 1);
+      return;
     }
-    drawCards(game, playerId, (ability.baseDraw || 1) + extra);
+    const resLabel = RESOURCE_LABELS[resource] || resource;
+    game.pendingChoice = {
+      type: "drawPlusPayResource",
+      playerId,
+      cardName: card.name,
+      resource,
+      baseDraw: ability.baseDraw || 1,
+      maxPay,
+      draftPayAmount: 0,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "drawPlusPayResource" };
+    game.message = `「${card.name}」: 追加で支払う${resLabel}の数を選んでください（0〜${maxPay}）`;
+    return "pending";
   },
   destroyUpToEnemyCards({ game, playerId, ability }) {
     const opponent = opponentOf(playerId);
@@ -5188,6 +5201,26 @@ function parseDeckmakerAbilities(card, localType) {
       cost: { funds: 1, nature: 1 },
       produces: { people: 5 },
     });
+  } else if (card.id === "card_1782738882848") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "chooseProduceResource",
+      options: [
+        { id: "rest_nature3", label: "レスト：自③", cost: {}, produces: { nature: 3 } },
+        { id: "pay_nature5", label: "金②：自⑤", cost: { funds: 2 }, produces: { nature: 5 } },
+      ],
+    });
+  } else if (card.id === "card_1782736989649") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "chooseProduceResource",
+      options: [
+        { id: "nature", label: "自①", cost: { nature: 1 }, produces: { funds: 4 } },
+        { id: "ore", label: "鉱①", cost: { ore: 1 }, produces: { funds: 4 } },
+      ],
+    });
   } else if (card.id === "card_1782226032497") {
     abilities.length = 0;
     abilities.push({
@@ -8997,6 +9030,34 @@ function lifeCounterMaxPay(player, targetCard, maxLifeCounters = 5) {
   const people = player.resources.people || 0;
   const costPeople = targetCard?.cost?.people || 0;
   return Math.max(0, Math.min(maxLifeCounters, people - costPeople));
+}
+
+function resolveDrawPlusPayResource(amount) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "drawPlusPayResource") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const payAmount = Math.max(0, Math.min(
+    Number(amount) || 0,
+    pending.maxPay || 0,
+    player.resources[pending.resource] || 0,
+  ));
+  const qi = pending.queueItem;
+  if (payAmount > 0) {
+    player.resources[pending.resource] -= payAmount;
+    const resLabel = RESOURCE_LABELS[pending.resource] || pending.resource;
+    log(state, `${player.name}: 「${pending.cardName}」${resLabel}${payAmount}支払い`);
+  }
+  drawCards(state, pending.playerId, pending.baseDraw || qi?.ability?.baseDraw || 1);
+  if (payAmount > 0) drawCards(state, pending.playerId, payAmount);
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
 }
 
 function resolveLifeCounterPayment(amount) {
@@ -14217,6 +14278,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "chooseUnitActivate") drawChooseUnitActivatePanel(pending);
   else if (pending.type === "chooseGainResource") drawChooseGainResourcePanel(pending);
   else if (pending.type === "lifeCounterPayment") drawLifeCounterPaymentPanel(pending);
+  else if (pending.type === "drawPlusPayResource") drawDrawPlusPayResourcePanel(pending);
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
   else if (pending.type === "payForBuff") drawPayForBuffPanel(pending);
@@ -15409,6 +15471,38 @@ function drawChooseGainResourcePanel(pending) {
       drawButton(bx, by, btnW, btnH, label, () => resolveChooseGainResource(opt.id || opt.resource), null, { accent: "p1" });
     });
   }
+}
+
+function drawDrawPlusPayResourcePanel(pending) {
+  const x = 390, y = 228, w = 620, h = 286;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,120,200,0.75)", "#4080ff");
+  const resource = pending.resource || "ore";
+  const resLabel = RESOURCE_LABELS[resource] || resource;
+  const maxPay = pending.maxPay || 0;
+  if (pending.draftPayAmount == null) pending.draftPayAmount = 0;
+  pending.draftPayAmount = Math.max(0, Math.min(maxPay, pending.draftPayAmount));
+  const amount = pending.draftPayAmount;
+  ctx.fillStyle = "#b8dcff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 追加${resLabel}支払い`, x + 28, y + 38);
+  ctx.fillStyle = "rgba(190,220,255,0.85)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`任意の数の${resLabel}を追加で支払えます（0〜${maxPay}）。`, x + 28, y + 68, w - 56);
+  ctx.fillText("1枚ドローした後、選んだ数Xだけさらにドローします。", x + 28, y + 92, w - 56);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "700 42px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(String(amount), x + w / 2, y + 154);
+  ctx.textAlign = "left";
+  const isController = canControlChoicePlayer(pending.playerId);
+  const btnW = 72, btnH = 40, gap = 10;
+  const rowY = y + 176;
+  const rowX = x + Math.floor((w - (btnW * 5 + gap * 4)) / 2);
+  drawButton(rowX, rowY, btnW, btnH, "最小", isController ? () => { pending.draftPayAmount = 0; render(); } : null);
+  drawButton(rowX + (btnW + gap), rowY, btnW, btnH, "-", isController ? () => { pending.draftPayAmount = Math.max(0, amount - 1); render(); } : null);
+  drawButton(rowX + (btnW + gap) * 2, rowY, btnW, btnH, "+", isController ? () => { pending.draftPayAmount = Math.min(maxPay, amount + 1); render(); } : null);
+  drawButton(rowX + (btnW + gap) * 3, rowY, btnW, btnH, "最大", isController ? () => { pending.draftPayAmount = maxPay; render(); } : null);
+  drawButton(rowX + (btnW + gap) * 4, rowY, btnW, btnH, "決定", isController ? () => resolveDrawPlusPayResource(amount) : null, null, { accent: "p1" });
 }
 
 function drawLifeCounterPaymentPanel(pending) {
@@ -17003,6 +17097,7 @@ const testing = {
   resolveChooseGainResource,
   resolveChooseUnitActivate,
   resolveLifeCounterPayment,
+  resolveDrawPlusPayResource,
   toggleDestroyChoice,
   resolveDestroyChoice,
   toggleKaijuAwakenChoice,

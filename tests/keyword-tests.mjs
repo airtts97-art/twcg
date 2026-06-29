@@ -1200,6 +1200,96 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const farmCard = api.cardCatalog.structs["card_1782738882848"];
+  const farmAbility = (farmCard?.abilities || []).find((a) => a.effect === "chooseProduceResource");
+  out.push({
+    name: "grand_farm_parsed",
+    summary: {
+      found: !!farmAbility,
+      optionCount: farmAbility?.options?.length || 0,
+      restOption: farmAbility?.options?.[0]?.produces?.nature,
+      payOption: farmAbility?.options?.[1]?.produces?.nature,
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { funds: 2, nature: 0, people: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.state.players.p1.structs = [{
+    id: "card_1782738882848",
+    name: "大農園",
+    type: "struct",
+    rested: false,
+    abilities: farmAbility ? [farmAbility] : [],
+  }];
+  api.state.pendingStructPhase = {
+    playerId: "p1",
+    activatedIndexes: [],
+    activatedTactIndexes: [],
+    resourcesBefore: { ...api.state.players.p1.resources },
+    handBefore: api.state.players.p1.hand.length,
+  };
+  api.state.phase = "structure";
+  api.state.activePlayer = "p1";
+  const farmNatureBefore = api.state.players.p1.resources.nature;
+  api.testing.activateStructInPhase(0);
+  if (api.state.pendingStructPhase?.pendingResourceChoice) {
+    api.testing.resolveMarketChoice("rest_nature3");
+  }
+  out.push({
+    name: "grand_farm_rest_choice",
+    summary: {
+      natureBefore: farmNatureBefore,
+      natureAfter: api.state.players.p1.resources.nature,
+      structRested: api.state.players.p1.structs[0]?.rested,
+    },
+  });
+
+  const marketCard = api.cardCatalog.structs["card_1782736989649"];
+  const marketAbility = (marketCard?.abilities || []).find((a) => a.effect === "chooseProduceResource");
+  out.push({
+    name: "grand_market_parsed",
+    summary: {
+      found: !!marketAbility,
+      optionCount: marketAbility?.options?.length || 0,
+      oreOption: marketAbility?.options?.find((opt) => opt.id === "ore")?.produces?.funds,
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { funds: 0, nature: 0, people: 0, ore: 2, fuel: 0, electric: 0, magic: 0 });
+  api.state.players.p1.structs = [{
+    id: "card_1782736989649",
+    name: "大市場",
+    type: "struct",
+    rested: false,
+    abilities: marketAbility ? [marketAbility] : [],
+  }];
+  api.state.pendingStructPhase = {
+    playerId: "p1",
+    activatedIndexes: [],
+    activatedTactIndexes: [],
+    resourcesBefore: { ...api.state.players.p1.resources },
+    handBefore: api.state.players.p1.hand.length,
+  };
+  api.state.phase = "structure";
+  api.state.activePlayer = "p1";
+  const marketOreBefore = api.state.players.p1.resources.ore;
+  const marketFundsBefore = api.state.players.p1.resources.funds;
+  api.testing.activateStructInPhase(0);
+  if (api.state.pendingStructPhase?.pendingResourceChoice) {
+    api.testing.resolveMarketChoice("ore");
+  }
+  out.push({
+    name: "grand_market_ore_choice",
+    summary: {
+      oreBefore: marketOreBefore,
+      oreAfter: api.state.players.p1.resources.ore,
+      fundsBefore: marketFundsBefore,
+      fundsAfter: api.state.players.p1.resources.funds,
+      structRested: api.state.players.p1.structs[0]?.rested,
+    },
+  });
+
   const donaCard = api.cardCatalog.structs["card_1782226032497"];
   const donaAbility = (donaCard?.abilities || []).find((a) => a.effect === "structPayProduce");
   out.push({
@@ -1441,6 +1531,72 @@ const results = await page.evaluate(() => {
       armorAfter,
       natureBefore,
       natureAfter: api.state.players.p1.resources.nature,
+    },
+  });
+
+  reset();
+  const miningCard = { id: "card_1753760240197", name: "採掘", type: "tact" };
+  const miningAbility = { effect: "drawPlusPayResource", resource: "ore", baseDraw: 1, maxPay: 99 };
+  api.state.players.p1.resources.ore = 5;
+  api.state.players.p1.mainDeck = Array.from({ length: 10 }, (_, index) => ({
+    id: `mining_deck_${index}`,
+    name: `Mining Deck ${index}`,
+    type: "unit",
+  }));
+  const miningHandBefore = api.state.players.p1.hand.length;
+  const miningDeckBefore = api.state.players.p1.mainDeck.length;
+  const miningOreBefore = api.state.players.p1.resources.ore;
+  const miningPending = api.abilityEffects.drawPlusPayResource({
+    game: api.state,
+    playerId: "p1",
+    card: miningCard,
+    ability: miningAbility,
+    source: { zone: "tact" },
+  });
+  out.push({
+    name: "mining_draw_pending_with_ore",
+    summary: {
+      pending: miningPending === "pending",
+      pendingType: api.state.pendingChoice?.type,
+      maxPay: api.state.pendingChoice?.maxPay,
+    },
+  });
+  api.testing.resolveDrawPlusPayResource(2);
+  out.push({
+    name: "mining_draw_pays_optional_ore",
+    summary: {
+      oreAfter: api.state.players.p1.resources.ore,
+      handGain: api.state.players.p1.hand.length - miningHandBefore,
+      deckAfter: api.state.players.p1.mainDeck.length,
+      expectedHandGain: 3,
+      expectedOre: miningOreBefore - 2,
+    },
+  });
+
+  reset();
+  api.state.players.p1.resources.ore = 0;
+  api.state.players.p1.mainDeck = Array.from({ length: 4 }, (_, index) => ({
+    id: `mining_zero_${index}`,
+    name: `Mining Zero ${index}`,
+    type: "unit",
+  }));
+  const zeroHandBefore = api.state.players.p1.hand.length;
+  const zeroDeckBefore = api.state.players.p1.mainDeck.length;
+  const zeroPending = api.abilityEffects.drawPlusPayResource({
+    game: api.state,
+    playerId: "p1",
+    card: miningCard,
+    ability: miningAbility,
+    source: { zone: "tact" },
+  });
+  out.push({
+    name: "mining_draw_without_ore",
+    summary: {
+      pending: zeroPending === "pending",
+      handGain: api.state.players.p1.hand.length - zeroHandBefore,
+      deckAfter: api.state.players.p1.mainDeck.length,
+      expectedHandGain: 1,
+      expectedDeckAfter: zeroDeckBefore - 1,
     },
   });
 
@@ -1836,6 +1992,15 @@ assert(byName.kiha_eho_facility_paid_produce.fundsAfter === byName.kiha_eho_faci
 assert(byName.kiha_eho_facility_paid_produce.natureAfter === byName.kiha_eho_facility_paid_produce.natureBefore - 1, "キハエーホ should consume nature");
 assert(byName.kiha_eho_facility_paid_produce.peopleAfter === byName.kiha_eho_facility_paid_produce.peopleBefore + 5, "キハエーホ should gain 5 people");
 assert(byName.kiha_eho_facility_paid_produce.structRested === true, "キハエーホ should rest after activation");
+assert(byName.grand_farm_parsed.found === true, "大農園 should parse chooseProduceResource");
+assert(byName.grand_farm_parsed.optionCount === 2, "大農園 should offer two activation modes");
+assert(byName.grand_farm_rest_choice.natureAfter === byName.grand_farm_rest_choice.natureBefore + 3, "大農園 rest option should gain 3 nature");
+assert(byName.grand_farm_rest_choice.structRested === true, "大農園 should rest after activation");
+assert(byName.grand_market_parsed.found === true, "大市場 should parse chooseProduceResource");
+assert(byName.grand_market_parsed.oreOption === 4, "大市場 ore option should produce 4 funds");
+assert(byName.grand_market_ore_choice.oreAfter === byName.grand_market_ore_choice.oreBefore - 1, "大市場 should spend 1 ore");
+assert(byName.grand_market_ore_choice.fundsAfter === byName.grand_market_ore_choice.fundsBefore + 4, "大市場 should gain 4 funds");
+assert(byName.grand_market_ore_choice.structRested === true, "大市場 should rest after activation");
 assert(byName.dona_camp_parsed.found === true, "ドーナー強制収容所 should parse structPayProduce");
 assert(byName.dona_camp_parsed.cost?.people === 1, "ドーナー強制収容所 should cost 1 people");
 assert(byName.dona_camp_parsed.produces?.funds === 5, "ドーナー強制収容所 should produce 5 funds");
@@ -1873,5 +2038,13 @@ assert(
   byName.northeast_commander_damage_buff.hpAfter === byName.northeast_commander_damage_buff.hpBefore + 5,
   "北東軍最高司令官 damage buff should net +5 HP after combat damage and HP+10 buff",
 );
+
+assert(byName.mining_draw_pending_with_ore.pending === true, "採掘 should ask how much ore to pay when ore is available");
+assert(byName.mining_draw_pending_with_ore.pendingType === "drawPlusPayResource", "採掘 pending choice type should be drawPlusPayResource");
+assert(byName.mining_draw_pending_with_ore.maxPay === 5, "採掘 should allow paying up to current ore");
+assert(byName.mining_draw_pays_optional_ore.handGain === 3, "採掘 should draw 1 card plus X paid ore");
+assert(byName.mining_draw_pays_optional_ore.oreAfter === 3, "採掘 should only spend chosen ore amount");
+assert(byName.mining_draw_without_ore.pending !== true, "採掘 should resolve immediately when ore is 0");
+assert(byName.mining_draw_without_ore.handGain === 1, "採掘 should draw 1 card when no ore is paid");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));

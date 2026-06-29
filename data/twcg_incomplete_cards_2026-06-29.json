@@ -1,0 +1,92 @@
+{
+  "exportedAt": "2026-06-29T13:16:35.426Z",
+  "count": 2,
+  "cards": [
+    {
+      "id": "card_1782738082895",
+      "name": "E   Z  B－２３６F　現実支援団",
+      "type": "unit",
+      "faction": "ヘヤクヨン皇帝制民主主義連邦共和帝国",
+      "catalogGroup": "main",
+      "text": "[守護] 　[警戒]　[不攻]\nこのカードに隣接した味方カードは[効果保護①]と[効果貫通⑤]を得る\n\nこのカードをレストしてもよい、そうしたら自身の左右のカードに煙幕カウンター②を与える",
+      "issues": [
+        "効果再現不可（テキスト未解析）"
+      ],
+      "hardcoded": false,
+      "baselineText": null,
+      "textChanged": false,
+      "abilities": [],
+      "keywords": [
+        {
+          "id": "alert"
+        },
+        {
+          "id": "guard"
+        },
+        {
+          "id": "noAttack"
+        }
+      ],
+      "tags": [
+        "ヘヤクヨン",
+        "歩兵"
+      ],
+      "cost": {
+        "funds": 1,
+        "people": 0,
+        "nature": 0,
+        "ore": 1,
+        "fuel": 0,
+        "electric": 2,
+        "magic": 2
+      },
+      "actCost": {
+        "funds": 0,
+        "people": 0,
+        "nature": 0,
+        "ore": 0,
+        "fuel": 0,
+        "electric": 0,
+        "magic": 0
+      }
+    },
+    {
+      "id": "card_1782736701501",
+      "name": "E  X  b－５８エクスペクトマシン",
+      "type": "unit",
+      "faction": "ヘヤクヨン皇帝制民主主義連邦共和帝国",
+      "catalogGroup": "main",
+      "text": "攻撃時、相手ユニットのアクトコストを支払ってもよい、そうしたらそのコストの合計だけ相手に追加ダメージを与える",
+      "issues": [
+        "効果再現不可（テキスト未解析）"
+      ],
+      "hardcoded": false,
+      "baselineText": null,
+      "textChanged": false,
+      "abilities": [],
+      "keywords": [],
+      "tags": [
+        "ヘヤクヨン",
+        "機械"
+      ],
+      "cost": {
+        "funds": 1,
+        "people": 0,
+        "nature": 0,
+        "ore": 1,
+        "fuel": 1,
+        "electric": 2,
+        "magic": 0
+      },
+      "actCost": {
+        "funds": 0,
+        "people": 0,
+        "nature": 0,
+        "ore": 0,
+        "fuel": 0,
+        "electric": 1,
+        "magic": 0
+      }
+    }
+  ]
+}

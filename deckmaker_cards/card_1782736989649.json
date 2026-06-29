@@ -1,0 +1,40 @@
+{
+  "rarity": "通常",
+  "limit": 4,
+  "flavorText": "都市が繁栄すれば、その市場も大きくなる。\n市場が大きくなれば、より経済が活性化される。好循環だ。",
+  "id": "card_1782736989649",
+  "costs": {
+    "play": {
+      "magic": 0,
+      "human": 0,
+      "electric": 0,
+      "mineral": 0,
+      "fuel": 0,
+      "nature": 0,
+      "gold": 2
+    },
+    "choiceAct": [],
+    "act": {},
+    "choice": []
+  },
+  "tactSubType": null,
+  "name": "大市場",
+  "imageUrl": "assets/cards/card_1782736989649.jpeg",
+  "world": "ニュートラル",
+  "description": "「自①又は鉱①」を支払い、レストする：金④を得る",
+  "type": "ストラクト",
+  "roles": [],
+  "tags": [
+    "産業",
+    "取引"
+  ],
+  "generates": {
+    "mineral": 0,
+    "electric": 0,
+    "magic": 0,
+    "human": 0,
+    "gold": 4,
+    "fuel": 0,
+    "nature": 0
+  }
+}
