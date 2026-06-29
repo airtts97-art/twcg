@@ -40,6 +40,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "payOnAttackEnhance",
   "payOptionalOnSummonSearch",
   "payOnSummonGrantBraveBlood",
+  "fieldExperimentOnSummon", "vsMagicPlayCostAtkBonus",
   "buffSelfAtkThisAttack", "destroyAllUnits", "expandDataLinkRange",
   "discardHandToMillOpponentDeck",
 ]);

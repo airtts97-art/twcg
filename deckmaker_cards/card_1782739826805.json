@@ -1,0 +1,51 @@
+{
+  "imageUrl": "assets/cards/card_1782739826805.jpeg",
+  "tags": [
+    "アメリカ理神論連邦",
+    "バベル・インダストリー",
+    "歩兵"
+  ],
+  "tactSubType": null,
+  "rarity": "通常",
+  "attack": null,
+  "costs": {
+    "choiceAct": [],
+    "act": {
+      "electric": 4,
+      "mineral": 0,
+      "human": 0,
+      "nature": 0,
+      "fuel": 0,
+      "magic": 0,
+      "gold": 0
+    },
+    "play": {
+      "fuel": 0,
+      "magic": 0,
+      "human": 2,
+      "nature": 0,
+      "mineral": 2,
+      "electric": 3,
+      "gold": 0
+    },
+    "choice": []
+  },
+  "id": "card_1782739826805",
+  "flavorText": "アメリカ理神論連邦は突如として国境を侵犯し、南米を支配するタワンティンスーユ太陽帝国への侵攻を開始した。太陽と虹の神インティの奇跡を解析・解体するため、バベル社もその戦争へ介入した。",
+  "generates": {
+    "mineral": 0,
+    "electric": 0,
+    "magic": 0,
+    "fuel": 0,
+    "nature": 0,
+    "human": 0,
+    "gold": 0
+  },
+  "defense": null,
+  "name": "第三警備部：調査部",
+  "world": "万神世界",
+  "roles": [],
+  "limit": 4,
+  "description": "[衝撃][帯電]\nプレイコストに魔を含むユニットへの攻撃時：攻撃中にのみ＋４/±０の補正を得る。",
+  "type": "ユニット"
+}

@@ -1441,6 +1441,111 @@ const results = await page.evaluate(() => {
     out.push({ name: "vs_tag_infantry_atk_bonus_applies", summary: { skipped: true } });
   }
 
+  const surveyDeptCatalog = api.testing.catalogCard("card_1782739826805");
+  const surveyVsMagic = (surveyDeptCatalog?.abilities || []).find((a) => a.effect === "vsMagicPlayCostAtkBonus");
+  out.push({
+    name: "survey_dept_vs_magic_play_cost_parsed",
+    summary: {
+      found: !!surveyVsMagic,
+      atkBonus: surveyVsMagic?.atkBonus,
+      hasShock: (surveyDeptCatalog?.keywords || []).includes("shock"),
+      hasCharge: (surveyDeptCatalog?.keywords || []).includes("charge"),
+    },
+  });
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.testing.setResources("p1", { nature: 5, people: 0, funds: 0, ore: 0, fuel: 0, electric: 10, magic: 0 });
+  if (api.cardCatalog.main["card_1782739826805"] && api.cardCatalog.main["card_1782641805941"]) {
+    api.testing.placeUnit("card_1782739826805", "p1", 2, 2, { rested: false });
+    api.testing.placeUnit("card_1782641805941", "p2", 1, 2, { rested: true, hp: 10 });
+    const defenderHpBefore = api.state.board[1][2].currentHp;
+    api.testing.selectUnit(2, 2);
+    api.testing.attack({ kind: "unit", row: 1, col: 2 });
+    out.push({
+      name: "survey_dept_vs_magic_play_cost_applies",
+      summary: {
+        defenderHpBefore,
+        defenderHpAfter: api.state.board[1][2]?.currentHp ?? 0,
+        damageDealt: defenderHpBefore - (api.state.board[1][2]?.currentHp ?? 0),
+      },
+    });
+  } else {
+    out.push({ name: "survey_dept_vs_magic_play_cost_applies", summary: { skipped: true } });
+  }
+
+  const fieldLabCatalog = api.testing.catalogCard("card_1782741779575");
+  const fieldLabOnSummon = (fieldLabCatalog?.abilities || []).find((a) => a.effect === "fieldExperimentOnSummon");
+  out.push({
+    name: "field_lab_on_summon_parsed",
+    summary: {
+      found: !!fieldLabOnSummon,
+      trigger: fieldLabOnSummon?.trigger,
+    },
+  });
+
+  reset();
+  api.state.activePlayer = "p1";
+  api.state.phase = "main";
+  api.testing.setResources("p1", { funds: 5, people: 5, ore: 5, electric: 20, magic: 0, nature: 0, fuel: 0 });
+  if (api.cardCatalog.main["card_1782741779575"] && api.cardCatalog.main["card_1782641805941"]) {
+    const fieldLabIdx = api.testing.addHandCard("p1", "card_1782741779575");
+    api.testing.addHandCard("p1", "card_1782641805941");
+    api.testing.summonFromHand(fieldLabIdx, 2, 2);
+    const pending = api.state.pendingChoice;
+    out.push({
+      name: "field_lab_summon_choice_offered",
+      summary: {
+        pendingType: pending?.type,
+        step: pending?.step,
+        eligibleCount: pending?.eligible?.length ?? 0,
+      },
+    });
+    if (pending?.type === "fieldExperiment" && pending.eligible?.length) {
+      const electricBefore = api.state.players.p1.resources.electric;
+      const handEntry = pending.eligible[0];
+      const expectedElectric = handEntry.handCard.cost
+        ? Object.values(handEntry.handCard.cost).reduce((sum, amount) => sum + (amount || 0), 0)
+        : 0;
+      api.testing.resolveFieldExperimentHandUnit(handEntry.handIndex);
+      const afterExile = api.state.pendingChoice;
+      const exiledCount = api.state.players.p1.exileZone.filter((c) => c.name === handEntry.handCard.name).length;
+      out.push({
+        name: "field_lab_exile_and_grant_choice",
+        summary: {
+          electricSpent: electricBefore - api.state.players.p1.resources.electric,
+          expectedElectric,
+          exiledCount,
+          stepAfterExile: afterExile?.step,
+          babelTargetCount: afterExile?.babelTargets?.length ?? 0,
+        },
+      });
+      if (afterExile?.step === "chooseBabelTarget" && afterExile.babelTargets?.length) {
+        const targetBefore = afterExile.babelTargets[0].card.abilities?.length ?? 0;
+        api.testing.resolveFieldExperimentBabelTarget(0);
+        const targetAfter = api.state.board[2][2];
+        out.push({
+          name: "field_lab_grant_abilities",
+          summary: {
+            abilitiesBefore: targetBefore,
+            abilitiesAfter: targetAfter?.abilities?.length ?? 0,
+            pendingCleared: api.state.pendingChoice == null,
+          },
+        });
+      } else {
+        out.push({ name: "field_lab_grant_abilities", summary: { skipped: true } });
+      }
+    } else {
+      out.push({ name: "field_lab_exile_and_grant_choice", summary: { skipped: true } });
+      out.push({ name: "field_lab_grant_abilities", summary: { skipped: true } });
+    }
+  } else {
+    out.push({ name: "field_lab_summon_choice_offered", summary: { skipped: true } });
+    out.push({ name: "field_lab_exile_and_grant_choice", summary: { skipped: true } });
+    out.push({ name: "field_lab_grant_abilities", summary: { skipped: true } });
+  }
+
   reset();
   api.state.phase = "main";
   const commanderCatalog = api.testing.catalogCard("card_1782225519182");
@@ -2019,6 +2124,31 @@ if (!byName.vs_tag_infantry_atk_bonus_applies.skipped) {
 }
 if (!byName.vs_tag_infantry_atk_bonus_catalog_fallback.skipped) {
   assert(byName.vs_tag_infantry_atk_bonus_catalog_fallback.damageDealt === 3, "vsTagAtkBonus should fall back to catalog abilities/tags");
+}
+
+assert(byName.survey_dept_vs_magic_play_cost_parsed.found === true, "第三警備部：調査部 should parse vsMagicPlayCostAtkBonus");
+assert(byName.survey_dept_vs_magic_play_cost_parsed.atkBonus === 4, "第三警備部：調査部 should grant +4 ATK vs magic play cost");
+if (!byName.survey_dept_vs_magic_play_cost_applies.skipped) {
+  assert(byName.survey_dept_vs_magic_play_cost_applies.damageDealt >= 4, "調査部 should deal bonus damage vs magic play cost unit");
+}
+assert(byName.field_lab_on_summon_parsed.found === true, "野外実験課 should parse fieldExperimentOnSummon");
+assert(byName.field_lab_on_summon_parsed.trigger === "onSummon", "野外実験課 effect should trigger on summon");
+if (!byName.field_lab_summon_choice_offered.skipped) {
+  assert(byName.field_lab_summon_choice_offered.pendingType === "fieldExperiment", "野外実験課 should open field experiment choice");
+  assert(byName.field_lab_summon_choice_offered.eligibleCount >= 1, "野外実験課 should list magic-cost hand units");
+}
+if (!byName.field_lab_exile_and_grant_choice.skipped) {
+  assert(byName.field_lab_exile_and_grant_choice.exiledCount === 1, "野外実験課 should exile selected hand unit");
+  assert(
+    byName.field_lab_exile_and_grant_choice.electricSpent === byName.field_lab_exile_and_grant_choice.expectedElectric,
+    "野外実験課 should pay full play cost in electric",
+  );
+  assert(byName.field_lab_exile_and_grant_choice.stepAfterExile === "chooseBabelTarget", "野外実験課 should offer babel target choice");
+  assert(byName.field_lab_exile_and_grant_choice.babelTargetCount >= 1, "野外実験課 should list babel industry targets");
+}
+if (!byName.field_lab_grant_abilities.skipped) {
+  assert(byName.field_lab_grant_abilities.abilitiesAfter > byName.field_lab_grant_abilities.abilitiesBefore, "野外実験課 should grant exiled unit abilities");
+  assert(byName.field_lab_grant_abilities.pendingCleared === true, "野外実験課 choice should finish after grant");
 }
 
 assert(byName.northeast_commander_damage_buff_parsed.found === true, "北東軍最高司令官 should parse on-damage buff");

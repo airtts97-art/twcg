@@ -66,6 +66,8 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782650951674", // ゴルテナ伯ゾア
   "card_1782682744095", // 動員計画
   "card_1782681464783", // キハエーホ陸軍施設
+  "card_1782739826805", // 第三警備部：調査部
+  "card_1782741779575", // 虚-第四開発部：野外実験課
 ]);
 
 export function isImplementedCard(cardId) {

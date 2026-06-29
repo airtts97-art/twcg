@@ -1355,6 +1355,29 @@ const abilityEffects = {
     drawCards(game, playerId, ability.amount || 1);
     cleanupAllDestroyed(null, game);
   },
+  fieldExperimentOnSummon({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const eligible = player.hand
+      .map((handCard, handIndex) => ({ handCard, handIndex }))
+      .filter(({ handCard }) => handCard.type === "unit" && cardHasMagicInPlayOrActCost(handCard));
+    if (!eligible.length) {
+      log(game, `${player.name}: 「${card.name}」— 魔を含む手札ユニットがない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "fieldExperiment",
+      step: "chooseHandUnit",
+      playerId,
+      eligible,
+      hostUnit: card,
+      cardName: card.name,
+      optional: true,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "fieldExperiment" };
+    game.message = "野外実験課: 除外する手札ユニットを選ぶ（スキップ可）";
+    return "pending";
+  },
   identityPrivateOnSummon({ game, playerId, card }) {
     const player = game.players[playerId];
     if (!player.mainDeck.length) return;
@@ -4472,6 +4495,14 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
+  const vsMagicPlayCostAtkMatch = text.match(/プレイコストに魔を含むユニットへの攻撃時[：:]攻撃中にのみ[＋+]?(\d+|[0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)[／/]±[０0]の補正を得る/);
+  if (vsMagicPlayCostAtkMatch && localType === "unit" && !abilities.some((a) => a.effect === "vsMagicPlayCostAtkBonus")) {
+    abilities.push({
+      effect: "vsMagicPlayCostAtkBonus",
+      atkBonus: parseDeckmakerKeywordValue(vsMagicPlayCostAtkMatch[1]) || 1,
+    });
+  }
+
   // onMill summonSelfFromDumpMobile: "デッキから墓地へ送られた時：…[機動]を得る"
   if (/デッキから墓地へ送られた時[：:].*場に出す/.test(text) && /\[機動\]/.test(text)) {
     const existingMill = abilities.findIndex((a) => a.trigger === "onMill" && a.effect === "summonSelfFromDump");
@@ -5272,6 +5303,17 @@ function parseDeckmakerAbilities(card, localType) {
         payCost: { magic: 1, electric: 1 },
         counterAmount: 2,
       });
+    }
+  }
+
+  if (card.id === "card_1782741779575") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "fieldExperimentOnSummon" });
+  }
+
+  if (card.id === "card_1782739826805") {
+    if (!abilities.some((a) => a.effect === "vsMagicPlayCostAtkBonus")) {
+      abilities.push({ effect: "vsMagicPlayCostAtkBonus", atkBonus: 4 });
     }
   }
 
@@ -7844,6 +7886,56 @@ function totalCostAmount(cost = {}) {
   return Object.values(normalized).reduce((sum, amount) => sum + amount, 0);
 }
 
+function hasMagicInResourceCost(cost = {}) {
+  return (normalizeResourceObject(cost).magic || 0) > 0;
+}
+
+function cardHasMagicInPlayOrActCost(card) {
+  if (!card) return false;
+  return hasMagicInResourceCost(card.cost) || hasMagicInResourceCost(card.actCost);
+}
+
+function collectTaggedPlayerCards(game, playerId, tagName) {
+  const player = game.players[playerId];
+  const results = [];
+  const pushIfMatch = (card, zone, extra = {}) => {
+    if (!card || !unitHasTag(card, tagName)) return;
+    results.push({ card, zone, ...extra });
+  };
+  for (const row of game.board) {
+    for (const unit of row) {
+      if (unit?.owner === playerId) pushIfMatch(unit, "board", { row: unit.row, col: unit.col });
+    }
+  }
+  (player.structs || []).forEach((struct, structIndex) => pushIfMatch(struct, "struct", { structIndex }));
+  (player.tactZone || []).forEach((tact, tactIndex) => pushIfMatch(tact, "tact", { tactIndex }));
+  (player.hand || []).forEach((handCard, handIndex) => pushIfMatch(handCard, "hand", { handIndex }));
+  return results;
+}
+
+function grantAbilitiesToCard(target, sourceAbilities = []) {
+  if (!target || !sourceAbilities.length) return 0;
+  if (!target.abilities) target.abilities = [];
+  let added = 0;
+  for (const ability of sourceAbilities) {
+    const duplicate = target.abilities.some(
+      (entry) => entry.trigger === ability.trigger && entry.effect === ability.effect,
+    );
+    if (duplicate) continue;
+    target.abilities.push({ ...ability });
+    added += 1;
+  }
+  return added;
+}
+
+function finishFieldExperimentChoice(game, pending) {
+  const qi = pending.queueItem;
+  game.pendingChoice = null;
+  game.selected = null;
+  if (qi) completeAbilitySource(game, qi);
+  processEffectQueue(game);
+}
+
 function canDeployHeroWithGold(player, heroOption, goldToPay = 0) {
   if (!heroOption) return false;
   const pay = goldToPay || 0;
@@ -8698,24 +8790,87 @@ function resolveReviveFromDumpSkip() {
   return true;
 }
 
-function resolveIdentityCopyAbility(optionIndex) {
-  const pending = state.pendingChoice;
-  if (pending?.type !== "identityCopyAbility") return false;
-  const opt = pending.options[optionIndex];
-  if (!opt) return false;
-  const host = pending.hostUnit;
-  if (!host.abilities) host.abilities = [];
-  const copied = { ...opt.ability };
-  host.abilities.push(copied);
-  log(state, `${state.players[pending.playerId].name}: 「${host.name}」が能力「${opt.label}」を獲得`);
-  if (copied.trigger === "onSummon") {
-    triggerAbilities(state, pending.playerId, host, "onSummon");
+function beginFieldExperimentSummon(pending, handIndex) {
+  const player = state.players[pending.playerId];
+  const entry = pending.eligible.find((item) => item.handIndex === handIndex);
+  if (!entry) return false;
+  const handCard = entry.handCard;
+  const electricCost = totalCostAmount(handCard.cost || {});
+  if (!canPay(player, { electric: electricCost })) {
+    state.message = `電${electricCost}を支払えません。`;
+    render();
+    return false;
   }
-  const qi = pending.queueItem;
-  state.pendingChoice = null;
-  state.selected = null;
-  completeAbilitySource(state, qi);
-  processEffectQueue(state);
+  pay(player, { electric: electricCost });
+  const actualIndex = player.hand.indexOf(handCard);
+  if (actualIndex < 0) {
+    finishFieldExperimentChoice(state, pending);
+    render();
+    return false;
+  }
+  const [exiled] = player.hand.splice(actualIndex, 1);
+  player.exileZone.push(exiled);
+  log(
+    state,
+    `${player.name}: 「${pending.cardName}」— 手札の「${exiled.name}」を電${electricCost}支払いで除外`,
+  );
+  const sourceAbilities = parseDeckmakerAbilities(exiled, "unit");
+  const babelTargets = collectTaggedPlayerCards(state, pending.playerId, "バベル・インダストリー");
+  if (!babelTargets.length || !sourceAbilities.length) {
+    if (!babelTargets.length) {
+      log(state, `${player.name}: [バベル・インダストリー]タグの付与先がない`);
+    } else {
+      log(state, `${player.name}: 除外したカードに付与できる効果がありません`);
+    }
+    finishFieldExperimentChoice(state, pending);
+    syncOnlineAction("resolveChoice", pending.playerId);
+    render();
+    return true;
+  }
+  state.pendingChoice = {
+    ...pending,
+    step: "chooseBabelTarget",
+    exiledUnitName: exiled.name,
+    sourceAbilities,
+    babelTargets,
+  };
+  state.message = `野外実験課: 「${exiled.name}」の効果を与える[バベル・インダストリー]カードを選ぶ`;
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveFieldExperimentHandUnit(handIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "fieldExperiment" || pending.step !== "chooseHandUnit") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  return beginFieldExperimentSummon(pending, handIndex);
+}
+
+function resolveFieldExperimentSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "fieldExperiment") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  log(state, `${state.players[pending.playerId].name}: 「${pending.cardName}」の除外をスキップ`);
+  finishFieldExperimentChoice(state, pending);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveFieldExperimentBabelTarget(targetIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "fieldExperiment" || pending.step !== "chooseBabelTarget") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const entry = pending.babelTargets[targetIndex];
+  if (!entry) return false;
+  const added = grantAbilitiesToCard(entry.card, pending.sourceAbilities || []);
+  log(
+    state,
+    `${state.players[pending.playerId].name}: 「${entry.card.name}」に「${pending.exiledUnitName || pending.summonedUnitName}」の効果${added}件を付与`,
+  );
+  refreshContinuousEffects(state);
+  finishFieldExperimentChoice(state, pending);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
   return true;
@@ -11413,7 +11568,7 @@ function unitHasArmorEffect(unit) {
   return keywordValue(unit, "armor") > 0 || Number(unit.armor) > 0;
 }
 
-const PASSIVE_COMBAT_ABILITY_EFFECTS = new Set(["vsTagAtkBonus", "vsArmorAtkBonus"]);
+const PASSIVE_COMBAT_ABILITY_EFFECTS = new Set(["vsTagAtkBonus", "vsArmorAtkBonus", "vsMagicPlayCostAtkBonus"]);
 
 function normalizeTagName(tag) {
   return String(tag || "").replace(/^\[|\]$/g, "").trim();
@@ -11472,6 +11627,9 @@ function effectiveAttackPower(attacker, defender = null) {
       atk += ability.atkBonus || 1;
     }
     if (ability.effect === "vsArmorAtkBonus" && unitHasArmorEffect(defender)) {
+      atk += ability.atkBonus || 1;
+    }
+    if (ability.effect === "vsMagicPlayCostAtkBonus" && hasMagicInResourceCost(defender?.cost)) {
       atk += ability.atkBonus || 1;
     }
   }
@@ -14286,6 +14444,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "discardForDraw") drawDiscardForDrawPanel(pending);
   else if (pending.type === "coreStructStartDiscard") drawCoreStructStartDiscardPanel(pending);
   else if (pending.type === "identityCopyAbility") drawIdentityCopyAbilityPanel(pending);
+  else if (pending.type === "fieldExperiment") drawFieldExperimentPanel(pending);
   else if (pending.type === "colorfulDiscard" || pending.type === "discardHandToMill") drawColorfulDiscardPanel(pending);
   else if (pending.type === "colorfulRemapCost") drawColorfulRemapPanel(pending);
   else if (pending.type === "sheriffRemoveKeywords") drawSheriffRemoveKeywordsPanel(pending);
@@ -14486,6 +14645,42 @@ function drawIdentityCopyAbilityPanel(pending) {
     const cy = y + 70 + i * 44;
     drawButton(x + 28, cy, w - 56, 36, opt.label, () => resolveIdentityCopyAbility(i));
   });
+}
+
+function drawFieldExperimentPanel(pending) {
+  const x = 388, y = 180, w = 664, h = 360;
+  drawChoicePanelBase(x, y, w, h, "rgba(80,120,180,0.72)");
+  ctx.fillStyle = "#c8d8f0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  if (pending.step === "chooseHandUnit") {
+    ctx.fillText("野外実験課: 除外する手札ユニット", x + 28, y + 34);
+    ctx.font = "500 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("プレイコストまたはアクトコストに魔を含むユニットのみ。プレイコスト合計を電で支払い除外。", x + 28, y + 58, w - 56);
+    pending.eligible.forEach(({ handCard, handIndex }, i) => {
+      const electricCost = totalCostAmount(handCard.cost || {});
+      const canAfford = canPay(state.players[pending.playerId], { electric: electricCost });
+      const cy = y + 84 + i * 44;
+      drawButton(
+        x + 28,
+        cy,
+        w - 56,
+        36,
+        `${handCard.name}（電${electricCost}で除外）`,
+        canAfford ? () => resolveFieldExperimentHandUnit(handIndex) : null,
+        null,
+        canAfford ? null : { accent: "dim" },
+      );
+    });
+    drawButton(x + 28, y + h - 48, 120, 32, "スキップ", resolveFieldExperimentSkip, null, { accent: "dim" });
+    return;
+  }
+  if (pending.step === "chooseBabelTarget") {
+    ctx.fillText(`「${pending.exiledUnitName || pending.summonedUnitName}」の効果を与える先`, x + 28, y + 34);
+    pending.babelTargets.forEach((entry, i) => {
+      const cy = y + 64 + i * 44;
+      drawButton(x + 28, cy, w - 56, 36, entry.card.name, () => resolveFieldExperimentBabelTarget(i));
+    });
+  }
 }
 
 function drawColorfulDiscardPanel(pending) {
@@ -17098,6 +17293,9 @@ const testing = {
   resolveChooseUnitActivate,
   resolveLifeCounterPayment,
   resolveDrawPlusPayResource,
+  resolveFieldExperimentHandUnit,
+  resolveFieldExperimentBabelTarget,
+  resolveFieldExperimentSkip,
   toggleDestroyChoice,
   resolveDestroyChoice,
   toggleKaijuAwakenChoice,
