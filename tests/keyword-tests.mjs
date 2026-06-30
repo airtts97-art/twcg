@@ -509,6 +509,28 @@ const results = await page.evaluate(() => {
   }
   out.push({ name: "non_neutral_faction_limit", summary: { twoFactionDeckValid, threeFactionRejected } });
 
+  const annihilationAnomalyId = "card_1782311181226";
+  const annihilationAnomaly = api.cardCatalog.main[annihilationAnomalyId];
+  const originalAnnihilationAnomalyLimit = annihilationAnomaly?.limit;
+  let fourAnnihilationAnomaliesValid = false;
+  let fiveAnnihilationAnomaliesRejected = false;
+  if (annihilationAnomaly) annihilationAnomaly.limit = 1;
+  try {
+    fourAnnihilationAnomaliesValid = api.testing.validateDeck(Array(4).fill(annihilationAnomalyId));
+  } catch {
+    fourAnnihilationAnomaliesValid = false;
+  }
+  try {
+    api.testing.validateDeck(Array(5).fill(annihilationAnomalyId));
+  } catch {
+    fiveAnnihilationAnomaliesRejected = true;
+  }
+  if (annihilationAnomaly) annihilationAnomaly.limit = originalAnnihilationAnomalyLimit;
+  out.push({
+    name: "bundled_deck_limit_overrides_stale_catalog_limit",
+    summary: { fourAnnihilationAnomaliesValid, fiveAnnihilationAnomaliesRejected },
+  });
+
   api.testing.resetDeckBuilder();
   api.testing.reset({ resources: { p1: highResources, p2: highResources } });
   api.state.activePlayer = "p1";
@@ -1736,9 +1758,9 @@ const results = await page.evaluate(() => {
   api.state.phase = "main";
   api.state.activePlayer = "p1";
   api.testing.setResources("p1", { people: 10, nature: 10, funds: 10, ore: 10, fuel: 10, electric: 10, magic: 10 });
-  const babelDeckBefore = api.state.players.p1.mainDeck.length;
-  const babelHandBefore = api.state.players.p1.hand.length;
-  const babelElectricBefore = api.state.players.p1.resources.electric || 0;
+  const babelClerkDeckBefore = api.state.players.p1.mainDeck.length;
+  const babelClerkHandBefore = api.state.players.p1.hand.length;
+  const babelClerkElectricBefore = api.state.players.p1.resources.electric || 0;
   const clerk = api.testing.placeUnit("card_1782810886587", "p1", 2, 2);
   for (const ability of clerk.abilities || []) {
     if (ability.trigger === "onSummon") {
@@ -1752,9 +1774,9 @@ const results = await page.evaluate(() => {
       deckAfter: api.state.players.p1.mainDeck.length,
       handAfter: api.state.players.p1.hand.length,
       electricAfter: api.state.players.p1.resources.electric || 0,
-      deckBefore: babelDeckBefore,
-      handBefore: babelHandBefore,
-      electricBefore: babelElectricBefore,
+      deckBefore: babelClerkDeckBefore,
+      handBefore: babelClerkHandBefore,
+      electricBefore: babelClerkElectricBefore,
     },
   });
 
@@ -2639,6 +2661,14 @@ assert(byResult.mystic_capture_cost_electric_paid.coreHpAfter === byResult.mysti
 assert(byResult.mystic_capture_cost_electric_paid.electricAfter === 3, "mystic capture should consume 2 electric for two magic-cost cards");
 assert(byName.non_neutral_faction_limit.twoFactionDeckValid === true, "two non-neutral factions should be valid");
 assert(byName.non_neutral_faction_limit.threeFactionRejected === true, "three non-neutral factions should be rejected");
+assert(
+  byName.bundled_deck_limit_overrides_stale_catalog_limit.fourAnnihilationAnomaliesValid === true,
+  "bundled 壊滅怪異 limit should allow four copies even when Firebase/cache says one",
+);
+assert(
+  byName.bundled_deck_limit_overrides_stale_catalog_limit.fiveAnnihilationAnomaliesRejected === true,
+  "bundled 壊滅怪異 limit should still reject a fifth copy",
+);
 
 assert(
   byName.default_deck_excludes_demo_fixtures.activeCards.every((card) => card.fixture === false),

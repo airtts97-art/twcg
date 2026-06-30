@@ -184,6 +184,13 @@ function bundledImageUrlFor(cardId) {
   return entry?.imageUrl || null;
 }
 
+function bundledDeckLimitFor(cardId) {
+  if (!cardId || !FORCE_BUNDLED_CARD_IDS.has(cardId)) return null;
+  const entry = supplementalCards.find((card) => card.id === cardId);
+  const limit = Number(entry?.limit);
+  return limit >= 1 && limit <= 4 ? limit : null;
+}
+
 function syncBundledRuntimeCard(card) {
   if (!card?.id) return card;
   if (!isUsableImageUrl(card.imageUrl)) {
@@ -5917,7 +5924,9 @@ function fromDeckmakerCard(card) {
     abilities: parseDeckmakerAbilities(card, localType),
   };
   const deckLimit = Number(card.limit);
-  if (deckLimit >= 1) base.limit = deckLimit;
+  const bundledDeckLimit = bundledDeckLimitFor(base.id);
+  if (bundledDeckLimit != null) base.limit = bundledDeckLimit;
+  else if (deckLimit >= 1) base.limit = deckLimit;
   else if (base.keywords.some((kw) => kw.id === "legendary")) base.limit = 1;
   else base.limit = 4;
   if (localType === "unit") {
@@ -7768,6 +7777,8 @@ function hasKeyword(card, id) {
 function maxDeckCopiesFor(card) {
   if (!card) return 4;
   if (hasKeyword(card, "legendary")) return 1;
+  const bundledDeckLimit = bundledDeckLimitFor(card.id);
+  if (bundledDeckLimit != null) return bundledDeckLimit;
   const limit = Number(card.limit);
   if (limit >= 1 && limit <= 4) return limit;
   return 4;
