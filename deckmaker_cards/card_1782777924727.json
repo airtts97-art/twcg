@@ -1,20 +1,31 @@
 {
-  "roles": [],
-  "name": "北東軍軍楽隊",
-  "tactSubType": null,
-  "attack": null,
-  "generates": {
-    "human": 0,
-    "nature": 1,
-    "magic": 1,
-    "electric": 0,
-    "mineral": 0,
-    "fuel": 0,
-    "gold": 1
-  },
   "rarity": "通常",
-  "limit": 4,
+  "costs": {
+    "choiceAct": [],
+    "choice": [],
+    "play": {
+      "human": 2,
+      "fuel": 0,
+      "magic": 2,
+      "gold": 2,
+      "nature": 2,
+      "electric": 0,
+      "mineral": 0
+    },
+    "act": {
+      "mineral": 0,
+      "electric": 0,
+      "gold": 0,
+      "nature": 0,
+      "magic": 0,
+      "fuel": 0,
+      "human": 0
+    }
+  },
+  "world": "ユニフォール",
+  "name": "北東軍軍楽隊",
   "type": "ユニット",
+  "roles": [],
   "tags": [
     "アトラス北東軍",
     "純人間",
@@ -23,32 +34,21 @@
     "歩兵",
     "魔法"
   ],
-  "world": "ユニフォール",
-  "id": "card_1782777924727",
-  "description": "[潜伏]\nレストする：自分ユニット全員がATK+③の修正を得る",
-  "defense": null,
+  "flavorText": "時に音楽とは精神を奮い立たせ困難な状況へと挑む力を与える\n戦友達が次々と倒れていく中、彼らは演奏を続ける事しか出来ない",
+  "attack": null,
+  "description": "[潜伏]\nレストする：1ターンの間自分ユニット全員がATK+③の修正を得る",
   "imageUrl": "assets/cards/card_1782777924727.jpeg",
-  "costs": {
-    "choiceAct": [],
-    "act": {
-      "nature": 0,
-      "magic": 0,
-      "human": 0,
-      "electric": 0,
-      "fuel": 0,
-      "gold": 0,
-      "mineral": 0
-    },
-    "choice": [],
-    "play": {
-      "mineral": 0,
-      "fuel": 0,
-      "gold": 2,
-      "human": 2,
-      "magic": 3,
-      "nature": 2,
-      "electric": 0
-    }
+  "generates": {
+    "gold": 1,
+    "nature": 1,
+    "electric": 0,
+    "mineral": 0,
+    "magic": 1,
+    "fuel": 0,
+    "human": 0
   },
-  "flavorText": "時に音楽とは精神を奮い立たせ困難な状況へと挑む力を与える\n戦友達が次々と倒れていく中、彼らは演奏を続ける事しか出来ない"
+  "defense": 4,
+  "id": "card_1782777924727",
+  "limit": 4,
+  "tactSubType": null
 }

@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cards = [
   ["c:/Users/haruk/Downloads/戦術爆撃.json", "card_1782776308523"],
-  ["c:/Users/haruk/Downloads/北東軍軍楽隊.json", "card_1782777924727"],
+  ["c:/Users/haruk/Downloads/北東軍軍楽隊 (1).json", "card_1782777924727"],
+  ["c:/Users/haruk/Downloads/N o t i o n  A r t e r y .json", "card_1782818887721"],
+  ["c:/Users/haruk/Downloads/全土貴族会議.json", "card_1782817772003"],
 ];
 
 for (const [srcPath, id] of cards) {

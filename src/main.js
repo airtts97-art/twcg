@@ -352,6 +352,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782650951674",  // ゴルテナ伯ゾア
   "card_1782776308523",  // 戦術爆撃
   "card_1782777924727",  // 北東軍軍楽隊
+  "card_1782818887721",  // N o t i o n  A r t e r y
+  "card_1782817772003",  // 全土貴族会議
   "card_1782802249493",  // 怒れる摘果神
   "card_1782803110038",  // つなたい召喚儀式
   "card_1782804595225",  // 名前のない神
@@ -671,6 +673,16 @@ function matchesDeckSearchFilter(deckCard, filter) {
   }
   if (filter.cardType && deckmakerTypeToLocal(deckCard) !== filter.cardType) return false;
   if (filter.maxCost != null && totalCostAmount(deckCard.cost || {}) > filter.maxCost) return false;
+  if (filter.tagContains) {
+    const needle = filter.tagContains;
+    if ((deckCard.tags || []).some((tag) => tag.includes(needle))) return true;
+    const text = deckCard.text || deckCard.description || "";
+    if (text) {
+      const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`\\[[^\\]]*${escaped}[^\\]]*\\]`).test(text)) return true;
+    }
+    return keywordLabels(deckCard).some((label) => label.includes(needle));
+  }
   if (!filter.tag) return true;
   if ((deckCard.tags || []).includes(filter.tag)) return true;
   if (filter.tag === "降臨" && deckCard.type === "unit" && requiresTactSummon(deckCard)) return true;
@@ -1102,6 +1114,30 @@ const abilityEffects = {
     };
     game.selected = { kind: "choice", choice: "payDefenderActCostBonus" };
     game.message = `「${card.name}」: 「${defender.name}」のアクトコスト${total}を支払い、追加ダメージ？`;
+    return "pending";
+  },
+  payEnemyAttackCostsAndRest({ game, playerId, card, ability, source }) {
+    const primaryTarget = source?.attackTarget;
+    const targets = collectEnemyAttackCostRestTargets(game, playerId, primaryTarget);
+    if (!targets.length) return;
+    const combinedActCost = sumUnitsActCosts(targets);
+    const total = totalCostAmount(combinedActCost);
+    game.pendingChoice = {
+      type: "payEnemyAttackCostsAndRest",
+      playerId,
+      unitRow: card.row,
+      unitCol: card.col,
+      targetUnits: targets.map((u) => ({ row: u.row, col: u.col, name: u.name })),
+      combinedActCost,
+      total,
+      cardName: card.name,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "payEnemyAttackCostsAndRest" };
+    const names = targets.map((u) => `「${u.name}」`).join("、");
+    game.message = total > 0
+      ? `「${card.name}」: ${names}の攻撃コスト合計${total}を支払ってレスト？`
+      : `「${card.name}」: ${names}をレスト？`;
     return "pending";
   },
   buffSelfAtk({ game, playerId, card, ability }) {
@@ -2007,6 +2043,7 @@ const abilityEffects = {
     }
   },
   searchDeckPick({ game, playerId, card, ability, source }) {
+    if (ability.restTact && source?.zone === "tact" && card.permanentTact) card.rested = true;
     const player = game.players[playerId];
     const filters = ability.filters || [];
     const candidates = buildSearchDeckPickCandidates(player, filters);
@@ -2022,6 +2059,7 @@ const abilityEffects = {
       pickPrompt: ability.pickPrompt || "デッキから1枚選んで手札に加えてください。",
       filterHint: ability.filterHint || filters.map((f) => {
         if (f.cardName) return `「${f.cardName}」`;
+        if (f.tagContains) return `「${f.tagContains}」を含むタグ`;
         if (f.tag) return `[${f.tag}]`;
         if (f.cardType === "unit") return "ユニット";
         if (f.cardType === "tact") return "タクト";
@@ -4535,6 +4573,13 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onAttack", effect: "payDefenderActCostForCoreDamage" });
   }
 
+  const payEnemyAttackCostsAndRestMatch = text.match(
+    /相手ユニットを攻撃対象にしたとき.*攻撃コストをすべてを支払ってもよい[\s\S]*?それらのカードをレストし、そのカードは次の相手のターンレストしない/,
+  );
+  if (payEnemyAttackCostsAndRestMatch && localType === "unit" && !abilities.some((a) => a.effect === "payEnemyAttackCostsAndRest")) {
+    abilities.push({ trigger: "onAttack", effect: "payEnemyAttackCostsAndRest" });
+  }
+
   // "「破壊された時：金③を得る」を与える" → grant onDestroy gainResource to target unit
   const DESC_RESOURCE_MAP_LOCAL = { 人: "people", 自: "nature", 鉱: "ore", 燃: "fuel", 電: "electric", 魔: "magic", 金: "funds" };
   const grantDestroyGainMatch = text.match(/「破壊された時[：:]([人自鉱燃電魔金])([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]*)を得る」を与える/);
@@ -5496,6 +5541,26 @@ function parseDeckmakerAbilities(card, localType) {
     if (!abilities.some((a) => a.trigger === "onActivate" && a.effect === "buffFriendlyUnitsAtk")) {
       abilities.push({ trigger: "onActivate", effect: "buffFriendlyUnitsAtk", amount: 3 });
     }
+  }
+
+  if (card.id === "card_1782818887721") {
+    if (!abilities.some((a) => a.effect === "payEnemyAttackCostsAndRest")) {
+      abilities.push({ trigger: "onAttack", effect: "payEnemyAttackCostsAndRest" });
+    }
+  }
+
+  if (card.id === "card_1782817772003") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "permanentTactPlay" });
+    abilities.push({
+      trigger: "onMainPhase",
+      effect: "searchDeckPick",
+      filters: [{ tagContains: "貴族" }],
+      restTact: true,
+      isPermanent: true,
+      pickPrompt: "全土貴族会議：デッキから「貴族」を含むタグのカードを1枚選んで手札に",
+      filterHint: "いずれかのタグに「貴族」を含むカード",
+    });
   }
 
   if (card.id === "card_1782802249493") {
@@ -7900,10 +7965,11 @@ function sameResourceCost(a = {}, b = {}) {
 
 function isPlayBlockedBySadGirl(playerId, card) {
   if (!card || (card.type !== "unit" && card.type !== "tact")) return false;
-  const opponent = opponentOf(playerId);
-  const sadGirlActive = unitsOwnedBy(opponent).some((unit) => unit.id === "card_1755671140352");
+  const sadGirlOwner = opponentOf(playerId);
+  const sadGirlActive = unitsOwnedBy(sadGirlOwner).some((unit) => unit.id === "card_1755671140352");
   if (!sadGirlActive) return false;
-  return unitsOwnedBy(opponent).some((unit) => sameResourceCost(getUnitFieldPlayCost(unit), card.cost || {}));
+  const playCost = card.cost || {};
+  return unitsOwnedBy(playerId).some((unit) => sameResourceCost(getUnitFieldPlayCost(unit), playCost));
 }
 
 function applyConditionalBuff(unit, key, active, { atk = 0, hp = 0 } = {}) {
@@ -10883,7 +10949,7 @@ function placeUnitFromHand(handIndex, row, col) {
   const card = player.hand[handIndex];
   if (!card || card.type !== "unit") return fail("ユニットカードを選択してください。");
   if (requiresTactSummon(card)) return fail(`「${card.name}」は指令カードからのみ出撃できます。`);
-  if (isPlayBlockedBySadGirl(state.activePlayer, card)) return fail("This card is blocked by Unknown Sad Girl.");
+  if (isPlayBlockedBySadGirl(state.activePlayer, card)) return fail("骨の少女の効果により、このプレイコストのカードは使用できません。");
   if (!canMeetUnitStructRequirement(player, card)) return fail(`${card.requiredStructName || "\u5fc5\u8981\u30b9\u30c8\u30e9\u30af\u30c8"} \u304c\u306a\u3044\u305f\u3081\u51fa\u6483\u3067\u304d\u307e\u305b\u3093\u3002`);
   if (card.requiredSacrificeName && !findRequiredSacrificeUnit(state.activePlayer, card)) return fail(`${card.requiredSacrificeName} がないため出撃できません。`);
   if (card.identityRevealGate && !findIdentityRevealSacrifice(state.activePlayer, card.identityRevealGate)) {
@@ -10931,7 +10997,7 @@ function playTactFromHand(handIndex) {
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
   if (!card || card.type !== "tact") return fail("指令カードを選択してください。");
-  if (isPlayBlockedBySadGirl(state.activePlayer, card)) return fail("This card is blocked by Unknown Sad Girl.");
+  if (isPlayBlockedBySadGirl(state.activePlayer, card)) return fail("骨の少女の効果により、このプレイコストのカードは使用できません。");
   if ((state.globalEffects || []).some((effect) => effect.type === "noTact" && effect.playerId === state.activePlayer)) {
     return fail("現在、指令カードを使用できません。");
   }
@@ -12185,6 +12251,52 @@ function resolvePayOptionalOnSummonSearch(pay) {
   return true;
 }
 
+function resolvePayEnemyAttackCostsAndRest(pay) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "payEnemyAttackCostsAndRest") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const qi = pending.queueItem;
+  if (pay) {
+    const total = pending.total || 0;
+    if (total > 0 && !canPay(player, pending.combinedActCost || {})) {
+      state.message = "資源が不足しています。";
+      render();
+      return false;
+    }
+    if (total > 0) pay(player, pending.combinedActCost || {});
+    const restedNames = [];
+    for (const loc of pending.targetUnits || []) {
+      const unit = state.board[loc.row]?.[loc.col];
+      if (unit && unit.owner !== pending.playerId) {
+        unit.rested = true;
+        unit.lockedRestTurns = (unit.lockedRestTurns || 0) + 1;
+        restedNames.push(unit.name);
+      }
+    }
+    const costLabel = Object.entries(pending.combinedActCost || {})
+      .filter(([, amount]) => amount > 0)
+      .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
+      .join("");
+    if (restedNames.length) {
+      log(
+        state,
+        total > 0
+          ? `${player.name}: 「${pending.cardName}」${costLabel}支払い → ${restedNames.map((n) => `「${n}」`).join("、")}をレスト（次の相手ターン解除不可）`
+          : `${player.name}: 「${pending.cardName}」→ ${restedNames.map((n) => `「${n}」`).join("、")}をレスト（次の相手ターン解除不可）`,
+      );
+    }
+  }
+  state.pendingChoice = null;
+  state.selected = { kind: "unit", row: pending.unitRow, col: pending.unitCol };
+  completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function resolvePayDefenderActCostBonus(pay) {
   const pending = state.pendingChoice;
   if (pending?.type !== "payDefenderActCostBonus") return false;
@@ -12820,6 +12932,32 @@ function adjacentCells(row, col) {
     [row, col - 1],
     [row, col + 1],
   ].filter(([r, c]) => r >= 0 && r < ROWS && c >= 0 && c < COLS);
+}
+
+function collectEnemyAttackCostRestTargets(game, playerId, primaryTarget) {
+  if (!primaryTarget || primaryTarget.owner === playerId) return [];
+  const opponentId = primaryTarget.owner;
+  const seen = new Set();
+  const targets = [];
+  const add = (unit) => {
+    if (!unit || unit.owner !== opponentId || seen.has(unit)) return;
+    seen.add(unit);
+    targets.push(unit);
+  };
+  add(primaryTarget);
+  for (const [r, c] of adjacentCells(primaryTarget.row, primaryTarget.col)) {
+    const adj = game.board[r]?.[c];
+    if (adj && adj.owner === opponentId && !adj.rested) add(adj);
+  }
+  return targets;
+}
+
+function sumUnitsActCosts(units) {
+  const total = emptyResources();
+  for (const unit of units) {
+    mergeResourceDelta(total, normalizeResourceObject(unit.actCost || {}));
+  }
+  return total;
 }
 
 function countAdjacentUnits(row, col, game = state) {
@@ -15324,6 +15462,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "chargeAttack") drawChargeAttackPanel(pending);
   else if (pending.type === "payOnAttackEnhance") drawPayOnAttackEnhancePanel(pending);
   else if (pending.type === "payDefenderActCostBonus") drawPayDefenderActCostBonusPanel(pending);
+  else if (pending.type === "payEnemyAttackCostsAndRest") drawPayEnemyAttackCostsAndRestPanel(pending);
   else if (pending.type === "payOptionalOnSummonSearch") drawPayOptionalOnSummonSearchPanel(pending);
 }
 
@@ -16110,6 +16249,43 @@ function drawPayOptionalOnSummonSearchPanel(pending) {
       { accent: "p1" },
     );
     drawButton(x + 320, y + h - 58, 220, 36, "スキップ", () => { resolvePayOptionalOnSummonSearch(false); });
+  }
+}
+
+function drawPayEnemyAttackCostsAndRestPanel(pending) {
+  const x = 420, y = 260, w = 640, h = 260;
+  addHit(0, 0, W, H, () => {});
+  drawChoicePanelBase(x, y, w, h, "rgba(80,60,40,0.82)", "#d0a060");
+  ctx.fillStyle = "#ffe8c8";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」の攻撃`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(255,230,200,0.92)";
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  const costLabel = Object.entries(pending.combinedActCost || {})
+    .filter(([, amount]) => amount > 0)
+    .map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`)
+    .join("");
+  const targetNames = (pending.targetUnits || []).map((u) => u.name).join("、");
+  ctx.fillText(`対象: ${targetNames}`, x + 28, y + 64);
+  if ((pending.total || 0) > 0) {
+    ctx.fillText(`攻撃コスト合計${costLabel}を支払う`, x + 28, y + 88);
+  }
+  ctx.fillText("支払った場合、対象をレスト（次の相手ターン解除不可）", x + 28, y + 112);
+  const isController = canControlChoicePlayer(pending.playerId);
+  if (isController) {
+    const player = state.players[pending.playerId];
+    const canPayCosts = (pending.total || 0) <= 0 || canPay(player, pending.combinedActCost || {});
+    drawButton(
+      x + 28,
+      y + h - 58,
+      280,
+      36,
+      (pending.total || 0) > 0 ? `支払ってレスト` : "レストする",
+      () => { resolvePayEnemyAttackCostsAndRest(true); },
+      null,
+      canPayCosts ? { accent: "p1" } : { accent: "dim" },
+    );
+    drawButton(x + 320, y + h - 58, 220, 36, "支払わない", () => { resolvePayEnemyAttackCostsAndRest(false); });
   }
 }
 
@@ -18345,6 +18521,7 @@ const testing = {
   resolveChargeAttack,
   resolvePayOnAttackEnhance,
   resolvePayDefenderActCostBonus,
+  resolvePayEnemyAttackCostsAndRest,
   resolvePayForBuff,
   resolveDestroyEnemyStructChoice,
   resolveDestroyEnemyStructSkip,

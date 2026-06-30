@@ -1,0 +1,46 @@
+{
+  "relatedCardIds": [
+    "card_1782651169572",
+    "card_1782650951674"
+  ],
+  "type": "タクト",
+  "name": "全土貴族会議",
+  "costs": {
+    "choiceAct": [],
+    "choice": [],
+    "play": {
+      "human": 2,
+      "gold": 2,
+      "nature": 0,
+      "electric": 0,
+      "mineral": 0,
+      "magic": 0,
+      "fuel": 0
+    },
+    "act": {}
+  },
+  "world": "ヘルメネアの大地",
+  "roles": [],
+  "tags": [
+    "王政ウルダニア",
+    "組織",
+    "貴族",
+    "政策"
+  ],
+  "flavorText": "ウルダニア国内の全貴族によって構成される議院。一貴族家系につき一議席を有し、国王の選出権を持つため、議会内での派閥争いは極めて熾烈である。",
+  "rarity": "通常",
+  "limit": 4,
+  "tactSubType": "永続",
+  "id": "card_1782817772003",
+  "description": "レストする：いずれかのタグに「貴族」が含まれるカードを１枚デッキから手札に加える",
+  "generates": {
+    "human": 0,
+    "nature": 0,
+    "gold": 0,
+    "mineral": 0,
+    "electric": 0,
+    "fuel": 0,
+    "magic": 0
+  },
+  "imageUrl": "assets/cards/card_1782817772003.jpeg"
+}

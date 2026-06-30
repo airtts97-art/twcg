@@ -1345,6 +1345,87 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const notionCard = api.cardCatalog.main["card_1782818887721"];
+  const notionAbilities = notionCard?.abilities || [];
+  out.push({
+    name: "notion_artillery_parsed",
+    summary: {
+      found: notionAbilities.some((a) => a.trigger === "onAttack" && a.effect === "payEnemyAttackCostsAndRest"),
+      charge: (notionCard?.keywords || []).some((k) => k.id === "charge"),
+      multiAttack: (notionCard?.keywords || []).some((k) => k.id === "multiAttack"),
+      indirectFire: (notionCard?.keywords || []).some((k) => k.id === "indirectFire"),
+      hp: notionCard?.hp,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { funds: 10, fuel: 10, electric: 10, people: 0, nature: 0, ore: 0, magic: 0 });
+  const notionFundsBefore = api.state.players.p1.resources.funds;
+  const notionFuelBefore = api.state.players.p1.resources.fuel;
+  api.testing.placeUnit("card_1782818887721", "p1", 2, 1, { rested: false });
+  api.testing.placeUnit("militia", "p2", 1, 1, { rested: false });
+  api.testing.placeUnit("armoredCar", "p2", 1, 0, { rested: false });
+  api.testing.placeUnit("militia", "p2", 1, 2, { rested: true });
+  api.testing.selectUnit(2, 1);
+  api.testing.attack({ kind: "unit", row: 1, col: 1 });
+  if (api.state.pendingChoice?.type === "chargeAttack") api.testing.resolveChargeAttack(false);
+  if (api.state.pendingChoice?.type === "payEnemyAttackCostsAndRest") api.testing.resolvePayEnemyAttackCostsAndRest(true);
+  out.push({
+    name: "notion_artillery_pay_and_rest",
+    summary: {
+      choiceType: api.state.pendingChoice?.type || null,
+      primaryRested: api.state.board[1][1]?.rested,
+      primaryLock: api.state.board[1][1]?.lockedRestTurns,
+      adjacentRested: api.state.board[1][0]?.rested,
+      adjacentLock: api.state.board[1][0]?.lockedRestTurns,
+      restedAdjacentSkipped: api.state.board[1][2]?.rested === true && !api.state.board[1][2]?.lockedRestTurns,
+      fundsSpent: notionFundsBefore - api.state.players.p1.resources.funds,
+      fuelSpent: notionFuelBefore - api.state.players.p1.resources.fuel,
+    },
+  });
+
+  const nobleAssemblyCard = api.cardCatalog.main["card_1782817772003"];
+  const nobleAssemblyAbility = (nobleAssemblyCard?.abilities || []).find((a) => a.effect === "searchDeckPick");
+  out.push({
+    name: "noble_assembly_parsed",
+    summary: {
+      found: !!nobleAssemblyAbility,
+      tagContains: nobleAssemblyAbility?.filters?.[0]?.tagContains,
+      restTact: nobleAssemblyAbility?.restTact,
+      permanent: nobleAssemblyCard?.tactSubType === "永続",
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { funds: 5, people: 5, nature: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.state.players.p1.mainDeck = [
+    { id: "card_1782651169572", name: "エレナ＝アンドート", type: "unit", tags: ["王政ウルダニア", "探究派貴族", "純人間", "魔法"], cost: { human: 2, gold: 3, magic: 1 } },
+    { id: "card_1782500000000", name: "北東軍第65歩兵大隊", type: "unit", tags: ["アトラス北東軍", "歩兵"], cost: { human: 2 } },
+  ];
+  const nobleHandIdx = api.testing.addHandCard("p1", "card_1782817772003");
+  api.testing.playTactFromHand(nobleHandIdx);
+  const nobleTactIdx = api.state.players.p1.tactZone.findIndex((c) => c.id === "card_1782817772003");
+  const nobleHandBefore = api.state.players.p1.hand.length;
+  const nobleDeckBefore = api.state.players.p1.mainDeck.length;
+  if (nobleTactIdx >= 0) api.testing.activatePermanentTact(nobleTactIdx);
+  const nobleCandidates = api.state.pendingChoice?.candidates?.length || 0;
+  if (api.state.pendingChoice?.type === "searchDeckPick") api.testing.resolveSearchDeckPick(0);
+  out.push({
+    name: "noble_assembly_tag_contains_search",
+    summary: {
+      pendingType: nobleCandidates ? "searchDeckPick" : api.state.pendingChoice?.type || null,
+      candidateCount: nobleCandidates,
+      pickedName: api.state.players.p1.hand.at(-1)?.name || null,
+      handBefore: nobleHandBefore,
+      handAfter: api.state.players.p1.hand.length,
+      deckBefore: nobleDeckBefore,
+      deckAfter: api.state.players.p1.mainDeck.length,
+      tactRested: api.state.players.p1.tactZone[nobleTactIdx]?.rested,
+    },
+  });
+
   const fruitGodCard = api.cardCatalog.main["card_1782802249493"];
   const fruitGodAbilities = fruitGodCard?.abilities || [];
   out.push({
@@ -1545,6 +1626,37 @@ const results = await page.evaluate(() => {
       deckBefore: babelDeckBefore,
       handBefore: babelHandBefore,
       electricBefore: babelElectricBefore,
+    },
+  });
+
+  reset();
+  api.testing.placeUnit("card_1755671140352", "p1", 3, 0);
+  api.testing.placeUnit("militia", "p2", 0, 1);
+  api.state.activePlayer = "p2";
+  const sadBlockedHandIdx = api.testing.addHandCard("p2", "lightInfantry");
+  const sadBlockedSummon = api.testing.summonFromHand(sadBlockedHandIdx, 0, 0);
+  const sadAllowedHandIdx = api.testing.addHandCard("p2", "armoredCar");
+  const sadAllowedSummon = api.testing.summonFromHand(sadAllowedHandIdx, 0, 2);
+  out.push({
+    name: "sad_girl_play_cost_lock",
+    summary: {
+      blockedSameCost: sadBlockedSummon === false,
+      allowedDifferentCost: sadAllowedSummon === true,
+      blockedUnitStillInHand: !!api.state.players.p2.hand[sadBlockedHandIdx],
+      allowedUnitOnBoard: !!api.state.board[0][2],
+    },
+  });
+
+  reset();
+  api.testing.placeUnit("militia", "p2", 0, 1);
+  api.state.activePlayer = "p2";
+  const sadNoAuraHandIdx = api.testing.addHandCard("p2", "lightInfantry");
+  const sadNoAuraSummon = api.testing.summonFromHand(sadNoAuraHandIdx, 0, 0);
+  out.push({
+    name: "sad_girl_play_cost_lock_inactive_without_sad_girl",
+    summary: {
+      summonOk: sadNoAuraSummon === true,
+      unitOnBoard: !!api.state.board[0][0],
     },
   });
 
@@ -2665,6 +2777,20 @@ assert(byName.military_band_parsed.found === true, "北東軍軍楽隊 should pa
 assert(byName.military_band_parsed.amount === 3, "北東軍軍楽隊 should buff +3 ATK");
 assert(byName.military_band_atk_buff.bandRested === true, "北東軍軍楽隊 should rest on activate");
 assert(byName.military_band_atk_buff.allyAtkAfter === byName.military_band_atk_buff.allyAtkBefore + 3, "北東軍軍楽隊 should buff all friendly units");
+assert(byName.notion_artillery_parsed.found === true, "Notion Artillery should parse payEnemyAttackCostsAndRest");
+assert(byName.notion_artillery_parsed.hp === 3, "Notion Artillery should have 3 HP from updated defense");
+assert(byName.notion_artillery_pay_and_rest.primaryRested === true, "Notion Artillery should rest primary target");
+assert(byName.notion_artillery_pay_and_rest.primaryLock === 1, "Notion Artillery should lock primary rest for next opponent turn");
+assert(byName.notion_artillery_pay_and_rest.adjacentRested === true, "Notion Artillery should rest adjacent unrested enemy");
+assert(byName.notion_artillery_pay_and_rest.adjacentLock === 1, "Notion Artillery should lock adjacent rest");
+assert(byName.notion_artillery_pay_and_rest.restedAdjacentSkipped === true, "Notion Artillery should skip already-rested adjacent unit");
+assert(byName.notion_artillery_pay_and_rest.fundsSpent === 1, "Notion Artillery should pay militia attack cost");
+assert(byName.notion_artillery_pay_and_rest.fuelSpent === 1, "Notion Artillery should pay armored car attack cost");
+assert(byName.noble_assembly_parsed.found === true, "全土貴族会議 should parse searchDeckPick with tagContains");
+assert(byName.noble_assembly_parsed.tagContains === "貴族", "全土貴族会議 should search by partial tag 貴族");
+assert(byName.noble_assembly_tag_contains_search.candidateCount === 1, "全土貴族会議 should only offer cards with 貴族 in a tag");
+assert(byName.noble_assembly_tag_contains_search.pickedName === "エレナ＝アンドート", "全土貴族会議 should add partial-tag noble card to hand");
+assert(byName.noble_assembly_tag_contains_search.tactRested === true, "全土貴族会議 should rest on activation");
 assert(byName.ambush_blocks_effect_targeting.hpAfter === byName.ambush_blocks_effect_targeting.hpBefore, "潜伏 should block effect targeting until revealed");
 assert(byName.ambush_blocks_effect_targeting.stillHidden === true, "潜伏 unit should stay hidden when targeting blocked");
 assert(byName.wrathful_fruit_god_parsed.found === true, "怒れる摘果神 should parse onSummon highest-ATK damage");
@@ -2690,5 +2816,9 @@ assert(byName.babel_third_class_clerk_parsed.drawOnSummon === true, "バベル�
 assert(byName.babel_third_class_clerk_parsed.electricOnSummon === true, "バベル社三等社員 should gain electric on summon");
 assert(byName.babel_third_class_clerk_on_summon.handAfter === byName.babel_third_class_clerk_on_summon.handBefore + 1, "バベル社三等社員 should draw 1 card on summon");
 assert(byName.babel_third_class_clerk_on_summon.electricAfter === byName.babel_third_class_clerk_on_summon.electricBefore + 1, "バベル社三等社員 should gain 1 electric on summon");
+assert(byName.sad_girl_play_cost_lock.blockedSameCost === true, "骨の少女 should block same play cost as opponent field units");
+assert(byName.sad_girl_play_cost_lock.allowedDifferentCost === true, "骨の少女 should allow different play costs");
+assert(byName.sad_girl_play_cost_lock.blockedUnitStillInHand === true, "blocked summon should leave card in hand");
+assert(byName.sad_girl_play_cost_lock_inactive_without_sad_girl.summonOk === true, "play cost lock should not apply without Sad Girl");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));

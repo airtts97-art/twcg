@@ -1,0 +1,52 @@
+{
+  "roles": [
+    "アタッカー"
+  ],
+  "rarity": "通常",
+  "description": "[帯電]　[連撃⑤]　[曲射②]\nこのユニットが相手ユニットを攻撃対象にしたときそのユニットのとそのユニットに隣接するユニットかつレストしていない相手ユニット攻撃コストをすべてを支払ってもよい\nそうしたら、それらのカードをレストし、そのカードは次の相手のターンレストしない",
+  "id": "card_1782818887721",
+  "type": "ユニット",
+  "flavorText": "対象概念識別完了-地獄を見せてやれ",
+  "limit": 4,
+  "tags": [
+    "ヘヤクヨン",
+    "機械"
+  ],
+  "defense": 3,
+  "generates": {
+    "fuel": 0,
+    "human": 0,
+    "mineral": 0,
+    "magic": 0,
+    "gold": 0,
+    "electric": 0,
+    "nature": 0
+  },
+  "tactSubType": null,
+  "attack": 1,
+  "world": "ヘヤクヨン皇帝制民主主義連邦共和帝国",
+  "imageUrl": "assets/cards/card_1782818887721.jpeg",
+  "name": "N o t i o n  A r t e r y",
+  "costs": {
+    "act": {
+      "nature": 0,
+      "electric": 1,
+      "gold": 0,
+      "magic": 0,
+      "mineral": 0,
+      "human": 0,
+      "fuel": 0
+    },
+    "choice": [],
+    "play": {
+      "fuel": 0,
+      "human": 0,
+      "mineral": 3,
+      "magic": 0,
+      "gold": 0,
+      "electric": 2,
+      "nature": 0
+    },
+    "choiceAct": []
+  }
+}
