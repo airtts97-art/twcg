@@ -358,6 +358,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782803110038",  // つなたい召喚儀式
   "card_1782804595225",  // 名前のない神
   "card_1782810886587",  // バベル社三等社員
+  "card_1782813364684",  // セカンド・バベル
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -684,7 +685,7 @@ function matchesDeckSearchFilter(deckCard, filter) {
     return keywordLabels(deckCard).some((label) => label.includes(needle));
   }
   if (!filter.tag) return true;
-  if ((deckCard.tags || []).includes(filter.tag)) return true;
+  if ((deckCard.tags || []).some((tag) => tag === filter.tag || tag.includes(filter.tag))) return true;
   if (filter.tag === "降臨" && deckCard.type === "unit" && requiresTactSummon(deckCard)) return true;
   const text = deckCard.text || deckCard.description || "";
   if (text) {
@@ -2044,6 +2045,10 @@ const abilityEffects = {
   },
   searchDeckPick({ game, playerId, card, ability, source }) {
     if (ability.restTact && source?.zone === "tact" && card.permanentTact) card.rested = true;
+    if (ability.restOnStart && card?.type === "struct" && !card.rested) {
+      card.rested = true;
+      log(game, `「${card.name}」をレスト`);
+    }
     const player = game.players[playerId];
     const filters = ability.filters || [];
     const candidates = buildSearchDeckPickCandidates(player, filters);
@@ -2051,12 +2056,18 @@ const abilityEffects = {
       log(game, `${player.name}: 条件に合うカードがデッキにありません`);
       return;
     }
+    const pickCount = ability.pickCount || 1;
+    const pickedSoFar = ability.pickedSoFar || 0;
+    const pickPromptBase = ability.pickPrompt || "デッキから1枚選んで手札に加えてください。";
+    const pickPrompt = pickCount > 1
+      ? `${pickPromptBase}（${pickedSoFar + 1}/${pickCount}枚目）`
+      : pickPromptBase;
     game.pendingChoice = {
       type: "searchDeckPick",
       playerId,
       candidates,
       selectedIndex: undefined,
-      pickPrompt: ability.pickPrompt || "デッキから1枚選んで手札に加えてください。",
+      pickPrompt,
       filterHint: ability.filterHint || filters.map((f) => {
         if (f.cardName) return `「${f.cardName}」`;
         if (f.tagContains) return `「${f.tagContains}」を含むタグ`;
@@ -2066,9 +2077,11 @@ const abilityEffects = {
         return "";
       }).filter(Boolean).join(" / "),
       queueItem: { playerId, card, ability, source },
+      pickedSoFar,
+      pickCount,
     };
     game.selected = { kind: "choice", choice: "searchDeckPick" };
-    game.message = game.pendingChoice.pickPrompt;
+    game.message = pickPrompt;
     return "pending";
   },
   summonGolemFromDeck({ game, playerId, card, ability }) {
@@ -2238,11 +2251,19 @@ const abilityEffects = {
   },
   chooseProduceResource({ game, card, ability }) {
     if (!game.pendingStructPhase) return;
+    if (ability.restOnStart && card?.type === "struct" && !card.rested) {
+      card.rested = true;
+      log(game, `「${card.name}」をレスト`);
+    }
+    const maxPicks = ability.maxPicks || 0;
     game.pendingStructPhase.pendingResourceChoice = {
       type: "chooseProduceResource",
       options: ability.options || [],
       cardName: card.name,
       multiActivate: Boolean(ability.multiActivate),
+      maxPicks: maxPicks || undefined,
+      remainingPicks: maxPicks || undefined,
+      skipRestOnComplete: Boolean(ability.restOnStart || maxPicks > 1),
     };
     return "pending";
   },
@@ -5131,9 +5152,9 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({
       trigger: "onPlay",
       effect: "searchDeckPick",
-      filters: [{ cardType: "unit", tag: "歩兵", maxCost: 4 }],
+      filters: [{ cardType: "unit", tagContains: "歩兵", maxCost: 4 }],
       pickPrompt: "演説：デッキから[歩兵]ユニット（コスト総量4以下）を1枚選んで手札に",
-      filterHint: "[歩兵]ユニット / コスト総量4以下",
+      filterHint: "[歩兵]を含むユニット / コスト総量4以下",
     });
   }
 
@@ -5560,6 +5581,34 @@ function parseDeckmakerAbilities(card, localType) {
       isPermanent: true,
       pickPrompt: "全土貴族会議：デッキから「貴族」を含むタグのカードを1枚選んで手札に",
       filterHint: "いずれかのタグに「貴族」を含むカード",
+    });
+  }
+
+  if (card.id === "card_1782813364684") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "searchDeckPick",
+      choiceLabel: "デッキ探索：3枚",
+      filters: [{ tagContains: "地球" }, { tagContains: "バベル・インダストリー" }],
+      pickCount: 3,
+      restOnStart: true,
+      pickPrompt: "セカンド・バベル：デッキから[地球]または[バベル・インダストリー]を選んで手札に",
+      filterHint: "[地球]または[バベル・インダストリー]タグ",
+    });
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "chooseProduceResource",
+      choiceLabel: "資源生産（魔①・最大4回）",
+      maxPicks: 4,
+      restOnStart: true,
+      options: [
+        { id: "people", label: "人④", cost: { magic: 1 }, produces: { people: 4 } },
+        { id: "nature", label: "自④", cost: { magic: 1 }, produces: { nature: 4 } },
+        { id: "ore", label: "鉱④", cost: { magic: 1 }, produces: { ore: 4 } },
+        { id: "fuel", label: "燃④", cost: { magic: 1 }, produces: { fuel: 4 } },
+        { id: "electric", label: "電③", cost: { magic: 1 }, produces: { electric: 3 } },
+      ],
     });
   }
 
@@ -8750,9 +8799,35 @@ function resolveSearchDeckPick(cardIndex) {
   }
   player.hand.push(picked);
   const qi = pending.queueItem;
+  const ability = qi?.ability || {};
+  const pickCount = pending.pickCount || ability.pickCount || 1;
+  const pickedSoFar = (pending.pickedSoFar || 0) + 1;
+  log(state, `${player.name}: 「${picked.name}」を手札に加えた（${pickedSoFar}/${pickCount}）`);
+  if (pickedSoFar < pickCount) {
+    const filters = ability.filters || [];
+    const candidates = buildSearchDeckPickCandidates(player, filters);
+    if (candidates.length) {
+      const pickPromptBase = ability.pickPrompt || "デッキから1枚選んで手札に加えてください。";
+      state.pendingChoice = {
+        type: "searchDeckPick",
+        playerId: pending.playerId,
+        candidates,
+        selectedIndex: undefined,
+        pickPrompt: `${pickPromptBase}（${pickedSoFar + 1}/${pickCount}枚目）`,
+        filterHint: pending.filterHint,
+        queueItem: qi,
+        pickedSoFar,
+        pickCount,
+      };
+      state.selected = { kind: "choice", choice: "searchDeckPick" };
+      state.message = state.pendingChoice.pickPrompt;
+      syncOnlineAction("resolveChoice", pending.playerId);
+      render();
+      return true;
+    }
+  }
   state.pendingChoice = null;
   state.selected = null;
-  log(state, `${player.name}: 「${picked.name}」を手札に加えた`);
   completeAbilitySource(state, qi);
   resumePendingAfterChoice();
   processEffectQueue(state);
@@ -10500,6 +10575,17 @@ function finishPendingEnemyStructChoice(pending, choice) {
   processEffectQueue(state);
 }
 
+function finishMarketChoice() {
+  if (!canControlActivePlayer()) return;
+  const pending = state.pendingStructPhase;
+  const choice = pending?.pendingResourceChoice;
+  if (!choice?.maxPicks) return;
+  pending.pendingResourceChoice = null;
+  processEffectQueue(state);
+  syncOnlineAction("marketChoice");
+  render();
+}
+
 function activateStructInPhase(index) {
   if (!canControlActivePlayer()) return false;
   if (state.pendingChoice) return false;
@@ -10510,6 +10596,29 @@ function activateStructInPhase(index) {
   const player = state.players[pending.playerId];
   const struct = player.structs[index];
   if (!struct) return false;
+
+  const phaseAbilities = (struct.abilities || []).filter((a) => a.trigger === "onStructurePhase");
+  const choiceAbilities = phaseAbilities.filter((a) => a.choiceLabel);
+  if (choiceAbilities.length > 1) {
+    const affordable = choiceAbilities.filter((ab) => canAffordSingleStructPhaseAbility(ab, player, state));
+    if (!affordable.length) {
+      state.message = `「${struct.name}」: 発動できる効果がありません。`;
+      return false;
+    }
+    if (struct.rested) return false;
+    state.pendingChoice = {
+      type: "chooseStructPhaseActivate",
+      playerId: pending.playerId,
+      structIndex: index,
+      abilities: affordable,
+      cardName: struct.name,
+    };
+    state.selected = { kind: "choice", choice: "chooseStructPhaseActivate" };
+    state.message = `「${struct.name}」: 発動する効果を選んでください`;
+    syncOnlineAction("structActivate");
+    render();
+    return true;
+  }
 
   // マイサータなど複数激活が許可されているストラクト以外は、1度激活したら再度激活不可
   const hasMultiActivate = (struct.abilities || []).some((a) => a.multiActivate);
@@ -10527,7 +10636,8 @@ function activateStructInPhase(index) {
 
   const effectEngaged = pending.pendingEnemyStructChoice !== enemyChoiceBefore
     || pending.pendingResourceChoice !== resourceChoiceBefore
-    || struct.rested !== restedBefore;
+    || struct.rested !== restedBefore
+    || state.pendingChoice;
   if (markActivated && !effectEngaged) {
     const activatedPos = pending.activatedIndexes.indexOf(index);
     if (activatedPos >= 0) pending.activatedIndexes.splice(activatedPos, 1);
@@ -10659,7 +10769,7 @@ function resolveEnemyStructChoice(enemyIndex) {
 }
 
 function restActivatedStructAfterChoice(pending, choice) {
-  if (choice?.multiActivate) return;
+  if (choice?.multiActivate || choice?.skipRestOnComplete) return;
   const player = state.players[pending.playerId];
   const activatedIndexes = pending.activatedIndexes || [];
   for (let i = activatedIndexes.length - 1; i >= 0; i--) {
@@ -10702,6 +10812,22 @@ function resolveMarketChoice(resource) {
         card: { name: choice.cardName },
         ability: option.action,
       });
+    }
+    if (choice.maxPicks > 1) {
+      choice.remainingPicks = (choice.remainingPicks || choice.maxPicks) - 1;
+      const canContinue = choice.remainingPicks > 0
+        && choice.options.some((opt) => canPay(player, opt.cost || {}));
+      if (canContinue) {
+        processEffectQueue(state);
+        syncOnlineAction("marketChoice");
+        render();
+        return;
+      }
+      pending.pendingResourceChoice = null;
+      processEffectQueue(state);
+      syncOnlineAction("marketChoice");
+      render();
+      return;
     }
     restActivatedStructAfterChoice(pending, choice);
     pending.pendingResourceChoice = null;
@@ -11047,6 +11173,12 @@ function playTactFromHand(handIndex) {
       const requiredName = ability.requiredStructName || "覆没の迷宮";
       if (findBaseStructForTactOverlay(player, ability) < 0) {
         return fail(`${card.name}: 「${requiredName}」がないため使用できません。`);
+      }
+    }
+    if (ability.trigger === "onPlay" && ability.effect === "searchDeckPick") {
+      const filters = ability.filters || [];
+      if (!buildSearchDeckPickCandidates(player, filters).length) {
+        return fail(`${card.name}: デッキに条件に合うカードがありません。`);
       }
     }
   }
@@ -11934,6 +12066,32 @@ function resolveChooseUnitActivate(effectName) {
   state.pendingChoice = null;
   state.selected = { kind: "unit", row: unit.row, col: unit.col };
   return executeUnitActivate(unit, ability);
+}
+
+function resolveChooseStructPhaseActivate(effectName) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "chooseStructPhaseActivate") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const structPhase = state.pendingStructPhase;
+  if (!structPhase) return false;
+  const struct = state.players[pending.playerId]?.structs?.[pending.structIndex];
+  const ability = (pending.abilities || []).find((entry) => entry.effect === effectName);
+  if (!struct || !ability) return false;
+  if (!structPhase.activatedIndexes.includes(pending.structIndex)) {
+    structPhase.activatedIndexes.push(pending.structIndex);
+  }
+  state.pendingChoice = null;
+  state.selected = null;
+  state.effectQueue.push({
+    playerId: pending.playerId,
+    card: struct,
+    ability,
+    source: { zone: "struct" },
+  });
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
 }
 
 function activateSelectedUnit() {
@@ -15435,6 +15593,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "reviveFromExile") drawReviveFromExilePanel(pending);
   else if (pending.type === "chooseActivationResource") drawChooseActivationResourcePanel(pending);
   else if (pending.type === "chooseUnitActivate") drawChooseUnitActivatePanel(pending);
+  else if (pending.type === "chooseStructPhaseActivate") drawChooseStructPhaseActivatePanel(pending);
   else if (pending.type === "chooseGainResource") drawChooseGainResourcePanel(pending);
   else if (pending.type === "lifeCounterPayment") drawLifeCounterPaymentPanel(pending);
   else if (pending.type === "drawPlusPayResource") drawDrawPlusPayResourcePanel(pending);
@@ -16899,6 +17058,33 @@ function drawChooseUnitActivatePanel(pending) {
   }
 }
 
+function drawChooseStructPhaseActivatePanel(pending) {
+  const abilities = pending.abilities || [];
+  const btnW = 220;
+  const btnH = 44;
+  const gap = 12;
+  const w = Math.max(520, btnW + gap * 2);
+  const h = 120 + abilities.length * (btnH + gap);
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,120,80,0.8)", "#30a060");
+  ctx.fillStyle = "#a8ffd0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName || "ストラクト"}」: 発動効果を選択`, x + 24, y + 34);
+  ctx.fillStyle = "rgba(180,230,210,0.8)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("レストして発動する効果を選んでください。", x + 24, y + 58);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  if (isController) {
+    abilities.forEach((ability, i) => {
+      const bx = x + gap;
+      const by = y + 80 + i * (btnH + gap);
+      const label = ability.choiceLabel || ability.effect;
+      drawButton(bx, by, w - gap * 2, btnH, label, () => { resolveChooseStructPhaseActivate(ability.effect); render(); }, null, { accent: "p1" });
+    });
+  }
+}
+
 function drawChooseGainResourcePanel(pending) {
   const options = pending.options || [];
   const btnW = 120, btnH = 44, gap = 12;
@@ -17070,37 +17256,43 @@ function drawKaijuAwakenPanel(pending) {
   }
 }
 
-function canAffordStructActivation(struct, player) {
-  for (const ab of (struct.abilities || []).filter((a) => a.trigger === "onStructurePhase")) {
-    if (ab.effect === "chooseExchange") {
-      const canAffordAny = (ab.costOptions || []).some(
-        (opt) => (player.resources[opt.resource] || 0) >= opt.amount
-      );
-      if (!canAffordAny) return false;
-    } else if (ab.effect === "chooseProduceResource") {
-      const canAffordAny = (ab.options || []).some((opt) => canPay(player, opt.cost || {}));
-      if (!canAffordAny) return false;
-    } else if (ab.effect === "chooseSummonGolem") {
-      const canAffordAny = (ab.costOptions || []).some(
-        (opt) => (player.resources[opt.resource] || 0) >= opt.amount
-      );
-      if (!canAffordAny) return false;
-    } else if (ab.effect === "structPayRestChooseResource") {
-      if (!canPay(player, ab.activationCost || {})) return false;
-    } else if (ab.effect === "destroyEnemyStructs") {
-      if ((player.resources.fuel || 0) < (ab.fuelCost || 1)) return false;
-      const opponent = opponentOf(player.id);
-      if (!getDestroyableEnemyStructEntries(state, opponent, struct).length) return false;
-    } else {
-      for (const [res, amt] of Object.entries(ab.cost || {})) {
-        if ((player.resources[res] || 0) < amt) return false;
-      }
-      if (typeof ab.amount === "number" && ab.amount < 0) {
-        if ((player.resources[ab.resource] || 0) < Math.abs(ab.amount)) return false;
-      }
-    }
+function canAffordSingleStructPhaseAbility(ab, player, game = state) {
+  if (ab.effect === "chooseExchange") {
+    return (ab.costOptions || []).some((opt) => (player.resources[opt.resource] || 0) >= opt.amount);
+  }
+  if (ab.effect === "chooseProduceResource") {
+    return (ab.options || []).some((opt) => canPay(player, opt.cost || {}));
+  }
+  if (ab.effect === "chooseSummonGolem") {
+    return (ab.costOptions || []).some((opt) => (player.resources[opt.resource] || 0) >= opt.amount);
+  }
+  if (ab.effect === "structPayRestChooseResource") {
+    return canPay(player, ab.activationCost || {});
+  }
+  if (ab.effect === "destroyEnemyStructs") {
+    if ((player.resources.fuel || 0) < (ab.fuelCost || 1)) return false;
+    const opponent = opponentOf(player.id);
+    return getDestroyableEnemyStructEntries(game, opponent, { name: ab.cardName }).length > 0;
+  }
+  if (ab.effect === "searchDeckPick") {
+    return buildSearchDeckPickCandidates(player, ab.filters || []).length > 0;
+  }
+  for (const [res, amt] of Object.entries(ab.cost || {})) {
+    if ((player.resources[res] || 0) < amt) return false;
+  }
+  if (typeof ab.amount === "number" && ab.amount < 0) {
+    if ((player.resources[ab.resource] || 0) < Math.abs(ab.amount)) return false;
   }
   return true;
+}
+
+function canAffordStructActivation(struct, player) {
+  const phaseAbilities = (struct.abilities || []).filter((a) => a.trigger === "onStructurePhase");
+  const choiceAbilities = phaseAbilities.filter((a) => a.choiceLabel);
+  if (choiceAbilities.length > 1) {
+    return choiceAbilities.some((ab) => canAffordSingleStructPhaseAbility(ab, player, state));
+  }
+  return phaseAbilities.every((ab) => canAffordSingleStructPhaseAbility(ab, player, state));
 }
 
 function drawStructPhaseOverlay() {
@@ -17251,7 +17443,8 @@ function drawStructPhaseOverlay() {
     ctx.fillStyle = "#90b8e8";
     ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
     const choiceVerb = choice.type === "chooseProduceResource" ? "得る資源を選択してください" : "支払う資源を選択してください";
-    ctx.fillText(`${choice.cardName}: ${choiceVerb}`, x + 26, choiceY + 20);
+    const remainingLabel = choice.maxPicks ? `（残り${choice.remainingPicks ?? choice.maxPicks}回）` : "";
+    ctx.fillText(`${choice.cardName}: ${choiceVerb}${remainingLabel}`, x + 26, choiceY + 20);
     let bx = x + 26;
     const options = Array.isArray(choice.options)
       ? choice.options
@@ -17270,6 +17463,9 @@ function drawStructPhaseOverlay() {
         drawButton(bx, choiceY + 28, 120, 22, label, null, null, { accent: "dim" });
       }
       bx += 130;
+    }
+    if (choice.maxPicks && isController) {
+      drawButton(x + w - 130, choiceY + 28, 100, 22, "完了", finishMarketChoice, null, { accent: "p2" });
     }
   }
 
@@ -18500,8 +18696,10 @@ const testing = {
   activateTactInStructPhase,
   activatePermanentTact,
   resolveMarketChoice,
+  finishMarketChoice,
   resolveChooseGainResource,
   resolveChooseUnitActivate,
+  resolveChooseStructPhaseActivate,
   resolveLifeCounterPayment,
   resolveDrawPlusPayResource,
   resolveFieldExperimentHandUnit,

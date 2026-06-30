@@ -1426,6 +1426,135 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const speechCard = api.cardCatalog.main["card_1753659816385"];
+  const speechAbility = (speechCard?.abilities || []).find((a) => a.effect === "searchDeckPick");
+  out.push({
+    name: "speech_parsed",
+    summary: {
+      found: !!speechAbility,
+      tagContains: speechAbility?.filters?.[0]?.tagContains,
+      maxCost: speechAbility?.filters?.[0]?.maxCost,
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { funds: 5, people: 5, nature: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.state.players.p1.mainDeck = [
+    { id: "card_1782500000000", name: "北東軍第65歩兵大隊", type: "unit", tags: ["アトラス北東軍", "歩兵"], cost: { people: 2 } },
+    { id: "card_1782651169572", name: "エレナ＝アンドート", type: "unit", tags: ["王政ウルダニア", "探究派貴族", "純人間", "魔法"], cost: { people: 2, funds: 3, magic: 1 } },
+  ];
+  const speechHandIdx = api.testing.addHandCard("p1", "card_1753659816385");
+  const speechHandBefore = api.state.players.p1.hand.length;
+  const speechDeckBefore = api.state.players.p1.mainDeck.length;
+  api.testing.playTactFromHand(speechHandIdx);
+  const speechPendingType = api.state.pendingChoice?.type || null;
+  const speechCandidates = api.state.pendingChoice?.candidates?.length || 0;
+  if (speechPendingType === "searchDeckPick") api.testing.resolveSearchDeckPick(0);
+  out.push({
+    name: "speech_deck_search_pick",
+    summary: {
+      pendingType: speechPendingType,
+      candidateCount: speechCandidates,
+      pickedName: api.state.players.p1.hand.at(-1)?.name || null,
+      handAfter: api.state.players.p1.hand.length,
+      handBefore: speechHandBefore,
+      deckLoss: speechDeckBefore - api.state.players.p1.mainDeck.length,
+      tactInDump: api.state.players.p1.dump.some((c) => c.id === "card_1753659816385"),
+    },
+  });
+
+  const secondBabelCard = api.cardCatalog.structs["card_1782813364684"];
+  const secondBabelAbilities = secondBabelCard?.abilities || [];
+  const deckSearchAbility = secondBabelAbilities.find((a) => a.effect === "searchDeckPick");
+  const resourceAbility = secondBabelAbilities.find((a) => a.effect === "chooseProduceResource");
+  out.push({
+    name: "second_babel_parsed",
+    summary: {
+      found: secondBabelAbilities.length === 2,
+      deckPickCount: deckSearchAbility?.pickCount,
+      resourceMaxPicks: resourceAbility?.maxPicks,
+      filterTags: (deckSearchAbility?.filters || []).map((f) => f.tagContains),
+      resourceOptions: (resourceAbility?.options || []).length,
+    },
+  });
+
+  reset();
+  api.state.players.p1.mainDeck = [
+    { id: "earth1", name: "地球カードA", type: "tact", tags: ["地球"], cost: { ore: 1 } },
+    { id: "earth2", name: "地球カードB", type: "tact", tags: ["地球"], cost: { ore: 1 } },
+    { id: "babel1", name: "バベルカード", type: "unit", tags: ["バベル・インダストリー"], cost: { people: 1 } },
+  ];
+  api.state.players.p1.structs = [{
+    id: "card_1782813364684",
+    name: "セカンド・バベル",
+    type: "struct",
+    rested: false,
+    abilities: secondBabelAbilities,
+  }];
+  api.state.pendingStructPhase = {
+    playerId: "p1",
+    activatedIndexes: [],
+    activatedTactIndexes: [],
+    resourcesBefore: { ...api.state.players.p1.resources },
+    handBefore: api.state.players.p1.hand.length,
+  };
+  api.state.phase = "structure";
+  api.state.activePlayer = "p1";
+  const babelHandBefore = api.state.players.p1.hand.length;
+  api.testing.activateStructInPhase(0);
+  if (api.state.pendingChoice?.type === "chooseStructPhaseActivate") {
+    api.testing.resolveChooseStructPhaseActivate("searchDeckPick");
+  }
+  if (api.state.pendingChoice?.type === "searchDeckPick") api.testing.resolveSearchDeckPick(0);
+  if (api.state.pendingChoice?.type === "searchDeckPick") api.testing.resolveSearchDeckPick(0);
+  out.push({
+    name: "second_babel_deck_search",
+    summary: {
+      structRested: api.state.players.p1.structs[0]?.rested,
+      handGain: api.state.players.p1.hand.length - babelHandBefore,
+      deckLoss: 3 - api.state.players.p1.mainDeck.length,
+      pickedNames: api.state.players.p1.hand.slice(babelHandBefore).map((c) => c.name),
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { funds: 0, people: 0, nature: 0, ore: 0, fuel: 0, electric: 0, magic: 3 });
+  api.state.players.p1.structs = [{
+    id: "card_1782813364684",
+    name: "セカンド・バベル",
+    type: "struct",
+    rested: false,
+    abilities: secondBabelAbilities,
+  }];
+  api.state.pendingStructPhase = {
+    playerId: "p1",
+    activatedIndexes: [],
+    activatedTactIndexes: [],
+    resourcesBefore: { ...api.state.players.p1.resources },
+    handBefore: api.state.players.p1.hand.length,
+  };
+  api.state.phase = "structure";
+  api.state.activePlayer = "p1";
+  const babelPeopleBefore = api.state.players.p1.resources.people;
+  const babelMagicBefore = api.state.players.p1.resources.magic;
+  api.testing.activateStructInPhase(0);
+  if (api.state.pendingChoice?.type === "chooseStructPhaseActivate") {
+    api.testing.resolveChooseStructPhaseActivate("chooseProduceResource");
+  }
+  if (api.state.pendingStructPhase?.pendingResourceChoice) {
+    api.testing.resolveMarketChoice("people");
+    api.testing.resolveMarketChoice("ore");
+  }
+  out.push({
+    name: "second_babel_resource_pick",
+    summary: {
+      structRested: api.state.players.p1.structs[0]?.rested,
+      peopleGain: api.state.players.p1.resources.people - babelPeopleBefore,
+      oreGain: api.state.players.p1.resources.ore,
+      magicSpent: babelMagicBefore - api.state.players.p1.resources.magic,
+    },
+  });
+
   const fruitGodCard = api.cardCatalog.main["card_1782802249493"];
   const fruitGodAbilities = fruitGodCard?.abilities || [];
   out.push({
@@ -2791,6 +2920,23 @@ assert(byName.noble_assembly_parsed.tagContains === "貴族", "全土貴族会�
 assert(byName.noble_assembly_tag_contains_search.candidateCount === 1, "全土貴族会議 should only offer cards with 貴族 in a tag");
 assert(byName.noble_assembly_tag_contains_search.pickedName === "エレナ＝アンドート", "全土貴族会議 should add partial-tag noble card to hand");
 assert(byName.noble_assembly_tag_contains_search.tactRested === true, "全土貴族会議 should rest on activation");
+assert(byName.speech_parsed.found === true, "演説 should parse searchDeckPick");
+assert(byName.speech_parsed.tagContains === "歩兵", "演説 should search by partial tag 歩兵");
+assert(byName.speech_parsed.maxCost === 4, "演説 should filter cost total 4 or less");
+assert(byName.speech_deck_search_pick.candidateCount === 1, "演説 should only offer [歩兵] units within cost limit");
+assert(byName.speech_deck_search_pick.pickedName === "北東軍第65歩兵大隊", "演説 should add chosen infantry to hand");
+assert(byName.speech_deck_search_pick.handAfter === byName.speech_deck_search_pick.handBefore, "演説 should swap itself for the chosen unit in hand");
+assert(byName.speech_deck_search_pick.deckLoss === 1, "演説 should remove searched card from deck");
+assert(byName.speech_deck_search_pick.tactInDump === true, "演説 should go to dump after resolving search");
+assert(byName.second_babel_parsed.found === true, "セカンド・バベル should parse two struct phase abilities");
+assert(byName.second_babel_parsed.deckPickCount === 3, "セカンド・バベル deck search should pick 3 cards");
+assert(byName.second_babel_parsed.resourceMaxPicks === 4, "セカンド・バベル resource ability should allow up to 4 picks");
+assert(byName.second_babel_deck_search.structRested === true, "セカンド・バベル deck search should rest struct");
+assert(byName.second_babel_deck_search.handGain === 2, "セカンド・バベル should add 2 picked cards to hand in test deck");
+assert(byName.second_babel_resource_pick.structRested === true, "セカンド・バベル resource pick should rest struct");
+assert(byName.second_babel_resource_pick.peopleGain === 4, "セカンド・バベル should produce 人④ on first pick");
+assert(byName.second_babel_resource_pick.oreGain === 4, "セカンド・バベル should produce 鉱④ on second pick");
+assert(byName.second_babel_resource_pick.magicSpent === 2, "セカンド・バベル should pay 魔① per resource pick");
 assert(byName.ambush_blocks_effect_targeting.hpAfter === byName.ambush_blocks_effect_targeting.hpBefore, "潜伏 should block effect targeting until revealed");
 assert(byName.ambush_blocks_effect_targeting.stillHidden === true, "潜伏 unit should stay hidden when targeting blocked");
 assert(byName.wrathful_fruit_god_parsed.found === true, "怒れる摘果神 should parse onSummon highest-ATK damage");

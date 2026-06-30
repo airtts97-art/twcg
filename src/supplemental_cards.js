@@ -1177,4 +1177,28 @@ export default [
     rarity: "通常",
     imageUrl: "assets/cards/card_1782817772003.jpeg",
   },
+  {
+    id: "card_1782813364684",
+    name: "セカンド・バベル",
+    type: "ストラクト",
+    world: "万神世界",
+    description:
+      "レストする：[地球]または[バベル・インダストリー]カードを三枚デッキから手札に加える\n"
+      + "レストする：以下の効果から合計四回まで選んで適用する\n"
+      + "魔①を支払う：人④\n魔①を支払う：自④\n魔①を支払う：鉱④\n魔①を支払う：燃④\n魔①を支払う：電③",
+    flavorText: "",
+    tags: ["アメリカ理神論連邦", "バベル・インダストリー", "拠点", "要塞", "地球", "宇宙"],
+    costs: {
+      play: { human: 0, gold: 0, magic: 0, nature: 0, fuel: 0, mineral: 10, electric: 10 },
+      act: {},
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { gold: 0, magic: 0, human: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "神話",
+    imageUrl: "assets/cards/card_1782813364684.jpeg",
+  },
 ];

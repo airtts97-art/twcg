@@ -6,6 +6,7 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1755657552300", // オートマタディメンション
   "card_1782226154092", // マイサータ貿易港
   "card_1753970684315", // 炎の大英傑
+  "card_1753659816385", // 演説
   "card_1753661560335", // 儀式の準備
   "card_1753680748888", // 緊急"招集"兵
   "card_1782182910548", // 血統整理委員会
@@ -79,6 +80,7 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782803110038", // つなたい召喚儀式
   "card_1782804595225", // 名前のない神
   "card_1782810886587", // バベル社三等社員
+  "card_1782813364684", // セカンド・バベル
 ]);
 
 export function isImplementedCard(cardId) {

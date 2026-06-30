@@ -1,0 +1,54 @@
+{
+  "name": "セカンド・バベル",
+  "roles": [],
+  "world": "万神世界",
+  "limit": 4,
+  "id": "card_1782813364684",
+  "relatedCardIds": [
+    "mysticCapture",
+    "card_1782739826805",
+    "card_1782810886587",
+    "card_1782741779575",
+    "card_1782150596266",
+    "card_1782130198047",
+    "card_1782542777239",
+    "card_1782543182447"
+  ],
+  "costs": {
+    "play": {
+      "mineral": 10,
+      "magic": 0,
+      "electric": 10,
+      "nature": 0,
+      "gold": 0,
+      "fuel": 0,
+      "human": 0
+    },
+    "choiceAct": [],
+    "choice": [],
+    "act": {}
+  },
+  "type": "ストラクト",
+  "tags": [
+    "アメリカ理神論連邦",
+    "バベル・インダストリー",
+    "拠点",
+    "要塞",
+    "地球",
+    "宇宙"
+  ],
+  "imageUrl": "assets/cards/card_1782813364684.jpeg",
+  "flavorText": "",
+  "generates": {
+    "electric": 0,
+    "magic": 0,
+    "mineral": 0,
+    "human": 0,
+    "fuel": 0,
+    "gold": 0,
+    "nature": 0
+  },
+  "rarity": "神話",
+  "tactSubType": null,
+  "description": "レストする：[地球]または[バベル・インダストリー]カードを三枚デッキから手札に加える\nレストする：以下の効果から合計四回まで選んで適用する\n魔①を支払う：人④\n魔①を支払う：自④\n魔①を支払う：鉱④\n魔①を支払う：燃④\n魔①を支払う：電③"
+}
