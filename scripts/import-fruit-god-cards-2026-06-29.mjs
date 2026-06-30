@@ -7,6 +7,7 @@ const cards = [
   ["c:/Users/haruk/Downloads/怒れる摘果神.json", "card_1782802249493"],
   ["c:/Users/haruk/Downloads/つなたい召喚儀式.json", "card_1782803110038"],
   ["c:/Users/haruk/Downloads/名前のない神.json", "card_1782804595225"],
+  ["c:/Users/haruk/Downloads/バベル社三等社員 (1).json", "card_1782810886587"],
 ];
 
 for (const [srcPath, id] of cards) {

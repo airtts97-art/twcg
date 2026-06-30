@@ -1,0 +1,52 @@
+{
+  "description": "[不攻]\n出撃時：カードを1枚ドローする。\n出撃時：電①を得る。",
+  "name": "バベル社三等社員",
+  "tactSubType": null,
+  "attack": null,
+  "tags": [
+    "バベル・インダストリー 純人間",
+    "歩兵"
+  ],
+  "flavorText": "彼らオフィサーなくしてどうして会社が回りえるだろうか？",
+  "imageUrl": "assets/cards/card_1782810886587.jpeg",
+  "limit": 4,
+  "roles": [
+    "リソース"
+  ],
+  "rarity": "通常",
+  "costs": {
+    "play": {
+      "nature": 0,
+      "electric": 0,
+      "magic": 0,
+      "human": 1,
+      "mineral": 0,
+      "gold": 1,
+      "fuel": 0
+    },
+    "choiceAct": [],
+    "act": {
+      "magic": 0,
+      "human": 0,
+      "electric": 0,
+      "nature": 0,
+      "mineral": 0,
+      "gold": 0,
+      "fuel": 0
+    },
+    "choice": []
+  },
+  "world": "万神世界",
+  "generates": {
+    "gold": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "electric": 0,
+    "nature": 0,
+    "magic": 0,
+    "human": 0
+  },
+  "id": "card_1782810886587",
+  "type": "ユニット",
+  "defense": null
+}

@@ -355,6 +355,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782802249493",  // 怒れる摘果神
   "card_1782803110038",  // つなたい召喚儀式
   "card_1782804595225",  // 名前のない神
+  "card_1782810886587",  // バベル社三等社員
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",

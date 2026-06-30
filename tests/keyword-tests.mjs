@@ -1509,6 +1509,45 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const babelClerkCard = api.cardCatalog.main["card_1782810886587"];
+  const babelClerkAbilities = babelClerkCard?.abilities || [];
+  out.push({
+    name: "babel_third_class_clerk_parsed",
+    summary: {
+      noAttack: (babelClerkCard?.keywords || []).some((k) => k.id === "noAttack"),
+      drawOnSummon: babelClerkAbilities.some((a) => a.trigger === "onSummon" && a.effect === "drawCards" && a.amount === 1),
+      electricOnSummon: babelClerkAbilities.some(
+        (a) => a.trigger === "onSummon" && a.effect === "gainResource" && a.resource === "electric" && a.amount === 1,
+      ),
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { people: 10, nature: 10, funds: 10, ore: 10, fuel: 10, electric: 10, magic: 10 });
+  const babelDeckBefore = api.state.players.p1.mainDeck.length;
+  const babelHandBefore = api.state.players.p1.hand.length;
+  const babelElectricBefore = api.state.players.p1.resources.electric || 0;
+  const clerk = api.testing.placeUnit("card_1782810886587", "p1", 2, 2);
+  for (const ability of clerk.abilities || []) {
+    if (ability.trigger === "onSummon") {
+      api.state.effectQueue.push({ playerId: "p1", card: clerk, ability, source: {} });
+    }
+  }
+  api.testing.processEffectQueue();
+  out.push({
+    name: "babel_third_class_clerk_on_summon",
+    summary: {
+      deckAfter: api.state.players.p1.mainDeck.length,
+      handAfter: api.state.players.p1.hand.length,
+      electricAfter: api.state.players.p1.resources.electric || 0,
+      deckBefore: babelDeckBefore,
+      handBefore: babelHandBefore,
+      electricBefore: babelElectricBefore,
+    },
+  });
+
   const kihaCard = api.cardCatalog.structs["card_1782681464783"];
   const kihaAbility = (kihaCard?.abilities || []).find((a) => a.effect === "structPayProduce");
   out.push({
@@ -2646,5 +2685,10 @@ assert(byName.nameless_god_on_summon_aoe.ngE1HpAfter === byName.nameless_god_on_
 assert(byName.nameless_god_on_summon_aoe.ngE2HpAfter === byName.nameless_god_on_summon_aoe.ngE2HpBefore - 3, "名前のない神 onSummon should hit every enemy");
 assert(byName.nameless_god_on_damaged_aoe.ngDamE1HpAfter === byName.nameless_god_on_damaged_aoe.ngDamE1Before - 5, "名前のない神 onDamageReceived should deal 5 to all enemies");
 assert(byName.nameless_god_on_damaged_aoe.ngDamE2HpAfter === byName.nameless_god_on_damaged_aoe.ngDamE2Before - 5, "名前のない神 onDamageReceived should hit every enemy");
+assert(byName.babel_third_class_clerk_parsed.noAttack === true, "バベル社三等社員 should have noAttack");
+assert(byName.babel_third_class_clerk_parsed.drawOnSummon === true, "バベル社三等社員 should draw on summon");
+assert(byName.babel_third_class_clerk_parsed.electricOnSummon === true, "バベル社三等社員 should gain electric on summon");
+assert(byName.babel_third_class_clerk_on_summon.handAfter === byName.babel_third_class_clerk_on_summon.handBefore + 1, "バベル社三等社員 should draw 1 card on summon");
+assert(byName.babel_third_class_clerk_on_summon.electricAfter === byName.babel_third_class_clerk_on_summon.electricBefore + 1, "バベル社三等社員 should gain 1 electric on summon");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));
