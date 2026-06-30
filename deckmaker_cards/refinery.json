@@ -1,45 +1,58 @@
 {
-  "id": "refinery",
-  "name": "精製所",
-  "type": "ストラクト",
-  "rarity": "通常",
-  "world": "ニュートラル",
-  "tags": ["産業"],
-  "roles": [],
-  "costs": {
-    "play": {
-      "gold": 2,
-      "human": 0,
-      "nature": 0,
-      "mineral": 1,
-      "fuel": 0,
-      "electric": 0,
-      "magic": 0
-    },
-    "act": {
-      "gold": 0,
-      "human": 0,
-      "nature": 0,
-      "mineral": 0,
-      "fuel": 0,
-      "electric": 0,
-      "magic": 0
-    },
-    "choice": [],
-    "choiceAct": []
-  },
-  "generates": {
-    "gold": 0,
-    "human": 0,
-    "nature": 0,
-    "mineral": 0,
-    "fuel": 2,
-    "electric": 0,
-    "magic": 0
-  },
-  "attack": 0,
-  "defense": 0,
-  "description": "ストラクチャーフェーズ：燃②を得る。",
   "flavorText": "原料を力に変える技術こそ、現代戦の根幹だ。",
-  "imageUrl": ""
+  "id": "refinery",
+  "roles": [],
+  "type": "ストラクト",
+  "relatedCardIds": [
+    "card_1753904806388",
+    "card_1753682800882",
+    "card_1753760240197",
+    "card_1753660371468",
+    "card_1753683148866",
+    "mine",
+    "card_1782225742481",
+    "card_1782225814944",
+    "card_1782152241822",
+    "card_1782736989649",
+    "card_1782738882848",
+    "card_1753683243290",
+    "card_1753904622342",
+    "card_1753683067735",
+    "card_1753682865389",
+    "card_1753664991902",
+    "powerPlant"
+  ],
+  "world": "ニュートラル",
+  "tactSubType": null,
+  "limit": 4,
+  "generates": {
+    "fuel": 2,
+    "magic": 0,
+    "human": 0,
+    "electric": 0,
+    "mineral": 0,
+    "gold": 0,
+    "nature": 0
+  },
+  "name": "精製所",
+  "imageUrl": "",
+  "rarity": "通常",
+  "description": "ストラクチャーフェーズ：レストして、自然②を消費して燃②を得る。",
+  "tags": [
+    "産業"
+  ],
+  "costs": {
+    "choice": [],
+    "choiceAct": [],
+    "play": {
+      "mineral": 1,
+      "gold": 2,
+      "nature": 0,
+      "magic": 0,
+      "fuel": 0,
+      "human": 0,
+      "electric": 0
+    },
+    "act": {}
+  }
 }

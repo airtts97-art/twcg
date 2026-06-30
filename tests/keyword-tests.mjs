@@ -1862,6 +1862,44 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const refineryCard = api.cardCatalog.structs.refinery;
+  const refineryAbility = (refineryCard?.abilities || []).find((a) => a.effect === "structPayProduce");
+  out.push({
+    name: "refinery_paid_produce_parsed",
+    summary: {
+      found: !!refineryAbility,
+      cost: refineryAbility?.cost,
+      produces: refineryAbility?.produces,
+      hasFreeProduction: (refineryCard?.abilities || []).some((a) => a.effect === "produceResource"),
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { funds: 0, nature: 2, people: 0, ore: 0, fuel: 0, electric: 0, magic: 0 });
+  api.state.players.p1.structs = [JSON.parse(JSON.stringify(refineryCard))];
+  api.state.pendingStructPhase = {
+    playerId: "p1",
+    activatedIndexes: [],
+    activatedTactIndexes: [],
+    resourcesBefore: { ...api.state.players.p1.resources },
+    handBefore: api.state.players.p1.hand.length,
+  };
+  api.state.phase = "structure";
+  api.state.activePlayer = "p1";
+  const refineryNatureBefore = api.state.players.p1.resources.nature;
+  const refineryFuelBefore = api.state.players.p1.resources.fuel;
+  api.testing.activateStructInPhase(0);
+  out.push({
+    name: "refinery_paid_produce",
+    summary: {
+      natureBefore: refineryNatureBefore,
+      natureAfter: api.state.players.p1.resources.nature,
+      fuelBefore: refineryFuelBefore,
+      fuelAfter: api.state.players.p1.resources.fuel,
+      structRested: api.state.players.p1.structs[0]?.rested,
+    },
+  });
+
   const farmCard = api.cardCatalog.structs["card_1782738882848"];
   const farmAbility = (farmCard?.abilities || []).find((a) => a.effect === "chooseProduceResource");
   out.push({
@@ -2832,6 +2870,13 @@ assert(byName.kiha_eho_facility_paid_produce.fundsAfter === byName.kiha_eho_faci
 assert(byName.kiha_eho_facility_paid_produce.natureAfter === byName.kiha_eho_facility_paid_produce.natureBefore - 1, "キハエーホ should consume nature");
 assert(byName.kiha_eho_facility_paid_produce.peopleAfter === byName.kiha_eho_facility_paid_produce.peopleBefore + 5, "キハエーホ should gain 5 people");
 assert(byName.kiha_eho_facility_paid_produce.structRested === true, "キハエーホ should rest after activation");
+assert(byName.refinery_paid_produce_parsed.found === true, "精製所 should use paid structure production");
+assert(byName.refinery_paid_produce_parsed.cost?.nature === 2, "精製所 should cost 2 nature");
+assert(byName.refinery_paid_produce_parsed.produces?.fuel === 2, "精製所 should produce 2 fuel");
+assert(byName.refinery_paid_produce_parsed.hasFreeProduction === false, "精製所 should not produce fuel for free");
+assert(byName.refinery_paid_produce.natureAfter === byName.refinery_paid_produce.natureBefore - 2, "精製所 should consume 2 nature");
+assert(byName.refinery_paid_produce.fuelAfter === byName.refinery_paid_produce.fuelBefore + 2, "精製所 should gain 2 fuel");
+assert(byName.refinery_paid_produce.structRested === true, "精製所 should rest after activation");
 assert(byName.grand_farm_parsed.found === true, "大農園 should parse chooseProduceResource");
 assert(byName.grand_farm_parsed.optionCount === 2, "大農園 should offer two activation modes");
 assert(byName.grand_farm_rest_choice.natureAfter === byName.grand_farm_rest_choice.natureBefore + 3, "大農園 rest option should gain 3 nature");

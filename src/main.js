@@ -3359,8 +3359,8 @@ const cardCatalog = {
       name: "精製所",
       tags: ["産業"],
       cost: { funds: 2, ore: 1 },
-      text: "Structure Phase: 燃料 +2",
-      abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "fuel", amount: 2 }],
+      text: "ストラクチャーフェーズ：レストして、自然②を消費して燃②を得る。",
+      abilities: [{ trigger: "onStructurePhase", effect: "structPayProduce", cost: { nature: 2 }, produces: { fuel: 2 } }],
     },
     powerPlant: {
       id: "powerPlant",
@@ -4301,6 +4301,8 @@ function parseDeckmakerAbilities(card, localType) {
     }
     const structPayRestProduceMatch = text.match(
       /((?:[人自鉱燃電魔金][0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+(?:、|,)?)+)を支払い、?\s*レストする[：:]([^。\n]+?)を得る/,
+    ) || text.match(
+      /レストして、?\s*((?:[人自鉱燃電魔金][0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+(?:、|,)?)+)を消費して([^。\n]+?)を得る/,
     );
     if (structPayRestProduceMatch && !abilities.some((a) => a.effect === "structPayProduce")) {
       const cost = {};
@@ -6667,10 +6669,19 @@ function loadServerConfigScript() {
 }
 
 async function fetchServerConfig() {
-  if (SERVER_BASE) return loadServerConfigScript();
-  const response = await fetch("/config");
-  if (!response.ok) throw new Error(`サーバー設定の取得に失敗しました (${response.status})`);
-  return response.json();
+  const configUrl = `${SERVER_BASE}/config`;
+  try {
+    const response = await fetch(configUrl);
+    if (!response.ok) throw new Error(`サーバー設定の取得に失敗しました (${response.status})`);
+    return await response.json();
+  } catch (jsonError) {
+    if (!SERVER_BASE) throw jsonError;
+    try {
+      return await loadServerConfigScript();
+    } catch {
+      throw jsonError;
+    }
+  }
 }
 
 async function loadServerConfig() {
