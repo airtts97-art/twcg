@@ -73,6 +73,9 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782736701501", // E X b-58 エクスペクトマシン
   "card_1782776308523", // 戦術爆撃
   "card_1782777924727", // 北東軍軍楽隊
+  "card_1782802249493", // 怒れる摘果神
+  "card_1782803110038", // つなたい召喚儀式
+  "card_1782804595225", // 名前のない神
 ]);
 
 export function isImplementedCard(cardId) {

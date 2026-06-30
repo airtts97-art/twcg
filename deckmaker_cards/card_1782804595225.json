@@ -1,0 +1,52 @@
+{
+  "type": "ユニット",
+  "imageUrl": "assets/cards/card_1782804595225.jpeg",
+  "name": "名前のない神",
+  "costs": {
+    "play": {
+      "nature": 0,
+      "fuel": 0,
+      "gold": 0,
+      "human": 3,
+      "magic": 4,
+      "mineral": 0,
+      "electric": 0
+    },
+    "choice": [],
+    "choiceAct": [],
+    "act": {
+      "human": 0,
+      "magic": 1,
+      "gold": 0,
+      "fuel": 0,
+      "nature": 0,
+      "electric": 0,
+      "mineral": 0
+    }
+  },
+  "description": "[降臨]\n出撃時：相手ユニットすべてに③ダメージを与える\n被ダメージ時：相手ユニットすべてに⑤ダメージを与える",
+  "limit": 4,
+  "attack": 1,
+  "defense": 1,
+  "rarity": "通常",
+  "roles": [
+    "アタッカー"
+  ],
+  "id": "card_1782804595225",
+  "generates": {
+    "gold": 0,
+    "magic": 0,
+    "human": 0,
+    "nature": 0,
+    "fuel": 0,
+    "mineral": 0,
+    "electric": 0
+  },
+  "tactSubType": null,
+  "world": "ニュートラル",
+  "flavorText": "神、怪物、何か。",
+  "tags": [
+    "神秘",
+    "神格"
+  ]
+}

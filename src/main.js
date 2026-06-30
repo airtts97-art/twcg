@@ -352,6 +352,9 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782650951674",  // ゴルテナ伯ゾア
   "card_1782776308523",  // 戦術爆撃
   "card_1782777924727",  // 北東軍軍楽隊
+  "card_1782802249493",  // 怒れる摘果神
+  "card_1782803110038",  // つなたい召喚儀式
+  "card_1782804595225",  // 名前のない神
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -1924,6 +1927,11 @@ const abilityEffects = {
   damageAllEnemiesAndPushBack({ game, playerId, ability, card }) {
     return runDamageAllEnemiesAndPushBack(game, playerId, ability, card, 0, 0);
   },
+  damageAllEnemyUnits({ game, playerId, ability, card, source }) {
+    if (ability.requiresDamage && !(source?.damage > 0)) return;
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 相手ユニット全員に${ability.amount || 1}ダメージ`);
+    return runDamageAllEnemyUnits(game, playerId, ability, card, 0);
+  },
   reviveStructFromDump({ game, playerId, card, ability }) {
     const player = game.players[playerId];
     const idx = player.dump.findIndex((c) => c.type === "struct");
@@ -2108,6 +2116,63 @@ const abilityEffects = {
     const result = dealDamageToUnit(game, target, ability.amount, { source: card || source }, { cleanup: true, effectAttack: true });
     log(game, `${target.name}: ${result.damage}ダメージ`);
     if (result.pending) return "pending";
+  },
+  damageHighestEnemyUnitByOwnAtk({ game, playerId, card }) {
+    const opponent = opponentOf(playerId);
+    const enemies = unitsOwnedBy(opponent, game);
+    if (!enemies.length) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 相手ユニットがいない`);
+      return;
+    }
+    let maxAtk = -1;
+    let targets = [];
+    for (const unit of enemies) {
+      const atk = unit.atk || 0;
+      if (atk > maxAtk) {
+        maxAtk = atk;
+        targets = [unit];
+      } else if (atk === maxAtk) {
+        targets.push(unit);
+      }
+    }
+    const target = targets[0];
+    if (!target || maxAtk <= 0) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— ダメージ0`);
+      return;
+    }
+    const result = dealDamageToUnit(game, target, maxAtk, { source: card }, { cleanup: true, effectAttack: true });
+    log(game, `「${target.name}」に${result.damage}ダメージ（ATK=${maxAtk}）`);
+    if (result.pending) return "pending";
+  },
+  restAttacker({ game, source }) {
+    const attacker = source?.attacker;
+    if (!attacker?.instanceId) return;
+    const live = game.board[attacker.row]?.[attacker.col];
+    if (!live || live.instanceId !== attacker.instanceId || live.destroyed) return;
+    live.rested = true;
+    log(game, `「${live.name}」をレスト（被攻撃時）`);
+  },
+  tsunataiRitePlay({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const nameNeedle = ability.nameContains || "神";
+    const eligible = player.hand
+      .map((handCard, handIndex) => ({ handCard, handIndex }))
+      .filter(({ handCard }) => handCard.type === "unit" && matchesCond(handCard, { nameContains: nameNeedle }));
+    if (!eligible.length) {
+      log(game, `${player.name}: 手札に「${nameNeedle}」の名を含むユニットがない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "tsunataiRiteHand",
+      playerId,
+      cardName: card.name,
+      eligible,
+      zeroAtk: Boolean(ability.zeroAtk),
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "tsunataiRiteHand" };
+    game.message = `${card.name}: 出撃させる「${nameNeedle}」ユニットを選んでください`;
+    return "pending";
   },
   grantDestroyGain({ game, playerId, ability, target }) {
     if (!target || target.owner !== playerId) return;
@@ -2534,19 +2599,31 @@ const abilityEffects = {
     triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
     log(game, `${player.name}: ${card.name} summons ${unit.name} from dump`);
   },
-  summonHandUnitToOpponent({ game, playerId, card }) {
+  summonHandUnitToOpponent({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
-    const opponentId = opponentOf(playerId);
-    const opponent = game.players[opponentId];
-    const idx = player.hand.findIndex((c) => c.type === "unit");
-    if (idx < 0) return;
-    const col = findFirstEmptyColInRow(game, opponent.summonRow);
-    if (col < 0) return;
-    const [unitCard] = player.hand.splice(idx, 1);
-    const unit = makeUnit(unitCard.id, opponentId, opponent.summonRow, col, { rested: false });
-    commitUnitToBoard(game, unit, opponent.summonRow, col);
-    triggerAbilities(game, opponentId, unit, "onSummon");
-    log(game, `${game.players[playerId].name}: ${card.name} gives ${unit.name} to opponent`);
+    const opponent = game.players[opponentOf(playerId)];
+    const eligible = player.hand
+      .map((handCard, handIndex) => ({ handCard, handIndex }))
+      .filter(({ handCard }) => handCard.type === "unit");
+    if (!eligible.length) {
+      log(game, `${player.name}: 「${card.name}」— 手札にユニットがない`);
+      return;
+    }
+    if (findFirstEmptyColInRow(game, opponent.summonRow) < 0) {
+      log(game, `${player.name}: 「${card.name}」— 相手の出撃行に空きがない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "sadGirlHandUnitGive",
+      playerId,
+      eligible,
+      sadGirlUnit: card,
+      cardName: card.name,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "sadGirlHandUnitGive" };
+    game.message = "骨の少女: 相手の場に渡す手札ユニットを選ぶ";
+    return "pending";
   },
   kaijuAwaken({ game, playerId, card }) {
     const player = game.players[playerId];
@@ -5417,6 +5494,32 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782777924727") {
     if (!abilities.some((a) => a.trigger === "onActivate" && a.effect === "buffFriendlyUnitsAtk")) {
       abilities.push({ trigger: "onActivate", effect: "buffFriendlyUnitsAtk", amount: 3 });
+    }
+  }
+
+  if (card.id === "card_1782802249493") {
+    if (!abilities.some((a) => a.effect === "damageHighestEnemyUnitByOwnAtk")) {
+      abilities.push({ trigger: "onSummon", effect: "damageHighestEnemyUnitByOwnAtk" });
+    }
+    if (!abilities.some((a) => a.trigger === "onExile" && a.effect === "buffFriendlyUnitsAtk")) {
+      abilities.push({ trigger: "onExile", effect: "buffFriendlyUnitsAtk", amount: 1 });
+    }
+    if (!abilities.some((a) => a.trigger === "onAttacked" && a.effect === "restAttacker")) {
+      abilities.push({ trigger: "onAttacked", effect: "restAttacker" });
+    }
+  }
+
+  if (card.id === "card_1782803110038") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "tsunataiRitePlay", nameContains: "神", zeroAtk: true });
+  }
+
+  if (card.id === "card_1782804595225") {
+    if (!abilities.some((a) => a.trigger === "onSummon" && a.effect === "damageAllEnemyUnits" && a.amount === 3)) {
+      abilities.push({ trigger: "onSummon", effect: "damageAllEnemyUnits", amount: 3 });
+    }
+    if (!abilities.some((a) => a.trigger === "onDamageReceived" && a.effect === "damageAllEnemyUnits" && a.amount === 5)) {
+      abilities.push({ trigger: "onDamageReceived", effect: "damageAllEnemyUnits", amount: 5, requiresDamage: true });
     }
   }
 
@@ -8650,6 +8753,13 @@ function resumePendingAttackContinuation() {
     }
     const defender = state.board[cont.defenderRow]?.[cont.defenderCol];
     if (!defender || defender.owner === unit.owner) return;
+    if (!cont.defenderAttackedDone) {
+      triggerDefenderAttackedAbilities(defender, unit);
+      if (state.pendingChoice || state.pendingTarget) {
+        state.pendingAttackContinuation = { ...cont, defenderAttackedDone: true };
+        return;
+      }
+    }
     continueUnitAttackAfterOnAttack(unit, defender, { useCharge: cont.useCharge || false });
     return;
   }
@@ -9227,6 +9337,88 @@ function millOpponentDeckCards(game, playerId, amount = 1) {
   }
 }
 
+function applySadGirlHandUnitGive(game, playerId, sadGirlUnit, handIndex) {
+  const player = game.players[playerId];
+  const opponentId = opponentOf(playerId);
+  const opponent = game.players[opponentId];
+  const handCard = player.hand[handIndex];
+  if (!handCard || handCard.type !== "unit") return false;
+  const col = findFirstEmptyColInRow(game, opponent.summonRow);
+  if (col < 0) return false;
+  const [unitCard] = player.hand.splice(handIndex, 1);
+  const unit = makeUnit(unitCard.id, opponentId, opponent.summonRow, col, { rested: false });
+  commitUnitToBoard(game, unit, opponent.summonRow, col);
+  triggerAbilities(game, opponentId, unit, "onSummon");
+  log(game, `${player.name}: 「${sadGirlUnit.name}」— 手札の「${unit.name}」を相手の場に渡した`);
+  return true;
+}
+
+function resolveSadGirlHandUnitGive(handIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "sadGirlHandUnitGive") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  if (!pending.eligible.some(({ handIndex: idx }) => idx === handIndex)) return false;
+  if (!applySadGirlHandUnitGive(state, pending.playerId, pending.sadGirlUnit, handIndex)) return false;
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function applyTsunataiRiteSummon(game, playerId, handIndex, { zeroAtk = false, cardName = "" } = {}) {
+  const player = game.players[playerId];
+  const targetCard = player.hand[handIndex];
+  if (!targetCard || targetCard.type !== "unit" || !(targetCard.name || "").includes("神")) return false;
+  if (!canPayForCard(player, targetCard.cost || {}, targetCard)) {
+    game.message = "資源が不足しています。";
+    return false;
+  }
+  if (!payForCard(player, targetCard.cost || {}, targetCard)) return false;
+  const placement = findSummonPlacement(game, playerId, targetCard);
+  if (!placement) {
+    game.message = "配置できるマスがありません。";
+    return false;
+  }
+  const { row, col } = placement;
+  player.hand.splice(handIndex, 1);
+  const unit = makeUnit(targetCard.id, playerId, row, col, { rested: false });
+  if (zeroAtk) unit.atk = 0;
+  commitUnitToBoard(game, unit, row, col);
+  triggerAbilities(game, playerId, unit, "onSummon");
+  log(
+    game,
+    `${player.name}: 「${cardName || "つなたい召喚儀式"}」で「${targetCard.name}」を出撃${zeroAtk ? "（ATK0）" : ""}`,
+  );
+  refreshContinuousEffects(game);
+  return true;
+}
+
+function resolveTsunataiRiteChoice(handIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "tsunataiRiteHand") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  if (!pending.eligible.some(({ handIndex: idx }) => idx === handIndex)) return false;
+  if (!applyTsunataiRiteSummon(state, pending.playerId, handIndex, {
+    zeroAtk: pending.zeroAtk,
+    cardName: pending.cardName,
+  })) {
+    render();
+    return false;
+  }
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function toggleColorfulDiscardChoice(handIndex) {
   const pending = state.pendingChoice;
   if (pending?.type !== "colorfulDiscard" && pending?.type !== "discardHandToMill") return;
@@ -9683,6 +9875,7 @@ function resolveKaijuAwakenChoice() {
     return false;
   }
   state.board[unit.row][unit.col] = null;
+  triggerAbilities(state, unit.owner, unit, "onExile");
   player.exileZone.push(stripRuntime(unit));
   player.exileZone.push(player.structs.splice(pending.selectedStructIndex, 1)[0]);
   player.exileZone.push(player.hand.splice(pending.selectedHandIndex, 1)[0]);
@@ -10773,6 +10966,11 @@ function playTactFromHand(handIndex) {
       const condLabel = playCond.tag ? `[${playCond.tag}]` : `「${playCond.nameContains}」`;
       if (!hasMatch) return fail(`${card.name}: 手札に${condLabel}ユニットが必要です。`);
     }
+    if (ability.trigger === "onPlay" && ability.effect === "tsunataiRitePlay") {
+      const nameNeedle = ability.nameContains || "神";
+      const hasTarget = player.hand.some((c) => c !== card && c.type === "unit" && matchesCond(c, { nameContains: nameNeedle }));
+      if (!hasTarget) return fail(`${card.name}: 手札に「${nameNeedle}」の名を含むユニットが必要です。`);
+    }
     if (ability.trigger === "onPlay" && ability.effect === "reviveFromExile") {
       const hasExileUnit = ["p1", "p2"].some((pid) =>
         (state.players[pid].exileZone || []).some((c) => c.type === "unit"));
@@ -10955,6 +11153,7 @@ function otherworldKinPureHumanCandidates(game, playerId) {
 function exileBoardUnitToZone(game, unit) {
   if (!unit) return;
   game.board[unit.row][unit.col] = null;
+  triggerAbilities(game, unit.owner, unit, "onExile");
   game.players[unit.owner].exileZone.push(stripRuntime(unit));
   log(game, `「${unit.name}」を除外`);
 }
@@ -11849,6 +12048,20 @@ function executeUnitAttack(unit, defender, target, { useCharge = false } = {}) {
     render();
     return true;
   }
+  triggerDefenderAttackedAbilities(defender, unit);
+  if (state.pendingChoice || state.pendingTarget) {
+    state.pendingAttackContinuation = {
+      preDamage: true,
+      attackerRow: unit.row,
+      attackerCol: unit.col,
+      defenderRow: defender.row,
+      defenderCol: defender.col,
+      useCharge,
+      defenderAttackedDone: true,
+    };
+    render();
+    return true;
+  }
   return continueUnitAttackAfterOnAttack(unit, defender, { useCharge });
 }
 
@@ -11903,6 +12116,22 @@ function triggerAttackAbilities(unit, attackTarget = null) {
         card: unit,
         ability,
         source: { zone: "board", attackTarget: attackTarget || null },
+      });
+    }
+  }
+  processEffectQueue(state);
+}
+
+function triggerDefenderAttackedAbilities(defender, attacker) {
+  if (!defender || !attacker) return;
+  revealAmbushUnit(state, defender);
+  for (const ability of defender.abilities || []) {
+    if (ability.trigger === "onAttacked") {
+      state.effectQueue.push({
+        playerId: defender.owner,
+        card: defender,
+        ability,
+        source: { zone: "board", attacker },
       });
     }
   }
@@ -12294,6 +12523,23 @@ function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
   return { damage, pending };
 }
 
+function runDamageAllEnemyUnits(game, playerId, ability, card, startIndex = 0) {
+  const opponent = opponentOf(playerId);
+  const units = unitsOwnedBy(opponent, game);
+  for (let i = startIndex; i < units.length; i += 1) {
+    const unit = units[i];
+    if (!unit || unit.currentHp <= 0) continue;
+    const result = dealDamageToUnit(game, unit, ability.amount || 1, { source: card }, { cleanup: false, effectAttack: true });
+    if (result.pending) {
+      game.pendingDamageBatch = { kind: "damageAllEnemyUnits", playerId, ability, card, startIndex: i + 1 };
+      return "pending";
+    }
+  }
+  game.pendingDamageBatch = null;
+  clearEffectResolutionIndestructible(game);
+  cleanupAllDestroyed(card, game);
+}
+
 function runDamageAllEnemiesAndPushBack(game, playerId, ability, card, startIndex = 0, pushed = 0) {
   const opponent = opponentOf(playerId);
   const player = game.players[opponent];
@@ -12339,6 +12585,19 @@ function resumePendingDamageBatch(game = state) {
       batch.card,
       batch.startIndex,
       batch.pushed
+    );
+    if (result === "pending") return;
+    game.pendingDamageBatch = null;
+    processEffectQueue(game);
+    return;
+  }
+  if (batch.kind === "damageAllEnemyUnits") {
+    const result = runDamageAllEnemyUnits(
+      game,
+      batch.playerId,
+      batch.ability,
+      batch.card,
+      batch.startIndex
     );
     if (result === "pending") return;
     game.pendingDamageBatch = null;
@@ -14570,6 +14829,8 @@ const HAND_SELECTION_CHOICE_TYPES = new Set([
   "coreStructStartDiscard",
   "colorfulDiscard",
   "discardHandToMill",
+  "sadGirlHandUnitGive",
+  "tsunataiRiteHand",
   "lifeCounterPayment",
 ]);
 
@@ -15048,6 +15309,8 @@ function drawChoiceOverlay() {
   else if (pending.type === "fieldExperiment") drawFieldExperimentPanel(pending);
   else if (pending.type === "colorfulDiscard" || pending.type === "discardHandToMill") drawColorfulDiscardPanel(pending);
   else if (pending.type === "colorfulRemapCost") drawColorfulRemapPanel(pending);
+  else if (pending.type === "sadGirlHandUnitGive") drawSadGirlHandUnitGivePanel(pending);
+  else if (pending.type === "tsunataiRiteHand") drawTsunataiRitePanel(pending);
   else if (pending.type === "sheriffRemoveKeywords") drawSheriffRemoveKeywordsPanel(pending);
   else if (pending.type === "imposterTact") drawImposterTactPanel(pending);
   else if (pending.type === "otherworldKin") drawOtherworldKinPanel(pending);
@@ -15354,6 +15617,68 @@ function drawColorfulRemapPanel(pending) {
     });
   });
   drawButton(x + 28, y + h - 48, 120, 32, "スキップ", resolveColorfulRemapSkip);
+}
+
+function drawSadGirlHandUnitGivePanel(pending) {
+  const canSeeHand = canViewerSeeChoiceHand(pending);
+  const isController = canControlChoicePlayer(pending.playerId);
+  const x = 388, y = 180, w = 664, h = 380;
+  drawChoicePanelBase(x, y, w, h, "rgba(140,60,100,0.75)", "#e06090");
+  ctx.fillStyle = "#f0c8d8";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 相手の場に渡す手札ユニットを選ぶ`, x + 28, y + 34);
+  ctx.fillStyle = "rgba(240,200,210,0.85)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("選んだユニットは相手のコントロールで相手の出撃行に召喚されます。", x + 28, y + 56, w - 56);
+  if (!canSeeHand) {
+    ctx.fillText("相手の手札内容は見えません。", x + 28, y + 74);
+  }
+  pending.eligible.forEach(({ handCard, handIndex }, i) => {
+    const cx = x + 28 + (i % 4) * 154;
+    const cy = y + 88 + Math.floor(i / 4) * 150;
+    if (canSeeHand) {
+      drawSelectableChoiceCard(cx, cy, 140, 196, handCard, {
+        label: handCard.name,
+        onClick: isController ? () => resolveSadGirlHandUnitGive(handIndex) : null,
+      });
+    } else {
+      drawCardBack(cx, cy, 140, 196);
+      if (isController) addHit(cx, cy, 140, 196, () => resolveSadGirlHandUnitGive(handIndex));
+    }
+  });
+}
+
+function drawTsunataiRitePanel(pending) {
+  const canSeeHand = canViewerSeeChoiceHand(pending);
+  const isController = canControlChoicePlayer(pending.playerId);
+  const x = 388, y = 180, w = 664, h = 380;
+  drawChoicePanelBase(x, y, w, h, "rgba(120,90,40,0.75)", "#c0a040");
+  ctx.fillStyle = "#f0e0b0";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 「神」の名を含む手札ユニットを選ぶ`, x + 28, y + 34);
+  ctx.fillStyle = "rgba(240,220,170,0.85)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("選んだユニットのプレイコストを支払って出撃。ATKは0になります。", x + 28, y + 56, w - 56);
+  if (!canSeeHand) {
+    ctx.fillText("相手の手札内容は見えません。", x + 28, y + 74);
+  }
+  pending.eligible.forEach(({ handCard, handIndex }, i) => {
+    const cx = x + 28 + (i % 4) * 154;
+    const cy = y + 88 + Math.floor(i / 4) * 150;
+    const costLabel = Object.entries(handCard.cost || {})
+      .filter(([, amount]) => amount > 0)
+      .map(([resource, amount]) => `${RESOURCE_LABELS[resource] || resource}${amount}`)
+      .join("");
+    if (canSeeHand) {
+      drawSelectableChoiceCard(cx, cy, 140, 196, handCard, {
+        label: `${handCard.name}${costLabel ? `\n(${costLabel})` : ""}`,
+        onClick: isController ? () => resolveTsunataiRiteChoice(handIndex) : null,
+      });
+    } else {
+      drawCardBack(cx, cy, 140, 196);
+      if (isController) addHit(cx, cy, 140, 196, () => resolveTsunataiRiteChoice(handIndex));
+    }
+  });
 }
 
 function drawSheriffRemoveKeywordsPanel(pending) {
@@ -18005,6 +18330,8 @@ const testing = {
   resolveFieldExperimentHandUnit,
   resolveFieldExperimentBabelTarget,
   resolveFieldExperimentSkip,
+  resolveSadGirlHandUnitGive,
+  resolveTsunataiRiteChoice,
   toggleDestroyChoice,
   resolveDestroyChoice,
   toggleKaijuAwakenChoice,

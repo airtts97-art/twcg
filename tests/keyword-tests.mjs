@@ -1345,6 +1345,170 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const fruitGodCard = api.cardCatalog.main["card_1782802249493"];
+  const fruitGodAbilities = fruitGodCard?.abilities || [];
+  out.push({
+    name: "wrathful_fruit_god_parsed",
+    summary: {
+      found: fruitGodAbilities.some((a) => a.effect === "damageHighestEnemyUnitByOwnAtk"),
+      onExileBuff: fruitGodAbilities.some((a) => a.trigger === "onExile" && a.effect === "buffFriendlyUnitsAtk"),
+      onAttackedRest: fruitGodAbilities.some((a) => a.trigger === "onAttacked" && a.effect === "restAttacker"),
+      effectPenetrate: (fruitGodCard?.keywords || []).some((k) => k.id === "effectPenetrate"),
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.placeUnit("card_1753664991902", "p2", 1, 0);
+  api.testing.placeUnit("card_1753664991902", "p2", 1, 1);
+  api.state.board[1][0].atk = 2;
+  api.state.board[1][1].atk = 7;
+  const highHpBefore = api.state.board[1][1].currentHp;
+  const lowHpBefore = api.state.board[1][0].currentHp;
+  const fruitGodUnit = api.testing.placeUnit("card_1782802249493", "p1", 2, 2);
+  for (const ability of fruitGodUnit.abilities || []) {
+    if (ability.trigger === "onSummon") {
+      api.state.effectQueue.push({ playerId: "p1", card: fruitGodUnit, ability, source: {} });
+    }
+  }
+  api.testing.processEffectQueue();
+  out.push({
+    name: "wrathful_fruit_god_on_summon_damage",
+    summary: {
+      highHpBefore,
+      highHpAfter: api.state.board[1][1]?.currentHp,
+      lowHpBefore,
+      lowHpAfter: api.state.board[1][0]?.currentHp,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.testing.placeUnit("card_1753664991902", "p1", 2, 0);
+  const wfgAllyAtkBefore = api.state.board[2][0].atk;
+  const exiledGod = api.testing.placeUnit("card_1782802249493", "p1", 2, 1);
+  api.state.board[2][1] = null;
+  for (const ability of exiledGod.abilities || []) {
+    if (ability.trigger === "onExile") {
+      api.state.effectQueue.push({ playerId: "p1", card: exiledGod, ability, source: {} });
+    }
+  }
+  api.testing.processEffectQueue();
+  out.push({
+    name: "wrathful_fruit_god_on_exile_buff",
+    summary: {
+      allyAtkBefore: wfgAllyAtkBefore,
+      allyAtkAfter: api.state.board[2][0]?.atk,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { people: 10, nature: 10, funds: 10, ore: 10, fuel: 10, electric: 10, magic: 10 });
+  api.testing.placeUnit("card_1782802249493", "p2", 1, 1);
+  api.testing.placeUnit("card_1753664991902", "p1", 2, 1, { rested: false });
+  api.testing.selectUnit(2, 1);
+  api.testing.attack({ row: 1, col: 1 });
+  out.push({
+    name: "wrathful_fruit_god_on_attacked_rest",
+    summary: {
+      attackerRested: api.state.board[2][1]?.rested === true,
+    },
+  });
+
+  const tsunataiCard = api.cardCatalog.main["card_1782803110038"];
+  out.push({
+    name: "tsunatai_rite_parsed",
+    summary: {
+      found: (tsunataiCard?.abilities || []).some((a) => a.effect === "tsunataiRitePlay"),
+      zeroAtk: (tsunataiCard?.abilities || []).some((a) => a.effect === "tsunataiRitePlay" && a.zeroAtk),
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { people: 10, nature: 10, funds: 10, ore: 10, fuel: 10, electric: 10, magic: 10 });
+  const tsunGodHandIdx = api.testing.addHandCard("p1", "card_1782802249493");
+  const tsunTactHandIdx = api.testing.addHandCard("p1", "card_1782803110038");
+  api.testing.playTactFromHand(tsunTactHandIdx);
+  if (api.state.pendingChoice?.type === "tsunataiRiteHand") {
+    api.testing.resolveTsunataiRiteChoice(tsunGodHandIdx);
+  }
+  const summonedGod = api.state.board.flat().find((u) => u?.id === "card_1782802249493");
+  out.push({
+    name: "tsunatai_rite_summon_zero_atk",
+    summary: {
+      choicePending: api.state.pendingChoice?.type === "tsunataiRiteHand",
+      summoned: !!summonedGod,
+      summonedAtk: summonedGod?.atk,
+      fuelSpent: 10 - (api.state.players.p1.resources.fuel || 0),
+      magicSpent: 10 - (api.state.players.p1.resources.magic || 0),
+    },
+  });
+
+  const namelessGodCard = api.cardCatalog.main["card_1782804595225"];
+  out.push({
+    name: "nameless_god_parsed",
+    summary: {
+      onSummonAoE: (namelessGodCard?.abilities || []).some(
+        (a) => a.trigger === "onSummon" && a.effect === "damageAllEnemyUnits" && a.amount === 3,
+      ),
+      onDamagedAoE: (namelessGodCard?.abilities || []).some(
+        (a) => a.trigger === "onDamageReceived" && a.effect === "damageAllEnemyUnits" && a.amount === 5,
+      ),
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.placeUnit("card_1753664991902", "p2", 1, 0);
+  api.testing.placeUnit("card_1753664991902", "p2", 1, 1);
+  const ngE1HpBefore = api.state.board[1][0].currentHp;
+  const ngE2HpBefore = api.state.board[1][1].currentHp;
+  const namelessGod = api.testing.placeUnit("card_1782804595225", "p1", 2, 2);
+  for (const ability of namelessGod.abilities || []) {
+    if (ability.trigger === "onSummon" && ability.effect === "damageAllEnemyUnits") {
+      api.state.effectQueue.push({ playerId: "p1", card: namelessGod, ability, source: {} });
+    }
+  }
+  api.testing.processEffectQueue();
+  out.push({
+    name: "nameless_god_on_summon_aoe",
+    summary: {
+      ngE1HpBefore,
+      ngE1HpAfter: api.state.board[1][0]?.currentHp,
+      ngE2HpBefore,
+      ngE2HpAfter: api.state.board[1][1]?.currentHp,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.testing.placeUnit("card_1753664991902", "p2", 1, 0);
+  api.testing.placeUnit("card_1753664991902", "p2", 1, 1);
+  const ngDamE1Before = api.state.board[1][0].currentHp;
+  const ngDamE2Before = api.state.board[1][1].currentHp;
+  const damagedGod = api.testing.placeUnit("card_1782804595225", "p1", 2, 2);
+  for (const ability of damagedGod.abilities || []) {
+    if (ability.trigger === "onDamageReceived" && ability.effect === "damageAllEnemyUnits") {
+      api.state.effectQueue.push({ playerId: "p1", card: damagedGod, ability, source: { damage: 1 } });
+    }
+  }
+  api.testing.processEffectQueue();
+  out.push({
+    name: "nameless_god_on_damaged_aoe",
+    summary: {
+      ngDamE1Before,
+      ngDamE1HpAfter: api.state.board[1][0]?.currentHp,
+      ngDamE2Before,
+      ngDamE2HpAfter: api.state.board[1][1]?.currentHp,
+    },
+  });
+
   const kihaCard = api.cardCatalog.structs["card_1782681464783"];
   const kihaAbility = (kihaCard?.abilities || []).find((a) => a.effect === "structPayProduce");
   out.push({
@@ -2464,5 +2628,23 @@ assert(byName.military_band_atk_buff.bandRested === true, "北東軍軍楽隊 sh
 assert(byName.military_band_atk_buff.allyAtkAfter === byName.military_band_atk_buff.allyAtkBefore + 3, "北東軍軍楽隊 should buff all friendly units");
 assert(byName.ambush_blocks_effect_targeting.hpAfter === byName.ambush_blocks_effect_targeting.hpBefore, "潜伏 should block effect targeting until revealed");
 assert(byName.ambush_blocks_effect_targeting.stillHidden === true, "潜伏 unit should stay hidden when targeting blocked");
+assert(byName.wrathful_fruit_god_parsed.found === true, "怒れる摘果神 should parse onSummon highest-ATK damage");
+assert(byName.wrathful_fruit_god_parsed.onExileBuff === true, "怒れる摘果神 should parse onExile ATK buff");
+assert(byName.wrathful_fruit_god_parsed.onAttackedRest === true, "怒れる摘果神 should parse onAttacked rest");
+assert(byName.wrathful_fruit_god_on_summon_damage.highHpAfter === byName.wrathful_fruit_god_on_summon_damage.highHpBefore - 7, "怒れる摘果神 should damage highest-ATK enemy by its ATK");
+assert(byName.wrathful_fruit_god_on_summon_damage.lowHpAfter === byName.wrathful_fruit_god_on_summon_damage.lowHpBefore, "怒れる摘果神 should not damage lower-ATK enemy");
+assert(byName.wrathful_fruit_god_on_exile_buff.allyAtkAfter === byName.wrathful_fruit_god_on_exile_buff.allyAtkBefore + 1, "怒れる摘果神 exile should buff ally ATK");
+assert(byName.wrathful_fruit_god_on_attacked_rest.attackerRested === true, "怒れる摘果神 should rest attacker when attacked");
+assert(byName.tsunatai_rite_parsed.found === true, "つなたい召喚儀式 should parse tsunataiRitePlay");
+assert(byName.tsunatai_rite_summon_zero_atk.summoned === true, "つなたい召喚儀式 should summon chosen god unit");
+assert(byName.tsunatai_rite_summon_zero_atk.summonedAtk === 0, "つなたい召喚儀式 should set summoned unit ATK to 0");
+assert(byName.tsunatai_rite_summon_zero_atk.fuelSpent === 3, "つなたい召喚儀式 should pay summoned unit fuel cost");
+assert(byName.tsunatai_rite_summon_zero_atk.magicSpent === 1, "つなたい召喚儀式 should pay summoned unit magic cost");
+assert(byName.nameless_god_parsed.onSummonAoE === true, "名前のない神 should parse onSummon AoE damage");
+assert(byName.nameless_god_parsed.onDamagedAoE === true, "名前のない神 should parse onDamageReceived AoE damage");
+assert(byName.nameless_god_on_summon_aoe.ngE1HpAfter === byName.nameless_god_on_summon_aoe.ngE1HpBefore - 3, "名前のない神 onSummon should deal 3 to all enemies");
+assert(byName.nameless_god_on_summon_aoe.ngE2HpAfter === byName.nameless_god_on_summon_aoe.ngE2HpBefore - 3, "名前のない神 onSummon should hit every enemy");
+assert(byName.nameless_god_on_damaged_aoe.ngDamE1HpAfter === byName.nameless_god_on_damaged_aoe.ngDamE1Before - 5, "名前のない神 onDamageReceived should deal 5 to all enemies");
+assert(byName.nameless_god_on_damaged_aoe.ngDamE2HpAfter === byName.nameless_god_on_damaged_aoe.ngDamE2Before - 5, "名前のない神 onDamageReceived should hit every enemy");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));

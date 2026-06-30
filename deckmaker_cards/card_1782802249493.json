@@ -1,0 +1,53 @@
+{
+  "tags": [
+    "神格",
+    "神秘.伝説",
+    "降臨"
+  ],
+  "flavorText": "絶対的強者から優先的に滅ぼされ、最後には何も残らない",
+  "world": "ニュートラル",
+  "tactSubType": null,
+  "generates": {
+    "gold": 0,
+    "magic": 0,
+    "human": 0,
+    "nature": 0,
+    "fuel": 0,
+    "mineral": 0,
+    "electric": 0
+  },
+  "id": "card_1782802249493",
+  "roles": [
+    "防衛"
+  ],
+  "rarity": "神話",
+  "defense": 6,
+  "attack": 6,
+  "limit": 4,
+  "description": "[神話]　[降臨]\n[効果貫通④]\n出撃時：相手の最もA  T  Kの高いユニットにそのA  T  Kだけダメージを与える。\n除外時：自分ユニット全員がA    T       K+①の修正を得る\n被攻撃時：攻撃してきたユニットをレストする",
+  "costs": {
+    "act": {
+      "mineral": 0,
+      "electric": 0,
+      "gold": 0,
+      "human": 0,
+      "magic": 1,
+      "nature": 0,
+      "fuel": 3
+    },
+    "choiceAct": [],
+    "choice": [],
+    "play": {
+      "mineral": 0,
+      "electric": 0,
+      "gold": 0,
+      "human": 0,
+      "magic": 1,
+      "nature": 0,
+      "fuel": 3
+    }
+  },
+  "imageUrl": "assets/cards/card_1782802249493.jpeg",
+  "name": "怒れる摘果神",
+  "type": "ユニット"
+}

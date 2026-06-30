@@ -1,0 +1,41 @@
+{
+  "costs": {
+    "act": {},
+    "choiceAct": [],
+    "play": {
+      "mineral": 0,
+      "electric": 0,
+      "gold": 0,
+      "human": 0,
+      "magic": 0,
+      "nature": 0,
+      "fuel": 0
+    },
+    "choice": []
+  },
+  "imageUrl": "assets/cards/card_1782803110038.jpeg",
+  "name": "つなたい召喚儀式",
+  "type": "タクト",
+  "description": "手札から「神」と名の付くユニットをコストを支払い出撃する。\nそのカードのATKは０になる。",
+  "id": "card_1782803110038",
+  "roles": [
+    "儀式"
+  ],
+  "rarity": "通常",
+  "limit": 4,
+  "tags": [
+    "儀式"
+  ],
+  "flavorText": "何がでるのかわからない意味不明な儀式",
+  "tactSubType": "通常",
+  "world": "ニュートラル",
+  "generates": {
+    "electric": 0,
+    "mineral": 0,
+    "fuel": 0,
+    "nature": 0,
+    "human": 0,
+    "magic": 0,
+    "gold": 0
+  }
+}
