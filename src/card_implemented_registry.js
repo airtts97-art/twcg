@@ -71,6 +71,8 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782741779575", // 虚-第四開発部：野外実験課
   "card_1782738082895", // E Z B-236F 現実支援団
   "card_1782736701501", // E X b-58 エクスペクトマシン
+  "card_1782776308523", // 戦術爆撃
+  "card_1782777924727", // 北東軍軍楽隊
 ]);
 
 export function isImplementedCard(cardId) {

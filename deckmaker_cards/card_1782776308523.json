@@ -1,0 +1,42 @@
+{
+  "limit": 4,
+  "rarity": "通常",
+  "generates": {
+    "electric": 0,
+    "nature": 0,
+    "magic": 0,
+    "human": 0,
+    "gold": 0,
+    "fuel": 0,
+    "mineral": 0
+  },
+  "tactSubType": "永続",
+  "name": "戦術爆撃",
+  "type": "タクト",
+  "roles": [],
+  "imageUrl": "assets/cards/card_1782776308523.jpeg",
+  "costs": {
+    "play": {
+      "electric": 0,
+      "magic": 0,
+      "nature": 0,
+      "human": 2,
+      "gold": 2,
+      "fuel": 2,
+      "mineral": 2
+    },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "flavorText": "汎用性のある爆撃機から投下される無数の爆弾は敵兵に直接降り注ぐか\n軍需工場を破壊するか…無差別に民間人を爆撃する。",
+  "tags": [
+    "航空機",
+    "戦術",
+    "破壊",
+    "永続"
+  ],
+  "id": "card_1782776308523",
+  "description": "以下の条件のうちいずれか一つを選ぶ\n燃③を支払い、レストする：ユニット１体を指定し１０ダメージ与え、レストさせる\n鉱③燃③を支払い、レストする：相手のストラクトを２枚選び、次の自分のターン終了時までレストさせる",
+  "world": "ニュートラル"
+}

@@ -1217,6 +1217,134 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const tacticalBombCard = api.cardCatalog.main["card_1782776308523"];
+  const tacticalBombAbility = (tacticalBombCard?.abilities || []).find((a) => a.effect === "tacticalBombardmentPlay");
+  out.push({
+    name: "tactical_bombardment_parsed",
+    summary: {
+      found: !!tacticalBombAbility,
+      permanentTact: tacticalBombCard?.tactSubType === "永続" || tacticalBombCard?.tags?.includes("永続"),
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { fuel: 10, ore: 10, people: 0, nature: 0, funds: 10, electric: 0, magic: 0 });
+  api.testing.setResources("p2", { fuel: 0, ore: 0, people: 0, nature: 0, funds: 0, electric: 0, magic: 0 });
+  api.testing.placeUnit("militia", "p2", 1, 0, { rested: false });
+  const enemyHpBefore = api.state.board[1][0].currentHp;
+  const tactHandIdx = api.testing.addHandCard("p1", "card_1782776308523");
+  api.testing.playTactFromHand(tactHandIdx);
+  const tbTactIdx = api.state.players.p1.tactZone.findIndex((c) => c.id === "card_1782776308523");
+  const fuelBeforeBomb = api.state.players.p1.resources.fuel;
+  if (tbTactIdx >= 0) api.testing.activatePermanentTact(tbTactIdx);
+  const modePending = api.state.pendingChoice?.type === "tacticalBombardment" && api.state.pendingChoice?.step === "chooseMode";
+  if (modePending) api.testing.resolveTacticalBombardmentMode("unitBomb");
+  const targetPending = api.state.pendingTarget?.ability?.effect === "tacticalBombUnitStrike";
+  if (targetPending) api.testing.resolveTarget(1, 0);
+  const enemyAfter = api.state.board[1][0];
+  out.push({
+    name: "tactical_bombardment_unit_mode",
+    summary: {
+      modePending,
+      targetPending,
+      fuelSpent: fuelBeforeBomb - api.state.players.p1.resources.fuel,
+      enemyHpBefore,
+      enemyHpAfter: enemyAfter?.currentHp,
+      enemyRested: enemyAfter?.rested,
+      tactRested: api.state.players.p1.tactZone[tbTactIdx]?.rested,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { fuel: 10, ore: 10, people: 0, nature: 0, funds: 10, electric: 0, magic: 0 });
+  api.state.players.p2.structs = [{
+    id: "card_1755656642598",
+    name: "荒涼宮殿",
+    type: "struct",
+    rested: false,
+  }, {
+    id: "card_1755654825932",
+    name: "寂滅の地",
+    type: "struct",
+    rested: false,
+  }];
+  const tactHandIdx2 = api.testing.addHandCard("p1", "card_1782776308523");
+  api.testing.playTactFromHand(tactHandIdx2);
+  const tbStructTactIdx = api.state.players.p1.tactZone.findIndex((c) => c.id === "card_1782776308523");
+  const oreBefore = api.state.players.p1.resources.ore;
+  const fuelBeforeStruct = api.state.players.p1.resources.fuel;
+  if (tbStructTactIdx >= 0) api.testing.activatePermanentTact(tbStructTactIdx);
+  if (api.state.pendingChoice?.step === "chooseMode") api.testing.resolveTacticalBombardmentMode("structRest");
+  if (api.state.pendingChoice?.step === "pickStructs") api.testing.resolveTacticalBombStructChoice(0);
+  out.push({
+    name: "tactical_bombardment_struct_rest",
+    summary: {
+      oreSpent: oreBefore - api.state.players.p1.resources.ore,
+      fuelSpent: fuelBeforeStruct - api.state.players.p1.resources.fuel,
+      struct0Rested: api.state.players.p2.structs[0]?.rested,
+      struct0Lock: api.state.players.p2.structs[0]?.tacticalRestBy,
+    },
+  });
+
+  const militaryBandCard = api.cardCatalog.main["card_1782777924727"];
+  const bandActivate = (militaryBandCard?.abilities || []).find(
+    (a) => a.trigger === "onActivate" && a.effect === "buffFriendlyUnitsAtk",
+  );
+  out.push({
+    name: "military_band_parsed",
+    summary: {
+      found: !!bandActivate,
+      amount: bandActivate?.amount,
+      hasAmbushText: (militaryBandCard?.description || "").includes("潜伏"),
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { fuel: 0, ore: 0, people: 0, nature: 0, funds: 10, electric: 0, magic: 0 });
+  const band = api.testing.placeUnit("card_1782777924727", "p1", 2, 2, { rested: false });
+  const ally = api.testing.placeUnit("militia", "p1", 2, 0, { rested: false });
+  const allyAtkBefore = ally.atk;
+  api.testing.selectUnit(2, 2);
+  api.testing.activateSelectedUnit();
+  const allyAfter = api.state.board[2][0];
+  out.push({
+    name: "military_band_atk_buff",
+    summary: {
+      bandRested: api.state.board[2][2]?.rested,
+      ambushKeyword: Boolean(band?.keywords?.some?.((k) => k?.type === "ambush" || k === "ambush")),
+      allyAtkBefore,
+      allyAtkAfter: allyAfter?.atk,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { fuel: 10, ore: 0, people: 0, nature: 0, funds: 10, electric: 0, magic: 0 });
+  api.testing.placeUnit("card_1782777924727", "p2", 1, 0, { rested: false });
+  const ambushHpBefore = api.state.board[1][0].currentHp;
+  const tactHandIdx3 = api.testing.addHandCard("p1", "card_1782776308523");
+  api.testing.playTactFromHand(tactHandIdx3);
+  const tbAmbushTactIdx = api.state.players.p1.tactZone.findIndex((c) => c.id === "card_1782776308523");
+  if (tbAmbushTactIdx >= 0) api.testing.activatePermanentTact(tbAmbushTactIdx);
+  if (api.state.pendingChoice?.step === "chooseMode") api.testing.resolveTacticalBombardmentMode("unitBomb");
+  if (api.state.pendingTarget) api.testing.resolveTarget(1, 0);
+  out.push({
+    name: "ambush_blocks_effect_targeting",
+    summary: {
+      hpBefore: ambushHpBefore,
+      hpAfter: api.state.board[1][0]?.currentHp,
+      stillHidden: !api.state.board[1][0]?.ambushRevealed,
+      pendingTargetCleared: !api.state.pendingTarget,
+    },
+  });
+
   const kihaCard = api.cardCatalog.structs["card_1782681464783"];
   const kihaAbility = (kihaCard?.abilities || []).find((a) => a.effect === "structPayProduce");
   out.push({
@@ -2319,5 +2447,22 @@ assert(byName.mining_draw_pays_optional_ore.handGain === 3, "採掘 should draw 
 assert(byName.mining_draw_pays_optional_ore.oreAfter === 3, "採掘 should only spend chosen ore amount");
 assert(byName.mining_draw_without_ore.pending !== true, "採掘 should resolve immediately when ore is 0");
 assert(byName.mining_draw_without_ore.handGain === 1, "採掘 should draw 1 card when no ore is paid");
+
+assert(byName.tactical_bombardment_parsed.found === true, "戦術爆撃 should parse tacticalBombardmentPlay");
+assert(byName.tactical_bombardment_unit_mode.modePending === true, "戦術爆撃 activate should open mode choice");
+assert(byName.tactical_bombardment_unit_mode.targetPending === true, "戦術爆撃 unit mode should open target selection");
+assert(byName.tactical_bombardment_unit_mode.fuelSpent === 3, "戦術爆撃 unit mode should spend 3 fuel");
+assert(byName.tactical_bombardment_unit_mode.enemyHpAfter === byName.tactical_bombardment_unit_mode.enemyHpBefore - 10, "戦術爆撃 should deal 10 damage");
+assert(byName.tactical_bombardment_unit_mode.enemyRested === true, "戦術爆撃 should rest damaged enemy unit");
+assert(byName.tactical_bombardment_struct_rest.oreSpent === 3, "戦術爆撃 struct mode should spend 3 ore");
+assert(byName.tactical_bombardment_struct_rest.fuelSpent === 3, "戦術爆撃 struct mode should spend 3 fuel");
+assert(byName.tactical_bombardment_struct_rest.struct0Rested === true, "戦術爆撃 should rest chosen enemy struct");
+assert(byName.tactical_bombardment_struct_rest.struct0Lock === "p1", "戦術爆撃 should lock struct rest until caster turn end");
+assert(byName.military_band_parsed.found === true, "北東軍軍楽隊 should parse buffFriendlyUnitsAtk activate");
+assert(byName.military_band_parsed.amount === 3, "北東軍軍楽隊 should buff +3 ATK");
+assert(byName.military_band_atk_buff.bandRested === true, "北東軍軍楽隊 should rest on activate");
+assert(byName.military_band_atk_buff.allyAtkAfter === byName.military_band_atk_buff.allyAtkBefore + 3, "北東軍軍楽隊 should buff all friendly units");
+assert(byName.ambush_blocks_effect_targeting.hpAfter === byName.ambush_blocks_effect_targeting.hpBefore, "潜伏 should block effect targeting until revealed");
+assert(byName.ambush_blocks_effect_targeting.stillHidden === true, "潜伏 unit should stay hidden when targeting blocked");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));

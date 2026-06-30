@@ -114,6 +114,7 @@ const KEYWORD_DEFINITIONS = {
   structTaunt: { label: "構造挑発", description: "Opponents must target structs with the highest struct taunt value first when choosing a struct." },
   effectProtect: { label: "効果保護", description: "カード効果の影響を受けない（効果攻撃を含む。通常攻撃・曲射などの戦闘ダメージは対象外）。[効果貫通]がこの値以上のカードのみ影響できる。" },
   effectPenetrate: { label: "効果貫通", description: "Bypasses effect protection up to this value." },
+  ambush: { label: "潜伏", description: "Cannot be targeted by attacks or card effects until it attacks, activates, or takes damage." },
 };
 const PLAYERS = {
   p1: { id: "p1", name: "Player 1", side: "bottom", forward: -1, summonRow: 3, coreRow: 4, directRow: 1 },
@@ -349,6 +350,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782651333318",  // サンデルシャン銀行
   "card_1782650657482",  // 冠飾りの騎士
   "card_1782650951674",  // ゴルテナ伯ゾア
+  "card_1782776308523",  // 戦術爆撃
+  "card_1782777924727",  // 北東軍軍楽隊
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -1297,6 +1300,43 @@ const abilityEffects = {
     game.selected = { kind: "choice", choice: "closeAirSupport" };
     game.message = "近接航空支援: 支援する味方ユニットを選択";
     return "pending";
+  },
+  tacticalBombardmentPlay({ game, playerId, card }) {
+    card.permanentTact = true;
+    card.rested = false;
+    card.abilities = [
+      { trigger: "onMainPhase", effect: "tacticalBombardmentActivate", isPermanent: true },
+    ];
+    log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
+  },
+  tacticalBombardmentActivate({ game, playerId, card, ability, source }) {
+    if (source?.zone === "tact" && card.permanentTact) card.rested = true;
+    const modes = tacticalBombardmentAvailableModes(game, playerId, card);
+    if (!modes.length) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 発動できるモードがありません`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "tacticalBombardment",
+      step: "chooseMode",
+      playerId,
+      tactName: card.name,
+      modes,
+      queueItem: { playerId, card, ability, source },
+    };
+    game.selected = { kind: "choice", choice: "tacticalBombardment" };
+    game.message = `${card.name}: 効果を1つ選んでください`;
+    return "pending";
+  },
+  tacticalBombUnitStrike({ game, target, ability, card }) {
+    if (!target) return;
+    const result = dealDamageToUnit(game, target, ability.amount || 10, { source: card }, { cleanup: true, effectAttack: true });
+    log(game, `${target.name}: ${result.damage}ダメージ`);
+    if (result.pending) return "pending";
+    if (target.currentHp > 0) {
+      target.rested = true;
+      log(game, `「${target.name}」をレスト`);
+    }
   },
   defeatIfNamedUnitDestroyed({ game, playerId, ability, source }) {
     const destroyed = source?.target;
@@ -4004,6 +4044,7 @@ function parseDeckmakerKeywords(card) {
     ["effectProtect", numRe("効果保護")],
     ["structTaunt", numRe("構造挑発")],
     ["effectPenetrate", numRe("効果貫通")],
+    ["ambush", /潜伏/g],
   ];
   const keywords = [];
   const seen = new Set();
@@ -5366,6 +5407,17 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782526025475") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "closeAirSupportPlay" });
+  }
+
+  if (card.id === "card_1782776308523") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "tacticalBombardmentPlay" });
+  }
+
+  if (card.id === "card_1782777924727") {
+    if (!abilities.some((a) => a.trigger === "onActivate" && a.effect === "buffFriendlyUnitsAtk")) {
+      abilities.push({ trigger: "onActivate", effect: "buffFriendlyUnitsAtk", amount: 3 });
+    }
   }
 
   if (card.id === "card_1782419351598") {
@@ -9669,12 +9721,63 @@ function effectPenetrateLevel(sourceCard, game = state) {
 
 function canAffectUnitByEffect(game, target, sourceCard) {
   if (!target) return false;
+  if (isAmbushHidden(target)) return false;
   if (unitImmuneToMagicPlayTactEffects(target) && tactSourceIncludesMagicPlayCost(sourceCard)) {
     return false;
   }
   const protection = effectProtectLevel(game, target);
   if (protection <= 0) return true;
   return effectPenetrateLevel(sourceCard) >= protection;
+}
+
+function isAmbushHidden(unit) {
+  return Boolean(unit && hasKeyword(unit, "ambush") && !unit.ambushRevealed);
+}
+
+function revealAmbushUnit(game, unit) {
+  if (!isAmbushHidden(unit)) return;
+  unit.ambushRevealed = true;
+  log(game, `「${unit.name}」の[潜伏]が解除された`);
+}
+
+function tacticalBombardmentAvailableModes(game, playerId, tactCard) {
+  const player = game.players[playerId];
+  const opponent = opponentOf(playerId);
+  const modes = [];
+  if (canPay(player, { fuel: 3 })) {
+    const hasTarget = unitsOwnedBy(opponent, game).some(
+      (unit) => !isAmbushHidden(unit) && canAffectUnitByEffect(game, unit, tactCard),
+    );
+    if (hasTarget) modes.push("unitBomb");
+  }
+  if (canPay(player, { ore: 3, fuel: 3 }) && (game.players[opponent].structs || []).length > 0) {
+    modes.push("structRest");
+  }
+  return modes;
+}
+
+function applyTacticalStructRest(game, playerId, opponentId, structIndex) {
+  const structs = game.players[opponentId]?.structs || [];
+  const struct = structs[structIndex];
+  if (!struct) return false;
+  struct.rested = true;
+  struct.tacticalRestBy = playerId;
+  struct.tacticalRestAppliedAtTurn = game.turn;
+  log(game, `${game.players[playerId].name}: 相手の「${struct.name}」を次の自分ターン終了時までレスト`);
+  return true;
+}
+
+function clearTacticalStructRestLocks(game, endingPlayer) {
+  for (const playerId of ["p1", "p2"]) {
+    for (const struct of game.players[playerId]?.structs || []) {
+      if (struct.tacticalRestBy === endingPlayer && game.turn > (struct.tacticalRestAppliedAtTurn ?? Infinity)) {
+        delete struct.tacticalRestBy;
+        delete struct.tacticalRestAppliedAtTurn;
+        struct.rested = false;
+        log(game, `「${struct.name}」の戦術爆撃レストが解除された`);
+      }
+    }
+  }
 }
 
 function structTauntLevel(struct) {
@@ -9810,6 +9913,7 @@ function isValidAbilityTarget(item, target) {
   if (!["enemyUnit", "friendlyUnit", "anyUnit", "friendlyNeutralUnit"].includes(item.ability.target)) return false;
   // 効果保護チェック（敵ユニットを対象にする場合）
   if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
+    if (isAmbushHidden(target)) return false;
     if (!canAffectUnitByEffect(state, target, item.card)) return false;
   }
   return true;
@@ -9858,7 +9962,7 @@ function startTurn(game, playerId, options = {}) {
   delete game.firstDrawFiredFor[playerId];
   for (const struct of (player.structs || [])) {
     struct.hpActivatedThisTurn = false;
-    struct.rested = false;
+    if (!struct.tacticalRestBy) struct.rested = false;
     ensureStructPhaseAbilities(struct);
   }
   for (const unit of unitsOwnedBy(playerId, game)) {
@@ -10417,6 +10521,7 @@ function endTurn() {
   }
   processGoltenaBombardments(state, endingPlayer);
   processWarBondCountersAtTurnEnd(state, endingPlayer);
+  clearTacticalStructRestLocks(state, endingPlayer);
   for (const unit of unitsOwnedBy(endingPlayer)) {
     if (unit.indestructibleUntilTurnEnd === endingPlayer) delete unit.indestructibleUntilTurnEnd;
     // ターン終了時に期間切れの一時的ability（保険金など）を削除
@@ -10986,6 +11091,90 @@ function finishUniqueRiteDumpChoice() {
   render();
 }
 
+function finishTacticalBombardmentChoice() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "tacticalBombardment") return false;
+  const qi = pending.queueItem;
+  const playerId = pending.playerId;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", playerId);
+  return true;
+}
+
+function resolveTacticalBombardmentMode(mode) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "tacticalBombardment" || pending.step !== "chooseMode") return;
+  if (!canControlActivePlayer() || pending.playerId !== state.activePlayer) return;
+  if (!pending.modes?.includes(mode)) return;
+  const player = state.players[pending.playerId];
+  const qi = pending.queueItem;
+  if (mode === "unitBomb") {
+    if (!pay(player, { fuel: 3 })) {
+      state.message = "燃③が不足しています。";
+      render();
+      return;
+    }
+    state.pendingChoice = null;
+    state.pendingTarget = {
+      playerId: pending.playerId,
+      card: qi.card,
+      ability: { effect: "tacticalBombUnitStrike", target: "enemyUnit", amount: 10 },
+      source: qi.source || { zone: "tact" },
+    };
+    state.selected = { kind: "target", target: "enemyUnit" };
+    state.message = `${pending.tactName}: 10ダメージを与える相手ユニットを選択`;
+    syncOnlineAction("resolveChoice", pending.playerId);
+    render();
+    return;
+  }
+  if (mode === "structRest") {
+    if (!pay(player, { ore: 3, fuel: 3 })) {
+      state.message = "鉱③燃③が不足しています。";
+      render();
+      return;
+    }
+    const opponent = opponentOf(pending.playerId);
+    const structCount = state.players[opponent].structs?.length || 0;
+    state.pendingChoice = {
+      type: "tacticalBombardment",
+      step: "pickStructs",
+      playerId: pending.playerId,
+      tactName: pending.tactName,
+      remaining: Math.min(2, structCount),
+      queueItem: qi,
+    };
+    state.selected = { kind: "choice", choice: "tacticalBombardment" };
+    state.message = `${pending.tactName}: レストする相手ストラクトを選択（${Math.min(2, structCount)}枚まで）`;
+    enemyStructChoiceScroll = 0;
+    syncOnlineAction("resolveChoice", pending.playerId);
+    render();
+  }
+}
+
+function resolveTacticalBombStructChoice(enemyIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "tacticalBombardment" || pending.step !== "pickStructs") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const opponent = opponentOf(pending.playerId);
+  if (!applyTacticalStructRest(state, pending.playerId, opponent, enemyIndex)) {
+    state.message = "そのストラクトは選択できません。";
+    return false;
+  }
+  pending.remaining -= 1;
+  if (pending.remaining > 0 && (state.players[opponent].structs?.length || 0) > 0) {
+    enemyStructChoiceScroll = 0;
+    state.message = `${pending.tactName}: レストする相手ストラクトを選択（残り${pending.remaining}枚）`;
+    render();
+    return true;
+  }
+  finishTacticalBombardmentChoice();
+  render();
+  return true;
+}
+
 function beginUniqueRiteDumpActivate(playerId, absIdx) {
   if (!canActivateUniqueRiteFromDump(playerId, absIdx)) {
     if ((state.players[playerId]?.resources.people || 0) < 1) {
@@ -11397,6 +11586,7 @@ function retreatSelectedUnit() {
 
 function executeUnitActivate(unit, ability) {
   if (!unit || !ability) return false;
+  revealAmbushUnit(state, unit);
   const player = state.players[unit.owner];
   if (ability.nonDamageOnly && (unit.dealtDamageThisTurn || (unit.attacksThisTurn || 0) > 0)) {
     return fail("与ダメージ後はこの起動効果は使えません。");
@@ -11447,6 +11637,7 @@ function executeUnitActivate(unit, ability) {
   const cost = ability.activationCost || {};
   if (!pay(player, cost)) return fail("起動コストが不足しています。");
   if (!ability.noRest) unit.rested = true;
+  revealAmbushUnit(state, unit);
   if (ability.exclusiveGroup) unit.exclusiveActivateUsed = ability.exclusiveGroup;
   const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
   log(state, `${player.name}: 「${unit.name}」起動${costLabel ? `（${costLabel}）` : ""}`);
@@ -11693,6 +11884,7 @@ function resolveChargeAttack(useCharge) {
 }
 
 function triggerAttackAbilities(unit, attackTarget = null) {
+  revealAmbushUnit(state, unit);
   for (const ability of unit.abilities || []) {
     if (ability.trigger === "onAttack") {
       state.effectQueue.push({
@@ -11872,6 +12064,9 @@ function canAttackUnit(attacker, defender) {
   }
   if (isGuardedFrom(attacker, defender)) {
     return { ok: false, reason: "守護により隣接ユニットを攻撃できません。" };
+  }
+  if (isAmbushHidden(defender)) {
+    return { ok: false, reason: "潜伏中のユニットは攻撃できません。" };
   }
   if (hasKeyword(attacker, "arc") && (defender.smokeScreenCounter || 0) > 0) {
     return { ok: false, reason: "煙幕により曲射攻撃の対象にできません。" };
@@ -12080,6 +12275,7 @@ function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
     return { damage: 0, pending: false };
   }
   const damage = capUnitDamage(target, rawAmount, game);
+  if (damage > 0) revealAmbushUnit(game, target);
   target.currentHp = (target.currentHp ?? target.maxHp ?? target.hp ?? 0) - damage;
   const triggerResult = triggerAbilities(game, target.owner, target, "onDamageReceived", { ...source, damage });
   const pending = triggerResult === "pending" || !!game.pendingChoice || !!game.pendingTarget;
@@ -14844,6 +15040,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "imposterTact") drawImposterTactPanel(pending);
   else if (pending.type === "otherworldKin") drawOtherworldKinPanel(pending);
   else if (pending.type === "uniqueRiteDump") drawUniqueRiteDumpPanel(pending);
+  else if (pending.type === "tacticalBombardment") drawTacticalBombardmentPanel(pending);
   else if (pending.type === "imposterSummon") drawImposterSummonPanel(pending);
   else if (pending.type === "deployHeroFromAttack") drawDeployHeroFromAttackPanel(pending);
   else if (pending.type === "intelAgencyCancel") drawIntelAgencyCancelPanel(pending);
@@ -15230,6 +15427,91 @@ function drawUniqueRiteDumpUnitPanel(pending) {
   ctx.textAlign = "center";
   ctx.fillText(label, W / 2, py + 24);
   ctx.textAlign = "left";
+}
+
+function resolveTacticalBombStructSkip() {
+  finishTacticalBombardmentChoice();
+  render();
+  return true;
+}
+
+function drawTacticalBombardmentPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  if (pending.step === "chooseMode") {
+    const x = 360, y = 220, w = 720, h = 280;
+    drawChoicePanelBase(x, y, w, h, "rgba(120,60,40,0.85)", "#ff9050");
+    ctx.fillStyle = "#ffd8c0";
+    ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`「${pending.tactName}」`, x + 28, y + 36);
+    ctx.fillStyle = "rgba(255,210,180,0.9)";
+    ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("効果を1つ選んでください（レスト済み）。", x + 28, y + 64);
+    const modeButtons = [
+      { id: "unitBomb", label: "燃③：相手ユニットに10ダメージ＋レスト", yOff: 96 },
+      { id: "structRest", label: "鉱③燃③：相手ストラクト2枚まで次ターン終了時までレスト", yOff: 146 },
+    ];
+    modeButtons.forEach(({ id, label, yOff }) => {
+      const enabled = pending.modes?.includes(id);
+      drawButton(
+        x + 28,
+        y + yOff,
+        w - 56,
+        38,
+        label,
+        isController && enabled ? () => resolveTacticalBombardmentMode(id) : null,
+        null,
+        enabled ? { accent: "p1" } : { accent: "dim" },
+      );
+    });
+    return;
+  }
+  if (pending.step === "pickStructs") {
+    const opponentId = opponentOf(pending.playerId);
+    const structs = state.players[opponentId].structs || [];
+    const cardW = 96;
+    const cardH = Math.round(cardW / CARD_ASPECT);
+    const gap = 14;
+    const maxCols = 5;
+    clampEnemyStructChoiceScroll(structs.length, maxCols);
+    const visibleStructs = structs
+      .map((struct, index) => ({ struct, index }))
+      .slice(enemyStructChoiceScroll, enemyStructChoiceScroll + maxCols);
+    const cols = Math.max(visibleStructs.length, 1);
+    const panelW = Math.max(520, cols * (cardW + gap) + 96);
+    const needsPager = structs.length > maxCols;
+    const panelH = needsPager ? 340 : 300;
+    const x = Math.round((W - panelW) / 2);
+    const y = Math.round((H - panelH) / 2);
+    drawChoicePanelBase(x, y, panelW, panelH, "rgba(120,60,40,0.75)", "#ff9050");
+    ctx.fillStyle = "#ffd8c0";
+    ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+    const remainLabel = pending.remaining > 1 ? `（残り${pending.remaining}枚）` : "";
+    ctx.fillText(`${pending.tactName}: レストする相手ストラクトを選択${remainLabel}`, x + 24, y + 34);
+    ctx.fillStyle = "rgba(255,210,180,0.85)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("クリックでレストするストラクトを選んでください。", x + 24, y + 56, panelW - 48);
+    const startX = x + 28;
+    const startY = y + 78;
+    if (!structs.length) {
+      ctx.fillStyle = "rgba(220,180,180,0.8)";
+      ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+      ctx.fillText("相手のストラクトがありません", startX, startY + 24);
+    } else {
+      visibleStructs.forEach(({ struct, index: idx }, visIdx) => {
+        const cx = startX + visIdx * (cardW + gap);
+        const cy = startY;
+        drawSelectableChoiceCard(cx, cy, cardW, cardH, struct, {
+          onClick: isController ? () => { resolveTacticalBombStructChoice(idx); } : null,
+        });
+      });
+      if (needsPager) {
+        drawEnemyStructChoicePager(x, panelW, startY + cardH + 14, structs.length, maxCols);
+      }
+    }
+    if (isController && pending.remaining > 0) {
+      drawButton(x + 24, y + panelH - 52, 196, 36, "選択を終了", () => { resolveTacticalBombStructSkip(); });
+    }
+  }
 }
 
 function drawUniqueRiteDumpPanel(pending) {
@@ -17355,6 +17637,9 @@ function abilityText(card) {
         gainResource: `${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         buffFriendlyUnitsHp: `味方ユニットのHP+${ability.amount}`,
         buffFriendlyUnitsAtk: `味方ユニットのATK+${ability.amount}`,
+        tacticalBombardmentPlay: "永続タクトとして配置",
+        tacticalBombardmentActivate: "燃③で10ダメージ＋レスト、または鉱③燃③で相手ストラクト2枚までレスト",
+        tacticalBombUnitStrike: `対象ユニットに${ability.amount || 10}ダメージ＋レスト`,
         mysticCapture: "神秘ユニットを選択して登場時効果を発動",
         grantDestroyGain: `味方ユニット1体に「破壊時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}」を付与`,
         chooseExchange: `${(ability.costOptions || []).map((o) => `${RESOURCE_LABELS[o.resource] || o.resource}${o.amount}`).join("または")}を支払い → ${Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("/")}`,
@@ -17724,6 +18009,9 @@ const testing = {
   resolveDestroyEnemyStructChoice,
   resolveDestroyEnemyStructSkip,
   resolveEnemyStructChoice,
+  resolveTacticalBombardmentMode,
+  resolveTacticalBombStructChoice,
+  resolveTacticalBombStructSkip,
   selectHandCard: selectHandCardForTest,
   selectStructDeckCard: selectStructDeckCardForTest,
   useSelectedHandCard,
