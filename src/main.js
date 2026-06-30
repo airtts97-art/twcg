@@ -36,8 +36,11 @@ const SORT_OPTIONS = [
   { id: "cost", label: "コスト" },
   { id: "type", label: "種類" },
 ];
+const CARD_DRIFT_DEBUG = new URLSearchParams(location.search).get("debugCards") === "1";
 let googleClientId = "";
 let googleSignInEnabled = false;
+let serverConfigLoadPromise = null;
+let serverConfigError = null;
 const DEFAULT_PUBLIC_SERVER_BASE = "https://favourite-responsible-cargo-liabilities.trycloudflare.com";
 const DEFAULT_PUBLIC_WS_URL = `${DEFAULT_PUBLIC_SERVER_BASE.replace(/^https:/, "wss:")}/ws`;
 const ONLINE_WS_URL = (() => {
@@ -3824,7 +3827,7 @@ function applyFirebaseDeckmakerCards(cards, {
   const drift = collectCardDrift({
     firebaseCards: cards,
     supplementalCards,
-    deckmakerCards: [],
+    deckmakerCards: Array.isArray(deckData?.cards) ? deckData.cards : [],
     hardcodedBaselines: HARDCODED_TEXT_BASELINES,
     watchIds: [...IMPLEMENTED_CARD_IDS],
   });
@@ -3841,7 +3844,7 @@ function applyFirebaseDeckmakerCards(cards, {
     drift,
     hardcodedDrift,
   };
-  if (drift.length || hardcodedDrift.length) {
+  if (CARD_DRIFT_DEBUG && (drift.length || hardcodedDrift.length)) {
     console.warn("Card catalog drift detected:", { drift, hardcodedDrift });
   }
   if (app.screen === "deckBuilder") {
@@ -6639,22 +6642,65 @@ function selectMatchDeck(deckId) {
   return true;
 }
 
+function loadServerConfigScript() {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `${SERVER_BASE}/config.js`;
+    script.async = true;
+    script.onload = () => {
+      const config = globalThis.__TWCG_SERVER_CONFIG__;
+      delete globalThis.__TWCG_SERVER_CONFIG__;
+      script.remove();
+      if (!config || typeof config !== "object") {
+        reject(new Error("サーバー設定の形式が不正です。"));
+        return;
+      }
+      resolve(config);
+    };
+    script.onerror = () => {
+      delete globalThis.__TWCG_SERVER_CONFIG__;
+      script.remove();
+      reject(new Error("サーバー設定を取得できません。"));
+    };
+    document.head.appendChild(script);
+  });
+}
+
+async function fetchServerConfig() {
+  if (SERVER_BASE) return loadServerConfigScript();
+  const response = await fetch("/config");
+  if (!response.ok) throw new Error(`サーバー設定の取得に失敗しました (${response.status})`);
+  return response.json();
+}
+
 async function loadServerConfig() {
   if (!SERVER_BASE && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
     // GitHub Pages などの外部ホストで ?ws= なし → サーバー不明、Google ログイン無効
     googleSignInEnabled = false;
-    return;
+    serverConfigError = "オンラインサーバーが指定されていません。";
+    return false;
   }
-  try {
-    const response = await fetch(`${SERVER_BASE}/config`);
-    if (!response.ok) return;
-    const config = await response.json();
-    googleClientId = config.googleClientId || "";
-    googleSignInEnabled = Boolean(config.googleSignInEnabled);
-    render();
-  } catch {
-    googleSignInEnabled = false;
-  }
+  if (serverConfigLoadPromise) return serverConfigLoadPromise;
+  serverConfigLoadPromise = (async () => {
+    try {
+      const config = await fetchServerConfig();
+      googleClientId = config.googleClientId || "";
+      googleSignInEnabled = Boolean(config.googleSignInEnabled && googleClientId);
+      serverConfigError = null;
+      render();
+      return true;
+    } catch (error) {
+      googleClientId = "";
+      googleSignInEnabled = false;
+      serverConfigError = `${error.message} 接続先: ${SERVER_BASE || location.origin}`;
+      if (app?.auth && !app.auth.signedIn) app.auth.message = serverConfigError;
+      render();
+      return false;
+    } finally {
+      serverConfigLoadPromise = null;
+    }
+  })();
+  return serverConfigLoadPromise;
 }
 
 let googleInitialized = false;
@@ -6674,6 +6720,7 @@ function loadGoogleClientScript() {
   return googleScriptLoading;
 }
 async function signInWithGoogle() {
+  if (!googleSignInEnabled || !googleClientId) await loadServerConfig();
   if (googleSignInEnabled && googleClientId) {
     try {
       console.log("Starting Google Sign-In...");
@@ -6733,13 +6780,12 @@ async function signInWithGoogle() {
       return;
     }
   }
-  console.warn("Google Sign-In not enabled. googleSignInEnabled:", googleSignInEnabled, "googleClientId:", !!googleClientId);
   app.auth = {
     provider: null,
     signedIn: false,
     name: "未ログイン",
     email: null,
-    message: "Googleログインにはサーバー環境変数 GOOGLE_CLIENT_ID の設定が必要です。",
+    message: serverConfigError || "Googleログインにはサーバー環境変数 GOOGLE_CLIENT_ID の設定が必要です。",
   };
   render();
 }
@@ -13730,10 +13776,16 @@ function drawDeckBuilderScreen() {
     loadFirebaseCardsIntoCatalog({ force: true }).then(() => render());
   });
 
+  const driftCount = app.cardSync?.drift?.length || 0;
+  const hardcodedDriftCount = app.cardSync?.hardcodedDrift?.length || 0;
+  const driftStatus = [
+    driftCount ? `ローカル差分${driftCount}` : "",
+    hardcodedDriftCount ? `実装要確認${hardcodedDriftCount}` : "",
+  ].filter(Boolean).join(" / ");
   const syncStatus = app.cardSync?.status === "loading"
     ? "カード同期中…"
     : app.cardSync?.status === "ok"
-      ? `Firebase同期済 (${app.cardSync.count}枚${(app.cardSync.drift?.length || 0) + (app.cardSync.hardcodedDrift?.length || 0) ? ` / 差分${(app.cardSync.drift?.length || 0) + (app.cardSync.hardcodedDrift?.length || 0)}` : ""})`
+      ? `Firebase同期済 (${app.cardSync.count}枚${driftStatus ? ` / ${driftStatus}` : ""})`
       : app.cardSync?.status === "cached"
         ? `Firebaseキャッシュ (${app.cardSync.count}枚)`
         : app.cardSync?.status === "error"

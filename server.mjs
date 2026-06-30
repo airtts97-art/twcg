@@ -81,6 +81,19 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.url === "/config.js") {
+    const config = JSON.stringify({
+      googleClientId,
+      googleSignInEnabled: Boolean(googleClientId),
+    });
+    res.writeHead(200, {
+      "content-type": "text/javascript; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    res.end(`globalThis.__TWCG_SERVER_CONFIG__ = ${config};\n`);
+    return;
+  }
+
   if (req.url === "/api/auth/google" && req.method === "POST") {
     const body = await readJsonBody(req).catch(() => null);
     const result = await verifyGoogleCredential(body?.credential);

@@ -54,6 +54,13 @@ try {
   await waitForServer();
   const config = await fetch(`http://127.0.0.1:${port}/config`).then((response) => response.json());
   assert(config.googleSignInEnabled === false, "test server should report Google sign-in disabled without env");
+  const configScriptResponse = await fetch(`http://127.0.0.1:${port}/config.js`);
+  const configScript = await configScriptResponse.text();
+  assert(configScriptResponse.ok, "config script endpoint should respond successfully");
+  assert(
+    configScript.includes('"googleSignInEnabled":false'),
+    "config script should expose the same Google sign-in state without requiring CORS",
+  );
   const authResult = await fetch(`http://127.0.0.1:${port}/api/auth/google`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -137,7 +144,7 @@ try {
     JSON.stringify(
       {
         ok: true,
-        cases: ["config", "auth-disabled", "deck-save-load", "create", "join", "presence-deck", "start", "start-echo", "start-deck", "large-start", "state"],
+        cases: ["config", "config-script", "auth-disabled", "deck-save-load", "create", "join", "presence-deck", "start", "start-echo", "start-deck", "large-start", "state"],
       },
       null,
       2,
