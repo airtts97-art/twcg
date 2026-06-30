@@ -23,7 +23,8 @@ const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 page.on("pageerror", (err) => console.error("[page error]", err.message));
 page.on("console", (msg) => { if (msg.type() === "error") console.error("[console]", msg.text()); });
-await page.goto(url, { waitUntil: "networkidle" });
+await page.goto(url, { waitUntil: "domcontentloaded" });
+await page.waitForFunction(() => Boolean(window.__twcg));
 
 const results = await page.evaluate(() => {
   const api = window.__twcg;
@@ -151,6 +152,17 @@ const results = await page.evaluate(() => {
   api.testing.selectUnit(2, 1);
   api.testing.attack({ kind: "unit", row: 1, col: 2 });
   out.push(snapshot("self_destruct_blocked_by_effect_protect"));
+
+  reset();
+  api.testing.placeUnit("disruptionEngineer", "p2", 1, 0, { rested: true });
+  api.testing.placeUnit("militia", "p2", 1, 1, { rested: true });
+  api.abilityEffects.damageAllEnemyUnits({
+    game: api.state,
+    playerId: "p1",
+    ability: { amount: 5 },
+    card: { id: "simultaneous-effect-test", name: "同時効果テスト", owner: "p1", keywords: [] },
+  });
+  out.push(snapshot("effect_protect_aura_survives_simultaneous_destruction"));
 
   reset();
   api.testing.addHandCard("p1", "lightInfantry");
@@ -327,11 +339,76 @@ const results = await page.evaluate(() => {
 
   reset();
   api.testing.setResources("p1", { funds: 1, magic: 0 });
+  api.testing.addDumpCard("p1", "lifeFairy");
+  api.testing.addDumpCard("p1", "fieldOrder");
+  api.testing.addHandCard("p1", "soulMage");
+  api.testing.summonFromHand(0, 3, 0);
+  const requiredSoulPrompt = {
+    type: api.state.pendingChoice?.type,
+    amounts: [...(api.state.pendingChoice?.amounts || [])],
+    canPayWithoutSoul: api.state.pendingChoice?.canPayWithoutSoul,
+  };
+  api.testing.resolveSoulPayChoice(2);
+  out.push({ ...snapshot("soul_pay_uses_dump_for_missing_magic"), requiredSoulPrompt });
+
+  reset();
+  api.testing.setResources("p1", { funds: 1, magic: 2 });
   api.testing.addDumpCard("p1", "militia");
   api.testing.addDumpCard("p1", "fieldOrder");
   api.testing.addHandCard("p1", "soulMage");
   api.testing.summonFromHand(0, 3, 0);
-  out.push(snapshot("soul_pay_uses_dump_for_missing_magic"));
+  const optionalSoulPrompt = {
+    type: api.state.pendingChoice?.type,
+    amounts: [...(api.state.pendingChoice?.amounts || [])],
+    canPayWithoutSoul: api.state.pendingChoice?.canPayWithoutSoul,
+  };
+  api.testing.resolveSoulPayChoice(1);
+  out.push({ ...snapshot("soul_pay_allows_optional_partial_payment"), optionalSoulPrompt });
+
+  reset();
+  const secondTomb = api.cardCatalog.structs["card_1753681080997"];
+  const secondTombRevive = secondTomb.abilities.find((ability) => ability.effect === "reviveUnitFromDump");
+  api.testing.addDumpCard("p1", "lifeFairy");
+  api.abilityEffects.reviveUnitFromDump({
+    game: api.state,
+    playerId: "p1",
+    card: secondTomb,
+    ability: secondTombRevive,
+    source: { zone: "struct" },
+  });
+  api.testing.resolveReviveFromDump(0);
+  const secondTombRows = [...(api.state.pendingChoice?.validRows || [])];
+  const secondTombSummonRowRejected = api.testing.resolveSummonPlacement(3, 1);
+  const secondTombBattleRowAccepted = api.testing.resolveSummonPlacement(2, 1);
+  out.push({
+    ...snapshot("second_tomb_revives_only_to_battle_zone"),
+    secondTombRows,
+    secondTombSummonRowRejected,
+    secondTombBattleRowAccepted,
+  });
+
+  const nobelburg = api.cardCatalog.cores["card_1755670973607"];
+  out.push({
+    name: "nobelburg_has_no_start_turn_people_income",
+    summary: { income: { ...(nobelburg?.income || {}) }, startResources: { ...(nobelburg?.startResources || {}) } },
+  });
+
+  reset();
+  api.testing.addHandCard("p2", "militia");
+  const previousMatchStatus = api.app.match.status;
+  const previousMatchRole = api.app.match.role;
+  api.app.match.status = "online";
+  api.app.match.role = "host";
+  api.state.pendingChoice = {
+    type: "searchDeckPick",
+    playerId: "p2",
+    candidates: [{ card: api.cardCatalog.main.militia }],
+  };
+  const privateSelectionSummary = api.testing.summary();
+  out.push({ name: "opponent_card_selection_is_private", summary: privateSelectionSummary });
+  api.state.pendingChoice = null;
+  api.app.match.status = previousMatchStatus;
+  api.app.match.role = previousMatchRole;
 
   let duplicateLegendaryRejected = false;
   try {
@@ -2508,6 +2585,9 @@ assert(byName.self_destruct_splash.board[1][2].hp === 2, "self-destruct should d
 assert(byName.self_destruct_blocked_by_effect_protect.board[1][2] === null, "bomb drone should be destroyed");
 assert(byName.self_destruct_blocked_by_effect_protect.board[1][1].hp === 4, "effect-protected adjacent unit should ignore self-destruct");
 assert(byName.self_destruct_blocked_by_effect_protect.board[1][3].hp === 2, "unprotected adjacent unit should still take self-destruct damage");
+assert(byName.effect_protect_aura_survives_simultaneous_destruction.board[1][0] === null, "destroyed disruption engineer should leave the board");
+assert(byName.effect_protect_aura_survives_simultaneous_destruction.board[1][1]?.name === "民兵分隊", "adjacent protected unit should remain when the aura source dies in the same damage batch");
+assert(byName.effect_protect_aura_survives_simultaneous_destruction.board[1][1].hp === 4, "simultaneously protected unit should ignore the effect damage");
 
 assert(byName.raid_summons_to_second_row.board[2][3]?.name === "奇襲バイク", "raid should allow second-row summon");
 assert(byName.raid_summons_to_second_row.cardReveal?.card?.name === "奇襲バイク", "summoned cards should create a card reveal payload");
@@ -2589,6 +2669,23 @@ assert(byName.no_attack_cannot_attack.board[2][0].rested === false, "failed noAt
 assert(byName.soul_pay_uses_dump_for_missing_magic.board[3][0]?.name === "魂術師", "soulPay should allow summon with dump cards");
 assert(byName.soul_pay_uses_dump_for_missing_magic.players.p1.dumpCount === 0, "soulPay should exile dump cards used for magic");
 assert(byName.soul_pay_uses_dump_for_missing_magic.players.p1.resources.funds === 0, "soulPay summon should still pay funds");
+assert(byResult.soul_pay_uses_dump_for_missing_magic.requiredSoulPrompt.type === "soulPay", "soulPay should ask before replacing magic");
+assert(byResult.soul_pay_uses_dump_for_missing_magic.requiredSoulPrompt.amounts.includes(2), "soulPay prompt should offer enough souls to cover missing magic");
+assert(byName.soul_pay_allows_optional_partial_payment.board[3][0]?.name === "魂術師", "optional partial soul payment should finish the summon");
+assert(byResult.soul_pay_allows_optional_partial_payment.optionalSoulPrompt.canPayWithoutSoul === true, "soulPay should still ask when normal magic payment is available");
+assert(byResult.soul_pay_allows_optional_partial_payment.optionalSoulPrompt.amounts.includes(1), "soulPay should offer an arbitrary partial replacement amount");
+assert(byName.soul_pay_allows_optional_partial_payment.players.p1.resources.magic === 1, "partial soul payment should pay the remaining magic normally");
+assert(byName.soul_pay_allows_optional_partial_payment.players.p1.dumpCount === 1, "partial soul payment should exile exactly the chosen number of dump cards");
+
+assert(byResult.second_tomb_revives_only_to_battle_zone.secondTombRows.length === 1 && byResult.second_tomb_revives_only_to_battle_zone.secondTombRows[0] === 2, "Second Tomb should only offer the controller battle row");
+assert(byResult.second_tomb_revives_only_to_battle_zone.secondTombSummonRowRejected === false, "Second Tomb should reject the summon-field row");
+assert(byResult.second_tomb_revives_only_to_battle_zone.secondTombBattleRowAccepted === true, "Second Tomb should accept the battle-zone row");
+assert(byName.second_tomb_revives_only_to_battle_zone.board[2][1]?.name === "生命妖精", "Second Tomb should place the revived unit in the battle zone");
+assert((byName.nobelburg_has_no_start_turn_people_income.income.people || 0) === 0, "Nobelburg should not gain people at turn start");
+assert(byName.opponent_card_selection_is_private.pendingChoice?.type === "privateCardSelection", "opponent deck selection should expose only a private waiting state");
+assert(byName.opponent_card_selection_is_private.pendingChoice?.hidden === true, "opponent deck selection should be marked hidden");
+assert(byName.opponent_card_selection_is_private.players.p2.hand[0]?.hidden === true, "opponent hand details should be redacted from the viewer summary");
+assert(!byName.opponent_card_selection_is_private.players.p2.hand[0]?.name, "opponent hand card name should not leak to the viewer summary");
 
 assert(byName.legendary_rejects_duplicate.duplicateLegendaryRejected === true, "legendary duplicate should be rejected");
 

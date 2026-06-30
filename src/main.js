@@ -661,6 +661,7 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
     grantTag = null,
     message = "ユニットを出すマスをクリックしてください",
     allowRaid = false,
+    validRows = null,
     onComplete = null,
   } = options;
   game.pendingChoice = {
@@ -668,7 +669,7 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
     playerId,
     spec,
     grantTag,
-    validRows: summonPlacementRowsForPlayer(game, playerId, { allowRaid }),
+    validRows: validRows || summonPlacementRowsForPlayer(game, playerId, { allowRaid }),
     queueItem,
     onComplete,
   };
@@ -934,11 +935,11 @@ const abilityEffects = {
     }
     log(game, `${player.name}: デッキから${amount}枚墓地へ送る`);
   },
-  destroyAll({ game }) {
+  destroyAll({ game, card }) {
     for (let row = 0; row < ROWS; row++) {
       for (let col = 0; col < COLS; col++) {
         const unit = game.board[row][col];
-        if (unit) unit.currentHp = 0;
+        if (unit && (!card || canAffectUnitByEffect(game, unit, card))) unit.currentHp = 0;
       }
     }
     cleanupAllDestroyed();
@@ -961,7 +962,7 @@ const abilityEffects = {
     for (let row = 0; row < ROWS; row++) {
       for (let col = 0; col < COLS; col++) {
         const unit = game.board[row][col];
-        if (unit) unit.currentHp = 0;
+        if (unit && canAffectUnitByEffect(game, unit, card)) unit.currentHp = 0;
       }
     }
     cleanupAllDestroyed(null, game);
@@ -973,7 +974,7 @@ const abilityEffects = {
     for (let row = 0; row < ROWS; row += 1) {
       for (let col = 0; col < COLS; col += 1) {
         const unit = game.board[row][col];
-        if (unit?.owner === opponent) {
+        if (unit?.owner === opponent && canAffectUnitByEffect(game, unit, card)) {
           unit.currentHp = 0;
           count += 1;
         }
@@ -2510,6 +2511,7 @@ const abilityEffects = {
       eligible,
       maxCost,
       grantTag: ability.grantTag || null,
+      battleZoneOnly: Boolean(ability.battleZoneOnly),
       queueItem: { playerId, card, ability, source: source || { zone: "board" } },
     };
     game.selected = { kind: "choice", choice: "reviveFromDump" };
@@ -3553,10 +3555,10 @@ function applyCoreDefaults(core) {
   core.deckMin = Number(core.deckMin) || Number(fallback.deckMin) || 40;
   core.deckMax = Number(core.deckMax) || Number(fallback.deckMax) || 60;
   core.startResources = normalizeResourceObject(hasResourceValue(core.startResources) ? core.startResources : fallback.startResources || {});
-  if (hasResourceValue(core.income)) {
-    core.income = normalizeResourceObject(core.income);
-  } else if (core.name === "\u738b\u57ce\u30ce\u30fc\u30d9\u30eb\u30b0" && core.description === "(\u52b9\u679c\u7121\u3057)") {
+  if (core.id === "card_1755670973607" || core.name === "\u738b\u57ce\u30ce\u30fc\u30d9\u30eb\u30b0") {
     core.income = {};
+  } else if (hasResourceValue(core.income)) {
+    core.income = normalizeResourceObject(core.income);
   } else if (core.id === "card_1753611174564" || core.name === "\u8089\u306e\u738b\u57ce") {
     core.income = {};
   } else {
@@ -5365,7 +5367,7 @@ function parseDeckmakerAbilities(card, localType) {
   // \u7b2c\u4e8c\u5893\u6a19: \u6bce\u30bf\u30fc\u30f3\u6700\u521d\u306e\u30c9\u30ed\u30fc\u6642\u306b\u30b3\u30b9\u30c81\u4ee5\u4e0b\u306e\u30e6\u30cb\u30c3\u30c8\u3092\u8607\u751f\u3057\u5c4d\u4eba\u30bf\u30b0\u4ed8\u4e0e
   if (card.id === "card_1753681080997") {
     abilities.length = 0;
-    abilities.push({ trigger: "onFirstDraw", effect: "reviveUnitFromDump", maxCost: 1, grantTag: "\u5c4d\u4eba" });
+    abilities.push({ trigger: "onFirstDraw", effect: "reviveUnitFromDump", maxCost: 1, grantTag: "\u5c4d\u4eba", battleZoneOnly: true });
   }
 
   if (card.id === "card_1753775442028") {
@@ -8031,15 +8033,23 @@ function exileDumpCardsForSoulPay(player, count, card) {
   return exiled;
 }
 
+function soulPayAmountsForCard(player, cost = {}, card = null) {
+  if (!cardAllowsSoulPay(card)) return [];
+  const effectiveCost = effectiveCostForCard(player, cost, card);
+  const magicCost = effectiveCost.magic || 0;
+  const maxSoul = Math.min(magicCost, availableSoulPayDumpCount(player, card));
+  const amounts = [];
+  for (let amount = 1; amount <= maxSoul; amount += 1) {
+    const payable = { ...effectiveCost, magic: magicCost - amount };
+    if (canPay(player, payable)) amounts.push(amount);
+  }
+  return amounts;
+}
+
 function canPayForCard(player, cost = {}, card = null) {
   const effectiveCost = effectiveCostForCard(player, cost, card);
   if (canPay(player, effectiveCost)) return true;
-  if (!cardAllowsSoulPay(card)) return false;
-  const missingMagic = Math.max(0, (effectiveCost.magic || 0) - (player.resources.magic || 0));
-  if (missingMagic === 0) return false;
-  const payable = { ...effectiveCost, magic: (effectiveCost.magic || 0) - missingMagic };
-  if (!canPay(player, payable)) return false;
-  return availableSoulPayDumpCount(player, card) >= missingMagic;
+  return soulPayAmountsForCard(player, cost, card).length > 0;
 }
 
 function cardIsAffordable(player, card) {
@@ -8474,25 +8484,78 @@ function effectiveCostForCard(player, cost = {}, card = null) {
   return effective;
 }
 
-function payForCard(player, cost = {}, card = null) {
+function payForCard(player, cost = {}, card = null, { soulPayAmount = 0 } = {}) {
   const effectiveCost = effectiveCostForCard(player, cost, card);
   const copperReduction = findCopperMineReduction(player, card, normalizeResourceObject(cost));
-  if (pay(player, effectiveCost)) {
+  const requestedSoul = Number(soulPayAmount) || 0;
+  if (requestedSoul <= 0) {
+    if (!pay(player, effectiveCost)) return false;
     if (copperReduction) copperReduction.rested = true;
     return true;
   }
   if (!cardAllowsSoulPay(card)) return false;
-
-  const payable = { ...effectiveCost };
-  const missingMagic = Math.max(0, (payable.magic || 0) - (player.resources.magic || 0));
-  if (missingMagic === 0 || availableSoulPayDumpCount(player, card) < missingMagic) return false;
-  payable.magic = (payable.magic || 0) - missingMagic;
+  if (requestedSoul > (effectiveCost.magic || 0)) return false;
+  if (availableSoulPayDumpCount(player, card) < requestedSoul) return false;
+  const payable = { ...effectiveCost, magic: (effectiveCost.magic || 0) - requestedSoul };
   if (!pay(player, payable)) return false;
-  const exiled = exileDumpCardsForSoulPay(player, missingMagic, card);
-  if (exiled.length < missingMagic) return false;
+  const exiled = exileDumpCardsForSoulPay(player, requestedSoul, card);
+  if (exiled.length < requestedSoul) return false;
   if (copperReduction) copperReduction.rested = true;
   notifyDumpChanged(state, player.id);
-  log(state, `${player.name}: [魂]で魔${missingMagic}を支払い（墓地${exiled.length}枚除外）`);
+  log(state, `${player.name}: [魂]で魔${requestedSoul}を支払い（墓地${exiled.length}枚除外）`);
+  return true;
+}
+
+function requestSoulPayChoice(player, cost, card, continuation) {
+  const amounts = soulPayAmountsForCard(player, cost, card);
+  if (!amounts.length) return false;
+  const effectiveCost = effectiveCostForCard(player, cost, card);
+  state.pendingChoice = {
+    type: "soulPay",
+    playerId: player.id,
+    cardName: card.name,
+    cardId: card.id,
+    amounts,
+    canPayWithoutSoul: canPay(player, effectiveCost),
+    magicCost: effectiveCost.magic || 0,
+    unitsOnly: soulPayRequiresUnitCards(card),
+    continuation,
+  };
+  state.selected = { kind: "choice", choice: "soulPay" };
+  state.message = `「${card.name}」のプレイコストを[魂]で支払うか選んでください。`;
+  syncOnlineAction("soulPayChoice", player.id);
+  render();
+  return true;
+}
+
+function resolveSoulPayChoice(amount) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "soulPay" || !canControlChoicePlayer(pending.playerId)) return false;
+  const soulPayAmount = Number(amount);
+  if (!Number.isInteger(soulPayAmount) || soulPayAmount < 0) return false;
+  if (soulPayAmount === 0 && !pending.canPayWithoutSoul) return false;
+  if (soulPayAmount > 0 && !pending.amounts.includes(soulPayAmount)) return false;
+  const continuation = pending.continuation;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (continuation?.type === "unit") {
+    return placeUnitFromHand(continuation.handIndex, continuation.row, continuation.col, soulPayAmount);
+  }
+  if (continuation?.type === "tact") return playTactFromHand(continuation.handIndex, soulPayAmount);
+  if (continuation?.type === "wild") return playWildFromHand(continuation.handIndex, soulPayAmount);
+  if (continuation?.type === "grand") return playGrandFromHand(continuation.handIndex, soulPayAmount);
+  if (continuation?.type === "struct") return playStruct(continuation.index, soulPayAmount);
+  return false;
+}
+
+function cancelSoulPayChoice() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "soulPay" || !canControlChoicePlayer(pending.playerId)) return false;
+  state.pendingChoice = null;
+  state.selected = null;
+  state.message = `「${pending.cardName}」のプレイを中止しました。`;
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
   return true;
 }
 
@@ -8728,14 +8791,14 @@ function processEffectQueue(game) {
         if (game.pendingChoice) {
           game.pendingChoice.queueItem = game.pendingChoice.queueItem || item;
         }
-        cleanupAllDestroyed(null, game);
+        if (!game._deferDestroyedCleanup) cleanupAllDestroyed(null, game);
         return;
       }
       completeAbilitySource(game, item);
     }
     if (!game.pendingChoice && !game.pendingTarget) {
       resumePendingDamageBatch(game);
-      if (!game.pendingAttackContinuation && !game.pendingDamageBatch) {
+      if (!game.pendingAttackContinuation && !game.pendingDamageBatch && !game._deferDestroyedCleanup) {
         clearEffectResolutionIndestructible(game);
         cleanupAllDestroyed(null, game);
       }
@@ -9422,6 +9485,9 @@ function resolveReviveFromDump(index) {
   }, {
     grantTag: pending.grantTag,
     queueItem: pending.queueItem,
+    validRows: pending.battleZoneOnly
+      ? [state.players[pending.playerId].summonRow + state.players[pending.playerId].forward]
+      : null,
     message: `「${entry.card.name}」を蘇生するマスをクリックしてください`,
   });
   render();
@@ -11137,7 +11203,7 @@ function applyUnitSacrificeRequirement(playerId, card) {
   return true;
 }
 
-function placeUnitFromHand(handIndex, row, col) {
+function placeUnitFromHand(handIndex, row, col, soulPayAmount = undefined) {
   if (!requireActivePlayerControl()) return false;
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
@@ -11160,7 +11226,11 @@ function placeUnitFromHand(handIndex, row, col) {
       ? "相手のサモンフィールドには配置できません。"
       : "敵ユニットが存在する横列には配置できません。");
   }
-  if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
+  if (
+    soulPayAmount === undefined
+    && requestSoulPayChoice(player, card.cost, card, { type: "unit", handIndex, row, col })
+  ) return true;
+  if (!payForCard(player, card.cost, card, { soulPayAmount })) return fail("資源が不足しています。");
 
   applyUnitSacrificeRequirement(state.activePlayer, card);
   if (card.identityRevealGate && !applyIdentityRevealGate(state.activePlayer, card)) {
@@ -11186,7 +11256,7 @@ function canSummonToRow(card, player, row) {
   return hasKeyword(card, "raid") && row === raidRow && !enemyInRow(player.id, raidRow);
 }
 
-function playTactFromHand(handIndex) {
+function playTactFromHand(handIndex, soulPayAmount = undefined) {
   if (!requireActivePlayerControl()) return false;
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
@@ -11250,9 +11320,13 @@ function playTactFromHand(handIndex) {
       }
     }
   }
-  if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
   const tactSlots = tactZoneSlotCoords(state.activePlayer).length;
   if (player.tactZone.length >= tactSlots) return fail(`TACTゾーンは${tactSlots}枚までです。`);
+  if (
+    soulPayAmount === undefined
+    && requestSoulPayChoice(player, card.cost, card, { type: "tact", handIndex })
+  ) return true;
+  if (!payForCard(player, card.cost, card, { soulPayAmount })) return fail("資源が不足しています。");
   revealCardUse(state.activePlayer, card, "play");
   player.hand.splice(handIndex, 1);
   syncBundledRuntimeCard(card);
@@ -11352,12 +11426,16 @@ function tryCancelTactWithIntel(tactOwnerId, tactCard) {
   return offerIntelAgencyCancel(tactOwnerId, tactCard);
 }
 
-function playWildFromHand(handIndex) {
+function playWildFromHand(handIndex, soulPayAmount = undefined) {
   if (!requireActivePlayerControl()) return false;
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
   if (!card || card.type !== "wild") return fail("ワイルドカードを選択してください。");
-  if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
+  if (
+    soulPayAmount === undefined
+    && requestSoulPayChoice(player, card.cost, card, { type: "wild", handIndex })
+  ) return true;
+  if (!payForCard(player, card.cost, card, { soulPayAmount })) return fail("資源が不足しています。");
   revealCardUse(state.activePlayer, card, "set");
   player.hand.splice(handIndex, 1);
   player.wildZone.push({ ...card, faceDown: true });
@@ -11369,12 +11447,16 @@ function playWildFromHand(handIndex) {
   return true;
 }
 
-function playGrandFromHand(handIndex) {
+function playGrandFromHand(handIndex, soulPayAmount = undefined) {
   if (!requireActivePlayerControl()) return false;
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
   if (!card || card.type !== "grand") return fail("グランドカードを選択してください。");
-  if (!payForCard(player, card.cost, card)) return fail("資源が不足しています。");
+  if (
+    soulPayAmount === undefined
+    && requestSoulPayChoice(player, card.cost, card, { type: "grand", handIndex })
+  ) return true;
+  if (!payForCard(player, card.cost, card, { soulPayAmount })) return fail("資源が不足しています。");
   revealCardUse(state.activePlayer, card, "play");
   player.hand.splice(handIndex, 1);
   card.rested = false;
@@ -11387,12 +11469,16 @@ function playGrandFromHand(handIndex) {
   return true;
 }
 
-function playStruct(index) {
+function playStruct(index, soulPayAmount = undefined) {
   if (!requireActivePlayerControl()) return false;
   const player = state.players[state.activePlayer];
   const card = player.structDeck[index];
   if (!card) return;
-  if (!payForCard(player, card.cost, card)) return fail("施設のプレイコストが不足しています。");
+  if (
+    soulPayAmount === undefined
+    && requestSoulPayChoice(player, card.cost, card, { type: "struct", index })
+  ) return true;
+  if (!payForCard(player, card.cost, card, { soulPayAmount })) return fail("施設のプレイコストが不足しています。");
   revealCardUse(state.activePlayer, card, "build");
   syncBundledRuntimeCard(card);
   ensureStructPhaseAbilities(card);
@@ -12856,9 +12942,17 @@ function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
   const damage = capUnitDamage(target, rawAmount, game);
   if (damage > 0) revealAmbushUnit(game, target);
   target.currentHp = (target.currentHp ?? target.maxHp ?? target.hp ?? 0) - damage;
-  const triggerResult = triggerAbilities(game, target.owner, target, "onDamageReceived", { ...source, damage });
+  if (options.cleanup === false) game._deferDestroyedCleanup = (game._deferDestroyedCleanup || 0) + 1;
+  let triggerResult;
+  try {
+    triggerResult = triggerAbilities(game, target.owner, target, "onDamageReceived", { ...source, damage });
+  } finally {
+    if (options.cleanup === false) game._deferDestroyedCleanup = Math.max(0, (game._deferDestroyedCleanup || 1) - 1);
+  }
   const pending = triggerResult === "pending" || !!game.pendingChoice || !!game.pendingTarget;
-  cleanupAllDestroyed(options.killer ?? source?.source ?? null, game);
+  if (options.cleanup !== false) {
+    cleanupAllDestroyed(options.killer ?? source?.source ?? null, game);
+  }
   return { damage, pending };
 }
 
@@ -15203,12 +15297,32 @@ const HAND_SELECTION_CHOICE_TYPES = new Set([
   "sadGirlHandUnitGive",
   "tsunataiRiteHand",
   "lifeCounterPayment",
+  "fieldExperiment",
+  "revealTagsForResources",
+]);
+
+const DECK_SELECTION_CHOICE_TYPES = new Set([
+  "searchDeckPick",
+  "revealPick",
+  "soulPay",
 ]);
 
 function isHandSelectionPendingChoice(pending = state.pendingChoice) {
   if (!pending) return false;
   if (HAND_SELECTION_CHOICE_TYPES.has(pending.type)) return true;
   return pending.type === "deployHeroFromAttack" && pending.step === "chooseHero";
+}
+
+function isPrivateCardSelectionPendingChoice(pending = state.pendingChoice) {
+  return isHandSelectionPendingChoice(pending) || DECK_SELECTION_CHOICE_TYPES.has(pending?.type);
+}
+
+function shouldHideCardSelectionFromViewer(pending = state.pendingChoice) {
+  return Boolean(
+    pending
+    && isPrivateCardSelectionPendingChoice(pending)
+    && pending.playerId !== viewerPlayerId()
+  );
 }
 
 function shouldShowPlayerHandToViewer(playerId) {
@@ -15632,6 +15746,23 @@ function drawChoiceOverlay() {
   }
   const pending = state.pendingChoice;
   if (!pending) return;
+  if (shouldHideCardSelectionFromViewer(pending)) {
+    ctx.fillStyle = "rgba(0, 0, 8, 0.75)";
+    ctx.fillRect(0, 0, W, H);
+    addHit(0, 0, W, H, () => {});
+    const x = W / 2 - 250;
+    const y = H / 2 - 90;
+    drawChoicePanelBase(x, y, 500, 180, "rgba(50,70,120,0.75)", "#6080d0");
+    ctx.fillStyle = "#d8e4ff";
+    ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("相手がカードを選択中", W / 2, y + 68);
+    ctx.fillStyle = "rgba(180,195,230,0.8)";
+    ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("デッキ・手札の内容は非公開です。", W / 2, y + 104);
+    ctx.textAlign = "left";
+    return;
+  }
   // deployHeroFromAttack/chooseCell overlays on top of board without darkening
   if (pending.type === "deployHeroFromAttack" && pending.step === "chooseCell") {
     drawDeployHeroFromAttackPanel(pending);
@@ -15697,6 +15828,46 @@ function drawChoiceOverlay() {
   else if (pending.type === "payDefenderActCostBonus") drawPayDefenderActCostBonusPanel(pending);
   else if (pending.type === "payEnemyAttackCostsAndRest") drawPayEnemyAttackCostsAndRestPanel(pending);
   else if (pending.type === "payOptionalOnSummonSearch") drawPayOptionalOnSummonSearchPanel(pending);
+  else if (pending.type === "soulPay") drawSoulPayPanel(pending);
+}
+
+function drawSoulPayPanel(pending) {
+  const x = W / 2 - 320;
+  const y = H / 2 - 190;
+  const w = 640;
+  const h = 380;
+  drawChoicePanelBase(x, y, w, h, "rgba(100,55,150,0.78)", "#a060e0");
+  ctx.fillStyle = "#ead8ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」 [魂]支払い`, x + 28, y + 42);
+  ctx.fillStyle = "rgba(220,200,245,0.88)";
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`魔コスト${pending.magicCost}のうち、墓地から除外して支払う枚数を選択`, x + 28, y + 74);
+  ctx.fillStyle = "rgba(190,170,225,0.75)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(pending.unitsOnly ? "1枚につき墓地のユニットカード1枚を除外" : "1枚につき墓地のカード1枚を除外", x + 28, y + 98);
+  if (!canControlChoicePlayer(pending.playerId)) return;
+  const options = [...(pending.canPayWithoutSoul ? [0] : []), ...(pending.amounts || [])];
+  const buttonW = 136;
+  const buttonH = 38;
+  const gap = 12;
+  const cols = 4;
+  options.forEach((amount, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const label = amount === 0 ? "[魂]を使わない" : `[魂] × ${amount}`;
+    drawButton(
+      x + 28 + col * (buttonW + gap),
+      y + 128 + row * (buttonH + gap),
+      buttonW,
+      buttonH,
+      label,
+      () => resolveSoulPayChoice(amount),
+      null,
+      { accent: amount === 0 ? "dim" : "p1" },
+    );
+  });
+  drawButton(x + w / 2 - 80, y + h - 58, 160, 36, "プレイを中止", cancelSoulPayChoice, null, { accent: "dim" });
 }
 
 function drawExposureManagementPanel(pending) {
@@ -18530,6 +18701,26 @@ function roundRect(x, y, w, h, r, fill, stroke, lineWidth = 2) {
   }
 }
 
+function pendingChoiceSummaryForViewer() {
+  const pending = state.pendingChoice;
+  if (!pending) return null;
+  if (shouldHideCardSelectionFromViewer(pending)) {
+    return { type: "privateCardSelection", playerId: pending.playerId, hidden: true };
+  }
+  return {
+    type: pending.type,
+    card: pending.cardName,
+    selectedHandIndexes: [...(pending.selectedHandIndexes || [])],
+    selected: pending.selected || [],
+    selectedUnitInstanceId: pending.selectedUnitInstanceId ?? null,
+    selectedStructIndex: pending.selectedStructIndex ?? null,
+    selectedHandIndex: pending.selectedHandIndex ?? null,
+    choices: pending.type === "mysticCapture"
+      ? mysticCaptureChoices().map(({ card, handIndex }) => ({ handIndex, name: card.name, tags: tagLabels(card) }))
+      : [],
+  };
+}
+
 function gameSummary() {
   return {
     note: "Canvas coordinates origin top-left; x right, y down. Board rows 0-3 from Player 2 side to Player 1 side.",
@@ -18568,20 +18759,7 @@ function gameSummary() {
     pendingTarget: state.pendingTarget
       ? { card: state.pendingTarget.card.name, target: state.pendingTarget.ability.target, effect: state.pendingTarget.ability.effect }
       : null,
-    pendingChoice: state.pendingChoice
-      ? {
-          type: state.pendingChoice.type,
-          card: state.pendingChoice.cardName,
-          selectedHandIndexes: [...(state.pendingChoice.selectedHandIndexes || [])],
-          selected: state.pendingChoice.selected || [],
-          selectedUnitInstanceId: state.pendingChoice.selectedUnitInstanceId ?? null,
-          selectedStructIndex: state.pendingChoice.selectedStructIndex ?? null,
-          selectedHandIndex: state.pendingChoice.selectedHandIndex ?? null,
-          choices: state.pendingChoice.type === "mysticCapture"
-            ? mysticCaptureChoices().map(({ card, handIndex }) => ({ handIndex, name: card.name, tags: tagLabels(card) }))
-            : [],
-        }
-      : null,
+    pendingChoice: pendingChoiceSummaryForViewer(),
     effectQueueCount: state.effectQueue.length,
     players: Object.fromEntries(
       Object.entries(state.players).map(([id, player]) => [
@@ -18605,16 +18783,18 @@ function gameSummary() {
           },
           coreHp: player.core.hp,
           resources: player.resources,
-          hand: player.hand.map((card) => ({
-            name: card.name,
-            type: card.type,
-            faction: card.faction || null,
-            tags: tagLabels(card),
-            variant: card.variant || null,
-            cost: card.cost,
-            keywords: keywordLabels(card),
-            image: cardImageSource(card),
-          })),
+          hand: id === viewerPlayerId()
+            ? player.hand.map((card) => ({
+                name: card.name,
+                type: card.type,
+                faction: card.faction || null,
+                tags: tagLabels(card),
+                variant: card.variant || null,
+                cost: card.cost,
+                keywords: keywordLabels(card),
+                image: cardImageSource(card),
+              }))
+            : player.hand.map(() => ({ hidden: true })),
           structs: player.structs.map((card) => card.name),
           tactZone: player.tactZone.map((card) => card.name),
           wildZone: player.wildZone.map((card) => ({ type: card.type, faceDown: Boolean(card.faceDown) })),
@@ -18790,6 +18970,10 @@ const testing = {
   resolveRevealPick,
   resolveRevealPickSkip,
   resolveSearchDeckPick,
+  resolveReviveFromDump,
+  resolveSummonPlacement,
+  resolveSoulPayChoice,
+  cancelSoulPayChoice,
   resolveChargeAttack,
   resolvePayOnAttackEnhance,
   resolvePayDefenderActCostBonus,
