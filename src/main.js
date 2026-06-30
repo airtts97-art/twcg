@@ -1666,7 +1666,7 @@ const abilityEffects = {
       queueItem: { playerId, card, ability: { effect: "colorfulTurnEndRemap" }, source: { zone: "board" } },
     };
     game.selected = { kind: "choice", choice: "colorfulRemapCost" };
-    game.message = "色彩: ユニットを選んでコストの資源種を変更（スキップ可）";
+    game.message = "色彩: 場のユニット1体のコスト資源種を変更（スキップ可・場のみ）";
     return "pending";
   },
   sheriffOnSummon({ game, playerId, card }) {
@@ -7485,6 +7485,17 @@ function consolidatePlayCostToResource(cost, resource) {
   return next;
 }
 
+function getUnitFieldPlayCost(unit) {
+  if (!unit) return {};
+  if (unit.fieldPlayCostRemap) return { ...unit.fieldPlayCostRemap };
+  return unit.cost || {};
+}
+
+function setUnitFieldPlayCostRemap(unit, resource) {
+  if (!unit) return;
+  unit.fieldPlayCostRemap = consolidatePlayCostToResource(unit.cost, resource);
+}
+
 function makeUnit(cardId, owner, row, col, options = {}) {
   const template = findCatalogCard(cardId);
   const card = cloneCard(template || cardCatalog.main[cardId]);
@@ -7788,7 +7799,7 @@ function isPlayBlockedBySadGirl(playerId, card) {
   const opponent = opponentOf(playerId);
   const sadGirlActive = unitsOwnedBy(opponent).some((unit) => unit.id === "card_1755671140352");
   if (!sadGirlActive) return false;
-  return unitsOwnedBy(opponent).some((unit) => sameResourceCost(unit.cost || {}, card.cost || {}));
+  return unitsOwnedBy(opponent).some((unit) => sameResourceCost(getUnitFieldPlayCost(unit), card.cost || {}));
 }
 
 function applyConditionalBuff(unit, key, active, { atk = 0, hp = 0 } = {}) {
@@ -9274,7 +9285,7 @@ function resolveColorfulRemapUnit(unitIndex) {
   if (!unit) return false;
   pending.selectedUnitInstanceId = unit.instanceId;
   pending.step = "pickResource";
-  state.message = "色彩: コストをまとめる資源の種類を選択";
+  state.message = "色彩: 場のコストをまとめる資源の種類を選択";
   render();
   return true;
 }
@@ -9284,9 +9295,9 @@ function resolveColorfulRemapResource(resource) {
   if (pending?.type !== "colorfulRemapCost" || pending.step !== "pickResource") return false;
   const unit = pending.units.find((u) => u.instanceId === pending.selectedUnitInstanceId);
   if (!unit) return false;
-  const before = formatCost(unit.cost);
-  unit.cost = consolidatePlayCostToResource(unit.cost, resource);
-  log(state, `${state.players[pending.playerId].name}: 「${unit.name}」のコストを${before}→${formatCost(unit.cost)}に変更`);
+  const before = formatCost(getUnitFieldPlayCost(unit));
+  setUnitFieldPlayCostRemap(unit, resource);
+  log(state, `${state.players[pending.playerId].name}: 「${unit.name}」の場のコストを${before}→${formatCost(getUnitFieldPlayCost(unit))}に変更`);
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
@@ -12620,6 +12631,7 @@ function stripRuntime(unit) {
   delete copy.attackArmorBonus;
   delete copy.dealtDamageThisTurn;
   delete copy.redirectingDamage;
+  delete copy.fieldPlayCostRemap;
   return copy;
 }
 
@@ -15326,7 +15338,7 @@ function drawColorfulRemapPanel(pending) {
   ctx.fillStyle = "#c8d8f0";
   ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
   if (pending.step === "pickResource") {
-    ctx.fillText("コストをまとめる資源を選択", x + 28, y + 34);
+    ctx.fillText("場のコストをまとめる資源を選択", x + 28, y + 34);
     let bx = x + 28;
     for (const key of RESOURCE_KEYS) {
       drawButton(bx, y + 60, 72, 28, RESOURCE_LABELS[key], () => resolveColorfulRemapResource(key));
@@ -15334,10 +15346,10 @@ function drawColorfulRemapPanel(pending) {
     }
     return;
   }
-  ctx.fillText(`${pending.cardName}: コスト変更するユニットを選択`, x + 28, y + 34);
+  ctx.fillText(`${pending.cardName}: 場のコストを変更するユニットを選択`, x + 28, y + 34);
   pending.units.forEach((unit, i) => {
     drawSelectableChoiceCard(x + 28 + (i % 4) * 154, y + 56 + Math.floor(i / 4) * 150, 140, 196, unit, {
-      label: `${unit.name} (${formatCost(unit.cost)})`,
+      label: `${unit.name} (${formatCost(getUnitFieldPlayCost(unit))})`,
       onClick: () => resolveColorfulRemapUnit(i),
     });
   });
