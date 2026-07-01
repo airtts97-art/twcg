@@ -1,0 +1,20 @@
+{
+  "id": "card_1782887804196",
+  "name": "【正体究明(フトウメイナタビジ)】",
+  "type": "タクト",
+  "world": "正体不明",
+  "description": "場に自分の「正体不明」ではないユニットがおらず、自分の「正体不明」のユニットが3体以上居なければプレイできない。\n以下から1つ選んで適用する。\n・自分の墓地から「正体不明」のユニットを1体「ターン終了時：デッキの一番上に戻る」を与えて場に出す。\n・場の自分のカード1枚の[不動][不攻]を消す。",
+  "costs": {
+    "play": { "human": 0, "gold": 0, "magic": 1, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "tags": [],
+  "roles": [],
+  "rarity": "通常",
+  "limit": 4,
+  "flavorText": "",
+  "imageUrl": "assets/cards/card_1782887804196.jpeg"
+}

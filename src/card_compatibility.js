@@ -25,6 +25,8 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "mysticCapture", "damageEnemyCore", "damageTargetUnit", "grantDestroyGain", "chooseExchange",
   "structPayRestChooseResource", "structPayDrawProduce", "structPayProduce", "identityPrivateOnSummon", "identityKaijuSummonFromDump",
   "stripNeutralUnitAbilities", "discardEqualToFieldUnits", "colorfulTurnEndRemap", "sheriffOnSummon",
+  "identityInvestigationPlay", "identityGhostAttackDebuff", "identityTurnEndFieldDecay",
+  "identityGhostRevivePrivateFromDump", "returnSelfToDeckTop",
   "imposterTactPlay", "imposterDestroyNeutral",
   "otherworldKinTactPlay",
   "northeastGloryTactPlay",

@@ -1201,4 +1201,54 @@ export default [
     rarity: "神話",
     imageUrl: "assets/cards/card_1782813364684.jpeg",
   },
+  {
+    id: "card_1782887804196",
+    name: "【正体究明(フトウメイナタビジ)】",
+    type: "タクト",
+    world: "正体不明",
+    description:
+      "場に自分の「正体不明」ではないユニットがおらず、自分の「正体不明」のユニットが3体以上居なければプレイできない。\n"
+      + "以下から1つ選んで適用する。\n"
+      + "・自分の墓地から「正体不明」のユニットを1体「ターン終了時：デッキの一番上に戻る」を与えて場に出す。\n"
+      + "・場の自分のカード1枚の[不動][不攻]を消す。",
+    flavorText: "",
+    tags: [],
+    costs: {
+      play: { human: 0, gold: 0, magic: 1, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: {},
+      choice: [],
+      choiceAct: [],
+    },
+    generates: {},
+    limit: 4,
+    roles: [],
+    rarity: "通常",
+  },
+  {
+    id: "card_1782888174807",
+    name: "【正体判明(アイデンティ)】衰退の病(ゴースト)",
+    type: "ユニット",
+    world: "正体不明",
+    attack: 0,
+    defense: 5,
+    description:
+      "(このユニットの世界はニュートラルとしても扱う)\n"
+      + "このユニットは｢【正体不明】虚空｣を裏に重ねた｢【正体不明】私｣を破壊しなければ出せない。\n"
+      + "[不動][衝撃][曲射③]\n"
+      + "攻撃時：対象のユニットは±0/-Xの修正を得る。\n"
+      + "ターン終了時：全てのカードは-X/-1の修正を得る。(X=自分の場の「正体不明」ユニットの数)\n"
+      + "破壊時：墓地から「【正体不明】私」を場に出す。",
+    flavorText: "",
+    tags: ["呪い", "正体"],
+    costs: {
+      play: { human: 0, gold: 0, magic: 1, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: { human: 0, gold: 0, magic: 3, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: {},
+    limit: 4,
+    roles: [],
+    rarity: "通常",
+  },
 ];

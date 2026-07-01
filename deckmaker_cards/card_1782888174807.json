@@ -1,0 +1,22 @@
+{
+  "id": "card_1782888174807",
+  "name": "【正体判明(アイデンティ)】衰退の病(ゴースト)",
+  "type": "ユニット",
+  "world": "正体不明",
+  "attack": 0,
+  "defense": 5,
+  "description": "(このユニットの世界はニュートラルとしても扱う)\nこのユニットは｢【正体不明】虚空｣を裏に重ねた｢【正体不明】私｣を破壊しなければ出せない。\n[不動][衝撃][曲射③]\n攻撃時：対象のユニットは±0/-Xの修正を得る。\nターン終了時：全てのカードは-X/-1の修正を得る。(X=自分の場の「正体不明」ユニットの数)\n破壊時：墓地から「【正体不明】私」を場に出す。",
+  "costs": {
+    "play": { "human": 0, "gold": 0, "magic": 1, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "act": { "human": 0, "gold": 0, "magic": 3, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "tags": ["呪い", "正体"],
+  "roles": [],
+  "rarity": "通常",
+  "limit": 4,
+  "flavorText": "",
+  "imageUrl": "assets/cards/card_1782888174807.jpeg"
+}

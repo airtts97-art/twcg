@@ -1987,6 +1987,78 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const investigationCard = api.cardCatalog.main["card_1782887804196"];
+  const ghostCard = api.cardCatalog.main["card_1782888174807"];
+  const ghostAbilities = ghostCard?.abilities || [];
+  out.push({
+    name: "identity_investigation_parsed",
+    summary: {
+      found: (investigationCard?.abilities || []).some((a) => a.effect === "identityInvestigationPlay"),
+    },
+  });
+  out.push({
+    name: "identity_ghost_parsed",
+    summary: {
+      atk: ghostCard?.atk,
+      hp: ghostCard?.hp,
+      shock: (ghostCard?.keywords || []).some((k) => k.id === "shock"),
+      arc: (ghostCard?.keywords || []).some((k) => k.id === "arc"),
+      immobile: (ghostCard?.keywords || []).some((k) => k.id === "immobile"),
+      countsAsNeutral: ghostCard?.countsAsNeutral === true,
+      identityRevealGate: ghostCard?.identityRevealGate?.stackedId === "card_1782297782539",
+      onAttack: ghostAbilities.some((a) => a.effect === "identityGhostAttackDebuff"),
+      onTurnEnd: ghostAbilities.some((a) => a.effect === "identityTurnEndFieldDecay"),
+      onDestroy: ghostAbilities.some((a) => a.effect === "identityGhostRevivePrivateFromDump"),
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.placeUnit("card_1782211899987", "p1", 2, 0);
+  api.testing.placeUnit("card_1782297782539", "p1", 2, 1);
+  api.testing.placeUnit("card_1782208064951", "p1", 2, 2);
+  api.testing.placeUnit("militia", "p1", 2, 3);
+  const blockedInvestigationIdx = api.testing.addHandCard("p1", "card_1782887804196");
+  const blockedInvestigationPlay = api.testing.playTactFromHand(blockedInvestigationIdx);
+  out.push({
+    name: "identity_investigation_play_blocked_non_identity",
+    summary: {
+      blocked: blockedInvestigationPlay === false,
+      tactStillInHand: !!api.state.players.p1.hand[blockedInvestigationIdx],
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.placeUnit("card_1782211899987", "p1", 2, 0);
+  api.testing.placeUnit("card_1782297782539", "p1", 2, 1);
+  api.testing.placeUnit("card_1782208064951", "p1", 2, 2);
+  api.testing.addDumpCard("p1", "card_1782211496085");
+  const investigationHandIdx = api.testing.addHandCard("p1", "card_1782887804196");
+  api.testing.playTactFromHand(investigationHandIdx);
+  out.push({
+    name: "identity_investigation_mode_choice",
+    summary: {
+      pending: api.state.pendingChoice?.type === "identityInvestigation",
+      step: api.state.pendingChoice?.step,
+      modes: api.state.pendingChoice?.modes || [],
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  const ghostBlockedSummon = api.testing.summonFromHand(api.testing.addHandCard("p1", "card_1782888174807"), 2, 0);
+  out.push({
+    name: "identity_ghost_gate_blocked",
+    summary: {
+      blocked: ghostBlockedSummon === false,
+      stillInHand: api.state.players.p1.hand.some((c) => c.id === "card_1782888174807"),
+    },
+  });
+
   reset();
   api.testing.placeUnit("card_1755671140352", "p1", 3, 0);
   api.testing.placeUnit("militia", "p2", 0, 1);
@@ -3296,5 +3368,17 @@ assert(byName.sad_girl_play_cost_lock.blockedSameCost === true, "骨の少女 sh
 assert(byName.sad_girl_play_cost_lock.allowedDifferentCost === true, "骨の少女 should allow different play costs");
 assert(byName.sad_girl_play_cost_lock.blockedUnitStillInHand === true, "blocked summon should leave card in hand");
 assert(byName.sad_girl_play_cost_lock_inactive_without_sad_girl.summonOk === true, "play cost lock should not apply without Sad Girl");
+
+assert(byName.identity_investigation_parsed.found === true, "正体究明 should parse identityInvestigationPlay");
+assert(byName.identity_ghost_parsed.atk === 0, "衰退の病 should have ATK 0");
+assert(byName.identity_ghost_parsed.hp === 5, "衰退の病 should have HP 5");
+assert(byName.identity_ghost_parsed.onAttack === true, "衰退の病 should parse attack debuff");
+assert(byName.identity_ghost_parsed.onTurnEnd === true, "衰退の病 should parse turn-end field decay");
+assert(byName.identity_ghost_parsed.onDestroy === true, "衰退の病 should parse onDestroy revive");
+assert(byName.identity_ghost_parsed.identityRevealGate === true, "衰退の病 should require 私+虚空 stack");
+assert(byName.identity_investigation_play_blocked_non_identity.blocked === true, "正体究明 should block when non-identity ally exists");
+assert(byName.identity_investigation_mode_choice.pending === true, "正体究明 should open mode choice when legal");
+assert(byName.identity_investigation_mode_choice.modes.includes("reviveIdentity"), "正体究明 should offer revive mode");
+assert(byName.identity_ghost_gate_blocked.blocked === true, "衰退の病 should block without 私+虚空 sacrifice");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));

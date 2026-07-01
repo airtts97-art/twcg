@@ -81,6 +81,8 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1782804595225", // 名前のない神
   "card_1782810886587", // バベル社三等社員
   "card_1782813364684", // セカンド・バベル
+  "card_1782887804196", // 正体究明
+  "card_1782888174807", // 正体判明・衰退の病
 ]);
 
 export function isImplementedCard(cardId) {

@@ -370,6 +370,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782804595225",  // 名前のない神
   "card_1782810886587",  // バベル社三等社員
   "card_1782813364684",  // セカンド・バベル
+  "card_1782887804196",  // 正体究明
+  "card_1782888174807",  // 正体判明・衰退の病
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -660,6 +662,7 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
   const {
     queueItem = null,
     grantTag = null,
+    grantTurnEndDeckTop = false,
     message = "ユニットを出すマスをクリックしてください",
     allowRaid = false,
     validRows = null,
@@ -670,6 +673,7 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
     playerId,
     spec,
     grantTag,
+    grantTurnEndDeckTop,
     validRows: validRows || summonPlacementRowsForPlayer(game, playerId, { allowRaid }),
     queueItem,
     onComplete,
@@ -1750,6 +1754,68 @@ const abilityEffects = {
     game.selected = { kind: "choice", choice: "sheriffRemoveKeywords" };
     game.message = "保安官: [不動][不攻]を消す味方ユニットを選択";
     return "pending";
+  },
+  identityInvestigationPlay({ game, playerId, card }) {
+    const modes = identityInvestigationAvailableModes(game, playerId);
+    if (!modes.length) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 適用できる効果がありません`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "identityInvestigation",
+      step: "chooseMode",
+      playerId,
+      cardName: card.name,
+      modes,
+      queueItem: { playerId, card, ability: { effect: "identityInvestigationPlay" }, source: { zone: "tact" } },
+    };
+    game.selected = { kind: "choice", choice: "identityInvestigation" };
+    game.message = `${card.name}: 効果を1つ選んでください。`;
+    return "pending";
+  },
+  identityGhostAttackDebuff({ game, playerId, card, source }) {
+    const target = source?.attackTarget;
+    if (!target || target.owner === playerId) return;
+    const x = countIdentityUnknownUnits(playerId, game);
+    if (x <= 0) return;
+    applyPermanentStatMod(target, 0, -x, game, `「${card.name}」攻撃時`);
+  },
+  identityTurnEndFieldDecay({ game, playerId, card }) {
+    const x = countIdentityUnknownUnits(playerId, game);
+    if (x <= 0) return;
+    for (const pid of ["p1", "p2"]) {
+      for (const unit of unitsOwnedBy(pid, game)) {
+        applyPermanentStatMod(unit, -x, -1, game);
+      }
+    }
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 全场-${x}/-1（正体不明${x}体）`);
+  },
+  identityGhostRevivePrivateFromDump({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const targetId = ability?.summonId || "card_1782211899987";
+    const dumpIdx = player.dump.findIndex((c) => c.id === targetId);
+    if (dumpIdx < 0) {
+      log(game, `${player.name}: 墓地に「【正体不明】私」がない`);
+      return;
+    }
+    const placement = findSummonPlacement(game, playerId, player.dump[dumpIdx]);
+    if (!placement) {
+      log(game, `${player.name}: 配置できるマスがない`);
+      return;
+    }
+    const [dumpCard] = player.dump.splice(dumpIdx, 1);
+    notifyDumpChanged(game, playerId);
+    const unit = makeUnit(dumpCard.id, playerId, placement.row, placement.col, { fromDump: true });
+    commitUnitToBoard(game, unit, placement.row, placement.col);
+    triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
+    log(game, `${player.name}: 「${card.name}」破壊 — 墓地から「${unit.name}」を出した`);
+  },
+  returnSelfToDeckTop({ game, playerId, card }) {
+    if (card?.row == null || card?.col == null) return;
+    game.board[card.row][card.col] = null;
+    const player = game.players[playerId];
+    player.mainDeck.unshift(stripRuntime(card));
+    log(game, `${player.name}: 「${card.name}」をデッキの一番上に戻した`);
   },
   otherworldKinTactPlay({ game, playerId, card }) {
     beginOtherworldKinChoice(game, playerId, card);
@@ -5646,6 +5712,22 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
+  if (card.id === "card_1782887804196") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "identityInvestigationPlay" });
+  }
+
+  if (card.id === "card_1782888174807") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onAttack", effect: "identityGhostAttackDebuff" });
+    abilities.push({ trigger: "onTurnEnd", effect: "identityTurnEndFieldDecay" });
+    abilities.push({
+      trigger: "onDestroy",
+      effect: "identityGhostRevivePrivateFromDump",
+      summonId: "card_1782211899987",
+    });
+  }
+
   if (card.id === "card_1782802249493") {
     if (!abilities.some((a) => a.effect === "damageHighestEnemyUnitByOwnAtk")) {
       abilities.push({ trigger: "onSummon", effect: "damageHighestEnemyUnitByOwnAtk" });
@@ -5986,6 +6068,10 @@ function fromDeckmakerCard(card) {
     if (card.id === "card_1753664097092") removeKeywords(base, ["mobile"]);
     if (card.id === "card_1782212242238") {
       base.identityRevealGate = { hostId: "card_1782211899987", stackedId: "card_1755671140352" };
+      base.countsAsNeutral = true;
+    }
+    if (card.id === "card_1782888174807") {
+      base.identityRevealGate = { hostId: "card_1782211899987", stackedId: "card_1782297782539" };
       base.countsAsNeutral = true;
     }
     if (["card_1782211899987", "card_1782297782539", "card_1782208064951", "card_1782211496085"].includes(card.id)) {
@@ -7858,6 +7944,58 @@ function findIdentityRevealSacrifice(playerId, gate, game = state) {
   });
 }
 
+function isIdentityUnknownCard(card) {
+  const faction = card?.faction || card?.world || "";
+  return faction.includes("正体不明");
+}
+
+function countIdentityUnknownUnits(playerId, game = state) {
+  return unitsOwnedBy(playerId, game).filter((unit) => isIdentityUnknownCard(unit)).length;
+}
+
+function canPlayIdentityInvestigationTact(playerId, game = state) {
+  const units = unitsOwnedBy(playerId, game);
+  const identityCount = units.filter((unit) => isIdentityUnknownCard(unit)).length;
+  const hasNonIdentity = units.some((unit) => !isIdentityUnknownCard(unit));
+  return !hasNonIdentity && identityCount >= 3;
+}
+
+function identityInvestigationAvailableModes(game, playerId) {
+  const player = game.players[playerId];
+  const modes = [];
+  const dumpEligible = player.dump.filter((c) => c.type === "unit" && isIdentityUnknownCard(c));
+  if (dumpEligible.length && findSummonPlacement(game, playerId, dumpEligible[0])) {
+    modes.push("reviveIdentity");
+  }
+  const allies = unitsOwnedBy(playerId, game).filter(
+    (unit) => hasKeyword(unit, "immobile") || hasKeyword(unit, "noAttack"),
+  );
+  if (allies.length) modes.push("removeImmobileNoAttack");
+  return modes;
+}
+
+function identityRevealGateFailMessage(gate) {
+  if (gate?.stackedId === "card_1782297782539") {
+    return "【正体不明】私（虚空を重ねた状態）が場にないため出撃できません。";
+  }
+  if (gate?.stackedId === "card_1755671140352") {
+    return "【正体不明】私（骨の少女を重ねた状態）が場にないため出撃できません。";
+  }
+  return "正体判明の出撃条件を満たせません。";
+}
+
+function applyPermanentStatMod(unit, atkDelta, hpDelta, game, sourceLabel = "") {
+  if (!unit) return;
+  if (atkDelta) unit.atk = Math.max(0, (unit.atk || 0) + atkDelta);
+  if (hpDelta) {
+    const beforeMax = unit.maxHp || unit.hp || 0;
+    const beforeCur = unit.currentHp ?? beforeMax;
+    unit.maxHp = Math.max(1, beforeMax + hpDelta);
+    unit.currentHp = Math.max(1, Math.min(beforeCur + hpDelta, unit.maxHp));
+  }
+  if (sourceLabel) log(game, `${sourceLabel}：「${unit.name}」${atkDelta || 0}/${hpDelta || 0}の修正`);
+}
+
 function refreshBoardUnit(game, unit) {
   const template = cardCatalog.main[unit.id];
   if (!template) return;
@@ -9564,6 +9702,9 @@ function resolveSummonPlacement(row, col) {
       if (removed) notifyDumpChanged(state, pending.playerId);
     }
   }
+  if (pending.grantTurnEndDeckTop) {
+    unit.abilities = [...(unit.abilities || []), { trigger: "onTurnEnd", effect: "returnSelfToDeckTop" }];
+  }
   if (pending.grantTag) applyGrantedTag(unit, pending.grantTag);
   commitUnitToBoard(state, unit, row, col);
   log(state, `${player.name}: 「${unit.name}」を場に出した`);
@@ -9887,6 +10028,94 @@ function resolveColorfulRemapResource(resource) {
 function resolveSheriffRemoveKeywords(unitIndex) {
   const pending = state.pendingChoice;
   if (pending?.type !== "sheriffRemoveKeywords") return false;
+  const unit = pending.allies[unitIndex];
+  if (!unit) return false;
+  removeKeywords(unit, ["immobile", "noAttack"]);
+  log(state, `${state.players[pending.playerId].name}: 「${unit.name}」の[不動][不攻]を消した`);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveIdentityInvestigationMode(mode) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "identityInvestigation" || pending.step !== "chooseMode") return false;
+  if (!pending.modes?.includes(mode)) return false;
+  const qi = pending.queueItem;
+  if (mode === "reviveIdentity") {
+    const player = state.players[pending.playerId];
+    const eligible = [];
+    player.dump.forEach((c, dumpIndex) => {
+      if (!isUnitCard(c) || !isIdentityUnknownCard(c)) return;
+      eligible.push({ card: c, dumpIndex });
+    });
+    if (!eligible.length) {
+      state.message = "墓地に蘇生できる正体不明ユニットがいません。";
+      render();
+      return false;
+    }
+    state.pendingChoice = {
+      type: "identityInvestigation",
+      step: "pickDump",
+      playerId: pending.playerId,
+      cardName: pending.cardName,
+      eligible,
+      queueItem: qi,
+    };
+  } else if (mode === "removeImmobileNoAttack") {
+    const allies = unitsOwnedBy(pending.playerId, state).filter(
+      (unit) => hasKeyword(unit, "immobile") || hasKeyword(unit, "noAttack"),
+    );
+    if (!allies.length) {
+      state.message = "[不動][不攻]を消せる味方カードがいません。";
+      render();
+      return false;
+    }
+    state.pendingChoice = {
+      type: "identityInvestigation",
+      step: "removeKeywords",
+      playerId: pending.playerId,
+      cardName: pending.cardName,
+      allies,
+      queueItem: qi,
+    };
+  } else {
+    return false;
+  }
+  state.selected = { kind: "choice", choice: "identityInvestigation" };
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveIdentityInvestigationDump(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "identityInvestigation" || pending.step !== "pickDump") return false;
+  const entry = pending.eligible[index];
+  if (!entry?.card) return false;
+  beginSummonPlacementChoice(state, pending.playerId, {
+    kind: "unit",
+    cardId: entry.card.id,
+    fromDump: true,
+    dumpIndex: entry.dumpIndex,
+  }, {
+    grantTurnEndDeckTop: true,
+    queueItem: pending.queueItem,
+    message: `「${entry.card.name}」を蘇生するマスをクリック（ターン終了時：デッキの一番上）`,
+  });
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveIdentityInvestigationRemoveKeywords(unitIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "identityInvestigation" || pending.step !== "removeKeywords") return false;
   const unit = pending.allies[unitIndex];
   if (!unit) return false;
   removeKeywords(unit, ["immobile", "noAttack"]);
@@ -11425,7 +11654,7 @@ function placeUnitFromHand(handIndex, row, col, soulPayAmount = undefined) {
   if (!canMeetUnitStructRequirement(player, card)) return fail(`${card.requiredStructName || "\u5fc5\u8981\u30b9\u30c8\u30e9\u30af\u30c8"} \u304c\u306a\u3044\u305f\u3081\u51fa\u6483\u3067\u304d\u307e\u305b\u3093\u3002`);
   if (card.requiredSacrificeName && !findRequiredSacrificeUnit(state.activePlayer, card)) return fail(`${card.requiredSacrificeName} がないため出撃できません。`);
   if (card.identityRevealGate && !findIdentityRevealSacrifice(state.activePlayer, card.identityRevealGate)) {
-    return fail("【正体不明】私（骨の少女を重ねた状態）が場にないため出撃できません。");
+    return fail(identityRevealGateFailMessage(card.identityRevealGate));
   }
   if (!canSummonToRow(card, player, row)) {
     return fail(isOpponentSummonRow(state.activePlayer, row)
@@ -11487,6 +11716,13 @@ function playTactFromHand(handIndex, soulPayAmount = undefined) {
         (ability.cardId && c.id === ability.cardId) || (ability.cardName && c.name === ability.cardName)
       ));
       if (!hasTarget) return fail(`${card.name}: 手札に「${label}」が必要です。`);
+    }
+    if (ability.trigger === "onPlay" && ability.effect === "identityInvestigationPlay") {
+      if (!canPlayIdentityInvestigationTact(state.activePlayer, state)) {
+        return fail(`${card.name}: 正体不明ユニット3体以上かつ他世界ユニット0体が必要です。`);
+      }
+      const modes = identityInvestigationAvailableModes(state, state.activePlayer);
+      if (!modes.length) return fail(`${card.name}: 適用できる効果がありません。`);
     }
     if (ability.trigger === "onPlay" && ability.target) {
       const fakeItem = { ability, playerId: state.activePlayer, card };
@@ -16070,6 +16306,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "sadGirlHandUnitGive") drawSadGirlHandUnitGivePanel(pending);
   else if (pending.type === "tsunataiRiteHand") drawTsunataiRitePanel(pending);
   else if (pending.type === "sheriffRemoveKeywords") drawSheriffRemoveKeywordsPanel(pending);
+  else if (pending.type === "identityInvestigation") drawIdentityInvestigationPanel(pending);
   else if (pending.type === "imposterTact") drawImposterTactPanel(pending);
   else if (pending.type === "otherworldKin") drawOtherworldKinPanel(pending);
   else if (pending.type === "uniqueRiteDump") drawUniqueRiteDumpPanel(pending);
@@ -16493,6 +16730,73 @@ function drawSheriffRemoveKeywordsPanel(pending) {
       onClick: () => resolveSheriffRemoveKeywords(i),
     });
   });
+}
+
+function drawIdentityInvestigationPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  if (pending.step === "chooseMode") {
+    const x = 340, y = 200, w = 760, h = 300;
+    drawChoicePanelBase(x, y, w, h, "rgba(60,80,120,0.85)", "#7090d0");
+    ctx.fillStyle = "#d0e0ff";
+    ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`「${pending.cardName}」`, x + 28, y + 36);
+    ctx.fillStyle = "rgba(200,220,255,0.9)";
+    ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("以下から1つ選んで適用してください。", x + 28, y + 64);
+    const modeButtons = [
+      { id: "reviveIdentity", label: "墓地の正体不明ユニット1体を蘇生（ターン終了時：デッキの一番上）", yOff: 96 },
+      { id: "removeImmobileNoAttack", label: "場の自分のカード1枚の[不動][不攻]を消す", yOff: 146 },
+    ];
+    modeButtons.forEach(({ id, label, yOff }) => {
+      const enabled = pending.modes?.includes(id);
+      drawButton(
+        x + 28,
+        y + yOff,
+        w - 56,
+        38,
+        label,
+        isController && enabled ? () => resolveIdentityInvestigationMode(id) : null,
+        null,
+        enabled ? { accent: "p1" } : { accent: "dim" },
+      );
+    });
+    return;
+  }
+  if (pending.step === "pickDump") {
+    const eligible = pending.eligible || [];
+    const cardW = 108, cardH = 150, gap = 16;
+    const cols = Math.min(eligible.length, 5);
+    const w = Math.max(480, cols * (cardW + gap) + gap + 60);
+    const h = 280;
+    const x = (W - w) / 2;
+    const y = (H - h) / 2;
+    drawChoicePanelBase(x, y, w, h, "rgba(60,80,120,0.75)", "#7090d0");
+    ctx.fillStyle = "#d0e0ff";
+    ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${pending.cardName}: 蘇生する正体不明ユニット`, x + 24, y + 32);
+    const startX = x + 30;
+    const cardsY = y + 70;
+    eligible.forEach((entry, i) => {
+      const card = entry.card || entry;
+      const cx = startX + i * (cardW + gap);
+      drawCard(cx, cardsY, cardW, cardH, card, { selected: false });
+      if (isController) addHit(cx, cardsY, cardW, cardH, () => resolveIdentityInvestigationDump(i));
+    });
+    return;
+  }
+  if (pending.step === "removeKeywords") {
+    const x = 388, y = 180, w = 664, h = 320;
+    drawChoicePanelBase(x, y, w, h, "rgba(60,80,120,0.75)", "#7090d0");
+    ctx.fillStyle = "#d0e0ff";
+    ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${pending.cardName}: [不動][不攻]を消す味方`, x + 28, y + 34);
+    pending.allies.forEach((unit, i) => {
+      drawSelectableChoiceCard(x + 28 + i * 154, y + 56, 140, 196, unit, {
+        label: unit.name,
+        onClick: isController ? () => resolveIdentityInvestigationRemoveKeywords(i) : null,
+      });
+    });
+  }
 }
 
 function drawImposterTactPanel(pending) {
@@ -18913,6 +19217,11 @@ function abilityText(card) {
         summonToken: "トークン生成",
         gainActCostResources: "攻撃ダメージ時：相手アクトコスト資源を獲得",
         reviveUnitFromDump: `墓地からコスト${ability.maxCost}以下のユニットを蘇生`,
+        identityInvestigationPlay: "正体不明3体以上・他世界0体：蘇生か[不動][不攻]解除",
+        identityGhostAttackDebuff: "攻撃時：対象に±0/-X（X=正体不明ユニット数）",
+        identityTurnEndFieldDecay: "ターン終了時：全场-X/-1",
+        identityGhostRevivePrivateFromDump: "破壊時：墓地から【正体不明】私を出す",
+        returnSelfToDeckTop: "ターン終了時：デッキの一番上に戻る",
         restTargetNoUnrest: "相手ユニットをレスト（次ターン解除不可）",
         produceResourceCostHP: `ライフ${ability.hpCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         produceResourceCostHuman: `人${ability.humanCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
@@ -19290,6 +19599,9 @@ const testing = {
   resolveTacticalBombardmentMode,
   resolveTacticalBombStructChoice,
   resolveTacticalBombStructSkip,
+  resolveIdentityInvestigationMode,
+  resolveIdentityInvestigationDump,
+  resolveIdentityInvestigationRemoveKeywords,
   selectHandCard: selectHandCardForTest,
   selectStructDeckCard: selectStructDeckCardForTest,
   useSelectedHandCard,
