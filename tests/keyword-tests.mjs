@@ -239,6 +239,38 @@ const results = await page.evaluate(() => {
     },
   });
 
+  reset();
+  api.testing.setResources("p1", { funds: 20, people: 20, nature: 20, ore: 20, fuel: 20, electric: 20, magic: 20 });
+  api.testing.placeUnit("lightInfantry", "p1", 2, 4);
+  api.testing.placeUnit("lightInfantry", "p2", 1, 5);
+  const enemy = api.state.board[1][5];
+  const nearestDest = api.testing.findControlTransferDestination("p1", enemy.row);
+  const transferred = api.testing.transferUnitControl(enemy, "p1");
+  out.push({
+    name: "control_transfer_nearest_controlled_row",
+    summary: {
+      nearestRow: nearestDest?.row,
+      transferred,
+      enemyOwner: api.state.board[nearestDest?.row]?.[nearestDest?.col]?.owner,
+      enemyRow: api.state.board[nearestDest?.row]?.[nearestDest?.col]?.row,
+      rested: api.state.board[nearestDest?.row]?.[nearestDest?.col]?.rested,
+    },
+  });
+
+  reset();
+  api.testing.setResources("p1", { funds: 20, people: 20, nature: 20, ore: 20, fuel: 20, electric: 20, magic: 20 });
+  api.testing.placeUnit("lightInfantry", "p2", 1, 5);
+  const atlasTarget = api.state.board[1][5];
+  const atlasTransferred = api.testing.transferUnitControl(atlasTarget, "p1", { explicitRow: "firstRow" });
+  out.push({
+    name: "control_transfer_explicit_first_row",
+    summary: {
+      transferred: atlasTransferred,
+      row: api.state.board[3]?.find((unit) => unit?.owner === "p1")?.row,
+      owner: api.state.board[3]?.find((unit) => unit?.owner === "p1")?.owner,
+    },
+  });
+
   api.testing.importDeckmakerDeckData({
     name: "Deckmaker Sample",
     coreCardId: "frontierCore",
@@ -2690,6 +2722,12 @@ assert(byName.struct_zone_limit_replace.zoneContainsBuilt === true, "new struct 
 assert(byName.normalize_misplaced_struct_cards.moved === 2, "misplaced struct cards should be collected from other zones");
 assert(byName.normalize_misplaced_struct_cards.handHasStruct === false, "hand should not keep struct cards after normalize");
 assert(byName.normalize_misplaced_struct_cards.dumpHasStruct === false, "dump should not keep struct cards after normalize");
+assert(byName.control_transfer_nearest_controlled_row.transferred === true, "control transfer should succeed");
+assert(byName.control_transfer_nearest_controlled_row.nearestRow === 2, "stolen unit should move to nearest controller row");
+assert(byName.control_transfer_nearest_controlled_row.enemyOwner === "p1", "stolen unit should belong to new controller");
+assert(byName.control_transfer_nearest_controlled_row.rested === true, "stolen unit should rest on control transfer");
+assert(byName.control_transfer_explicit_first_row.transferred === true, "explicit first-row control transfer should succeed");
+assert(byName.control_transfer_explicit_first_row.row === 3, "Atlas-style control should move to controller first row");
 assert(byName.deckmaker_deck_imports.app.deckName === "Deckmaker Sample", "Deckmaker import should set deck name");
 assert(byName.deckmaker_deck_imports.app.deck.core === "frontierCore", "Deckmaker import should map coreCardId");
 assert(byName.deckmaker_deck_imports.app.deck.main.length === 3, "Deckmaker import should map mainDeckCardIds");

@@ -1810,21 +1810,19 @@ const abilityEffects = {
     game.message = `インポスター: コスト総量${playCost}のユニットを墓地から選ぶ`;
     return "pending";
   },
-  controlEnemyUnitToSummonRow({ game, playerId, target }) {
+  controlEnemyUnitToSummonRow({ game, playerId, target, ability }) {
     if (!target || target.owner === playerId) return;
-    const oldOwner = target.owner;
-    const oldRow = target.row;
-    const oldCol = target.col;
     const player = game.players[playerId];
-    const col = findFirstEmptyColInRow(game, player.summonRow);
-    if (col < 0) return;
-    game.board[oldRow][oldCol] = null;
-    target.owner = playerId;
-    target.row = player.summonRow;
-    target.col = col;
-    target.rested = true;
-    game.board[target.row][target.col] = target;
-    log(game, `${game.players[playerId].name}: 「${target.name}」の支配を得た`);
+    let explicitRow;
+    if (ability?.destinationRow === "firstRow" || ability?.destinationRow === "summonRow") {
+      explicitRow = player.summonRow;
+    } else if (Number.isInteger(ability?.destinationRow)) {
+      explicitRow = ability.destinationRow;
+    }
+    transferUnitControl(game, target, playerId, {
+      explicitRow,
+      rested: ability?.rested !== false,
+    });
   },
   prohibitOpponentTact({ game, playerId }) {
     if (!game.globalEffects) game.globalEffects = [];
@@ -2841,10 +2839,12 @@ const abilityEffects = {
   },
 };
 
-function findFirstEmptyColInRow(game, row) {
+function findFirstEmptyColInRow(game, row, { ignoreUnit } = {}) {
   if (row < 0 || row >= ROWS) return -1;
   for (const col of unitFieldColsForRow(row)) {
-    if (!game.board[row][col]) return col;
+    const occupant = game.board[row]?.[col];
+    if (occupant && occupant !== ignoreUnit) continue;
+    return col;
   }
   return -1;
 }
@@ -5178,7 +5178,7 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "card_1753660083940") {
     abilities.length = 0;
-    abilities.push({ trigger: "onPlay", effect: "controlEnemyUnitToSummonRow", target: "enemyUnit" });
+    abilities.push({ trigger: "onPlay", effect: "controlEnemyUnitToSummonRow", target: "enemyUnit", destinationRow: "firstRow" });
   }
 
   if (card.id === "card_1753659816385") {
@@ -9724,16 +9724,16 @@ function millOpponentDeckCards(game, playerId, amount = 1) {
 function applySadGirlHandUnitGive(game, playerId, sadGirlUnit, handIndex) {
   const player = game.players[playerId];
   const opponentId = opponentOf(playerId);
-  const opponent = game.players[opponentId];
   const handCard = player.hand[handIndex];
   if (!handCard || handCard.type !== "unit") return false;
-  const col = findFirstEmptyColInRow(game, opponent.summonRow);
-  if (col < 0) return false;
+  const referenceRow = PLAYERS[opponentId].summonRow;
+  const dest = findControlTransferDestination(game, opponentId, referenceRow);
+  if (!dest) return false;
   const [unitCard] = player.hand.splice(handIndex, 1);
-  const unit = makeUnit(unitCard.id, opponentId, opponent.summonRow, col, { rested: false });
-  commitUnitToBoard(game, unit, opponent.summonRow, col);
+  const unit = makeUnit(unitCard.id, opponentId, dest.row, dest.col, { rested: false });
+  commitUnitToBoard(game, unit, dest.row, dest.col);
   triggerAbilities(game, opponentId, unit, "onSummon");
-  log(game, `${player.name}: 「${sadGirlUnit.name}」— 手札の「${unit.name}」を相手の場に渡した`);
+  log(game, `${player.name}: 「${sadGirlUnit.name}」— 手札の「${unit.name}」を相手のコントロールで${dest.row + 1}行目へ渡した`);
   return true;
 }
 
@@ -11246,14 +11246,90 @@ function commitUnitToBoard(game, unit, row, col) {
   applyDescentReturnBlessing(g, unit);
 }
 
-function enemyInRow(playerId, row) {
-  return rowHasEnemyUnit(playerId, row);
-}
-
-function rowHasEnemyUnit(playerId, row) {
+function rowHasEnemyUnit(playerId, row, { ignoreUnit, game } = {}) {
   if (row < 0 || row >= ROWS) return false;
   const enemyId = opponentOf(playerId);
-  return state.board[row]?.some((unit) => unit?.owner === enemyId);
+  const board = game?.board || state.board;
+  return board[row]?.some((unit) => unit && unit !== ignoreUnit && unit.owner === enemyId);
+}
+
+function rowHasFriendlyUnit(playerId, row, { ignoreUnit, game } = {}) {
+  if (row < 0 || row >= ROWS) return false;
+  const board = game?.board || state.board;
+  return board[row]?.some((unit) => unit && unit !== ignoreUnit && unit.owner === playerId);
+}
+
+function playerControlsRow(playerId, row, { ignoreUnit, game } = {}) {
+  return rowHasFriendlyUnit(playerId, row, { ignoreUnit, game })
+    && !rowHasEnemyUnit(playerId, row, { ignoreUnit, game });
+}
+
+function rowIsUncontrolled(row, { ignoreUnit, game } = {}) {
+  if (row < 0 || row >= ROWS) return false;
+  const board = game?.board || state.board;
+  for (const col of unitFieldColsForRow(row)) {
+    const unit = board[row]?.[col];
+    if (unit && unit !== ignoreUnit) return false;
+  }
+  return true;
+}
+
+function rowDistance(fromRow, toRow) {
+  return Math.abs(fromRow - toRow);
+}
+
+function resolveControlTransferExplicitRow(playerId, explicitRow) {
+  if (explicitRow === "firstRow" || explicitRow === "summonRow") {
+    return PLAYERS[playerId].summonRow;
+  }
+  return Number.isInteger(explicitRow) ? explicitRow : undefined;
+}
+
+function findControlTransferDestination(game, newControllerId, fromRow, { explicitRow, ignoreUnit } = {}) {
+  const resolvedExplicitRow = resolveControlTransferExplicitRow(newControllerId, explicitRow);
+  if (Number.isInteger(resolvedExplicitRow)) {
+    const col = findFirstEmptyColInRow(game, resolvedExplicitRow, { ignoreUnit });
+    if (col >= 0) return { row: resolvedExplicitRow, col };
+    return null;
+  }
+  const candidates = [];
+  for (let row = 0; row < ROWS; row += 1) {
+    const col = findFirstEmptyColInRow(game, row, { ignoreUnit });
+    if (col < 0) continue;
+    if (playerControlsRow(newControllerId, row, { ignoreUnit, game })) {
+      candidates.push({ row, col, tier: 0, distance: rowDistance(fromRow, row) });
+    } else if (rowIsUncontrolled(row, { ignoreUnit, game })) {
+      candidates.push({ row, col, tier: 1, distance: rowDistance(fromRow, row) });
+    }
+  }
+  candidates.sort((a, b) => a.tier - b.tier || a.distance - b.distance || a.row - b.row);
+  if (!candidates.length) return null;
+  return { row: candidates[0].row, col: candidates[0].col };
+}
+
+function transferUnitControl(game, unit, newControllerId, options = {}) {
+  if (!unit || unit.owner === newControllerId) return false;
+  const fromRow = unit.row;
+  const fromCol = unit.col;
+  const dest = findControlTransferDestination(game, newControllerId, fromRow, {
+    explicitRow: options.explicitRow,
+    ignoreUnit: unit,
+  });
+  if (!dest) {
+    log(game, `${game.players[newControllerId].name}: 「${unit.name}」の支配移動先がない`);
+    return false;
+  }
+  game.board[fromRow][fromCol] = null;
+  unit.owner = newControllerId;
+  if (options.rested !== false) unit.rested = true;
+  commitUnitToBoard(game, unit, dest.row, dest.col);
+  const rowLabel = dest.row === PLAYERS[newControllerId].summonRow ? "第一行" : `${dest.row + 1}行目`;
+  log(game, `${game.players[newControllerId].name}: 「${unit.name}」の支配を得て${rowLabel}へ移動`);
+  return true;
+}
+
+function enemyInRow(playerId, row) {
+  return rowHasEnemyUnit(playerId, row);
 }
 
 function canMoveUnitTo(unit, toRow) {
@@ -16334,7 +16410,7 @@ function drawSadGirlHandUnitGivePanel(pending) {
   ctx.fillText(`${pending.cardName}: 相手の場に渡す手札ユニットを選ぶ`, x + 28, y + 34);
   ctx.fillStyle = "rgba(240,200,210,0.85)";
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("選んだユニットは相手のコントロールで相手の出撃行に召喚されます。", x + 28, y + 56, w - 56);
+  ctx.fillText("選んだユニットは相手のコントロールとなり、相手が支配する最も近い行（または無支配行）へ出ます。", x + 28, y + 56, w - 56);
   if (!canSeeHand) {
     ctx.fillText("相手の手札内容は見えません。", x + 28, y + 74);
   }
@@ -19179,6 +19255,9 @@ const testing = {
   cancelSoulPayChoice,
   resolveStructZoneReplace,
   normalizeMisplacedStructCards: (playerId) => normalizeMisplacedStructCards(state, playerId),
+  transferUnitControl: (unit, newControllerId, options = {}) => transferUnitControl(state, unit, newControllerId, options),
+  findControlTransferDestination: (newControllerId, fromRow, options = {}) =>
+    findControlTransferDestination(state, newControllerId, fromRow, options),
   resolveChargeAttack,
   resolvePayOnAttackEnhance,
   resolvePayDefenderActCostBonus,
