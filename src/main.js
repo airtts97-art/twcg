@@ -117,7 +117,7 @@ const KEYWORD_DEFINITIONS = {
   structTaunt: { label: "構造挑発", description: "Opponents must target structs with the highest struct taunt value first when choosing a struct." },
   effectProtect: { label: "効果保護", description: "カード効果の影響を受けない（効果攻撃を含む。通常攻撃・曲射などの戦闘ダメージは対象外）。[効果貫通]がこの値以上のカードのみ影響できる。" },
   effectPenetrate: { label: "効果貫通", description: "Bypasses effect protection up to this value." },
-  ambush: { label: "潜伏", description: "Cannot be targeted by attacks or card effects until it attacks, activates, or takes damage." },
+  ambush: { label: "潜伏", description: "左右いずれかに[潜伏]を持たない味方ユニットがいる間、攻撃・起動・被ダメージまで攻撃とカード効果の対象にならない。" },
 };
 const PLAYERS = {
   p1: { id: "p1", name: "Player 1", side: "bottom", forward: -1, summonRow: 3, coreRow: 4, directRow: 1 },
@@ -10313,7 +10313,7 @@ function effectPenetrateLevel(sourceCard, game = state) {
 
 function canAffectUnitByEffect(game, target, sourceCard) {
   if (!target) return false;
-  if (isAmbushHidden(target)) return false;
+  if (isAmbushHidden(target, game)) return false;
   if (unitImmuneToMagicPlayTactEffects(target) && tactSourceIncludesMagicPlayCost(sourceCard)) {
     return false;
   }
@@ -10322,12 +10322,31 @@ function canAffectUnitByEffect(game, target, sourceCard) {
   return effectPenetrateLevel(sourceCard) >= protection;
 }
 
-function isAmbushHidden(unit) {
-  return Boolean(unit && hasKeyword(unit, "ambush") && !unit.ambushRevealed);
+function hasAmbushSupportAdjacent(unit, game = state) {
+  if (!unit) return false;
+  const board = game?.board || state.board;
+  for (const delta of [-1, 1]) {
+    const col = unit.col + delta;
+    if (col < 0 || col >= COLS) continue;
+    const adjacent = board[unit.row]?.[col];
+    if (adjacent && adjacent.owner === unit.owner && !hasKeyword(adjacent, "ambush")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isAmbushHidden(unit, game = state) {
+  return Boolean(
+    unit
+    && hasKeyword(unit, "ambush")
+    && !unit.ambushRevealed
+    && hasAmbushSupportAdjacent(unit, game),
+  );
 }
 
 function revealAmbushUnit(game, unit) {
-  if (!isAmbushHidden(unit)) return;
+  if (!isAmbushHidden(unit, game)) return;
   unit.ambushRevealed = true;
   log(game, `「${unit.name}」の[潜伏]が解除された`);
 }
@@ -10338,7 +10357,7 @@ function tacticalBombardmentAvailableModes(game, playerId, tactCard) {
   const modes = [];
   if (canPay(player, { fuel: 3 })) {
     const hasTarget = unitsOwnedBy(opponent, game).some(
-      (unit) => !isAmbushHidden(unit) && canAffectUnitByEffect(game, unit, tactCard),
+      (unit) => !isAmbushHidden(unit, game) && canAffectUnitByEffect(game, unit, tactCard),
     );
     if (hasTarget) modes.push("unitBomb");
   }
@@ -10510,7 +10529,7 @@ function isValidAbilityTarget(item, target) {
   }
   // 効果保護チェック（敵ユニットを対象にする場合）
   if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
-    if (isAmbushHidden(target)) return false;
+    if (isAmbushHidden(target, state)) return false;
     if (!canAffectUnitByEffect(state, target, item.card)) return false;
   }
   return true;
@@ -12965,7 +12984,7 @@ function canAttackUnit(attacker, defender) {
   if (isGuardedFrom(attacker, defender)) {
     return { ok: false, reason: "守護により隣接ユニットを攻撃できません。" };
   }
-  if (isAmbushHidden(defender)) {
+  if (isAmbushHidden(defender, state)) {
     return { ok: false, reason: "潜伏中のユニットは攻撃できません。" };
   }
   if (hasKeyword(attacker, "arc") && (defender.smokeScreenCounter || 0) > 0) {
@@ -19258,6 +19277,8 @@ const testing = {
   transferUnitControl: (unit, newControllerId, options = {}) => transferUnitControl(state, unit, newControllerId, options),
   findControlTransferDestination: (newControllerId, fromRow, options = {}) =>
     findControlTransferDestination(state, newControllerId, fromRow, options),
+  hasAmbushSupportAdjacent: (unit) => hasAmbushSupportAdjacent(unit, state),
+  isAmbushHidden: (unit) => isAmbushHidden(unit, state),
   resolveChargeAttack,
   resolvePayOnAttackEnhance,
   resolvePayDefenderActCostBonus,

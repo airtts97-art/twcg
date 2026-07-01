@@ -1531,6 +1531,7 @@ const results = await page.evaluate(() => {
   api.state.phase = "main";
   api.state.activePlayer = "p1";
   api.testing.setResources("p1", { fuel: 10, ore: 0, people: 0, nature: 0, funds: 10, electric: 0, magic: 0 });
+  api.testing.placeUnit("militia", "p2", 1, 1, { rested: false });
   api.testing.placeUnit("card_1782777924727", "p2", 1, 0, { rested: false });
   const ambushHpBefore = api.state.board[1][0].currentHp;
   const tactHandIdx3 = api.testing.addHandCard("p1", "card_1782776308523");
@@ -1545,7 +1546,31 @@ const results = await page.evaluate(() => {
       hpBefore: ambushHpBefore,
       hpAfter: api.state.board[1][0]?.currentHp,
       stillHidden: !api.state.board[1][0]?.ambushRevealed,
+      hasSupport: api.testing.hasAmbushSupportAdjacent(api.state.board[1][0]),
       pendingTargetCleared: !api.state.pendingTarget,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { fuel: 10, ore: 0, people: 0, nature: 0, funds: 10, electric: 0, magic: 0 });
+  api.testing.placeUnit("card_1782777924727", "p2", 1, 3, { rested: false });
+  const isolatedAmbushHpBefore = api.state.board[1][3].currentHp;
+  const isolatedAmbushHidden = api.testing.isAmbushHidden(api.state.board[1][3]);
+  const tactHandIdx4 = api.testing.addHandCard("p1", "card_1782776308523");
+  api.testing.playTactFromHand(tactHandIdx4);
+  const tbIsolatedTactIdx = api.state.players.p1.tactZone.findIndex((c) => c.id === "card_1782776308523");
+  if (tbIsolatedTactIdx >= 0) api.testing.activatePermanentTact(tbIsolatedTactIdx);
+  if (api.state.pendingChoice?.step === "chooseMode") api.testing.resolveTacticalBombardmentMode("unitBomb");
+  if (api.state.pendingTarget) api.testing.resolveTarget(1, 3);
+  out.push({
+    name: "ambush_requires_adjacent_non_ambush_ally",
+    summary: {
+      isolatedAmbushHidden,
+      hpBefore: isolatedAmbushHpBefore,
+      hpAfter: api.state.board[1][3]?.currentHp,
+      damaged: (api.state.board[1][3]?.currentHp ?? 0) < isolatedAmbushHpBefore,
     },
   });
 
@@ -3241,6 +3266,9 @@ assert(byName.second_babel_resource_pick.oreGain === 4, "セカンド・バベ�
 assert(byName.second_babel_resource_pick.magicSpent === 2, "セカンド・バベル should pay 魔① per resource pick");
 assert(byName.ambush_blocks_effect_targeting.hpAfter === byName.ambush_blocks_effect_targeting.hpBefore, "潜伏 should block effect targeting until revealed");
 assert(byName.ambush_blocks_effect_targeting.stillHidden === true, "潜伏 unit should stay hidden when targeting blocked");
+assert(byName.ambush_blocks_effect_targeting.hasSupport === true, "潜伏 should require adjacent non-ambush ally");
+assert(byName.ambush_requires_adjacent_non_ambush_ally.isolatedAmbushHidden === false, "潜伏 without adjacent non-ambush ally should not be hidden");
+assert(byName.ambush_requires_adjacent_non_ambush_ally.damaged === true, "non-hidden isolated ambush unit should take effect damage");
 assert(byName.wrathful_fruit_god_parsed.found === true, "怒れる摘果神 should parse onSummon highest-ATK damage");
 assert(byName.wrathful_fruit_god_parsed.onExileBuff === true, "怒れる摘果神 should parse onExile ATK buff");
 assert(byName.wrathful_fruit_god_parsed.onAttackedRest === true, "怒れる摘果神 should parse onAttacked rest");
