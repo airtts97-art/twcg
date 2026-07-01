@@ -389,7 +389,7 @@ const results = await page.evaluate(() => {
 
   const nobelburg = api.cardCatalog.cores["card_1755670973607"];
   out.push({
-    name: "nobelburg_has_no_start_turn_people_income",
+    name: "nobelburg_has_only_initial_resources",
     summary: { income: { ...(nobelburg?.income || {}) }, startResources: { ...(nobelburg?.startResources || {}) } },
   });
 
@@ -2681,7 +2681,10 @@ assert(byResult.second_tomb_revives_only_to_battle_zone.secondTombRows.length ==
 assert(byResult.second_tomb_revives_only_to_battle_zone.secondTombSummonRowRejected === false, "Second Tomb should reject the summon-field row");
 assert(byResult.second_tomb_revives_only_to_battle_zone.secondTombBattleRowAccepted === true, "Second Tomb should accept the battle-zone row");
 assert(byName.second_tomb_revives_only_to_battle_zone.board[2][1]?.name === "生命妖精", "Second Tomb should place the revived unit in the battle zone");
-assert((byName.nobelburg_has_no_start_turn_people_income.income.people || 0) === 0, "Nobelburg should not gain people at turn start");
+assert((byName.nobelburg_has_only_initial_resources.income.people || 0) === 0, "Nobelburg should not gain people at turn start");
+assert((byName.nobelburg_has_only_initial_resources.income.funds || 0) === 0, "Nobelburg should not gain funds at turn start");
+assert(byName.nobelburg_has_only_initial_resources.startResources.funds === 8, "Nobelburg should keep its initial funds 8");
+assert((byName.nobelburg_has_only_initial_resources.startResources.magic || 0) === 0, "Nobelburg should not start with magic");
 assert(byName.opponent_card_selection_is_private.pendingChoice?.type === "privateCardSelection", "opponent deck selection should expose only a private waiting state");
 assert(byName.opponent_card_selection_is_private.pendingChoice?.hidden === true, "opponent deck selection should be marked hidden");
 assert(byName.opponent_card_selection_is_private.players.p2.hand[0]?.hidden === true, "opponent hand details should be redacted from the viewer summary");

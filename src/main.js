@@ -3547,6 +3547,7 @@ function normalizeCardResources(card) {
 function applyCoreDefaults(core) {
   const fallback = cardCatalog?.cores?.[DEFAULT_CORE_ID] || {};
   const hasResourceValue = (resources) => Object.values(resources || {}).some((amount) => Number(amount));
+  const isNobelburg = core.id === "card_1755670973607" || core.name === "\u738b\u57ce\u30ce\u30fc\u30d9\u30eb\u30b0";
   core.hp = Number(core.hp) || Number(fallback.hp) || 20;
   core.initialHand = Number(core.initialHand) || Number(fallback.initialHand) || 4;
   core.draw = Number(core.draw ?? core.drawCount ?? core.drawPerTurn) || Number(fallback.draw) || 1;
@@ -3555,7 +3556,8 @@ function applyCoreDefaults(core) {
   core.deckMin = Number(core.deckMin) || Number(fallback.deckMin) || 40;
   core.deckMax = Number(core.deckMax) || Number(fallback.deckMax) || 60;
   core.startResources = normalizeResourceObject(hasResourceValue(core.startResources) ? core.startResources : fallback.startResources || {});
-  if (core.id === "card_1755670973607" || core.name === "\u738b\u57ce\u30ce\u30fc\u30d9\u30eb\u30b0") {
+  if (isNobelburg) core.startResources = normalizeResourceObject({ funds: 8 });
+  if (isNobelburg) {
     core.income = {};
   } else if (hasResourceValue(core.income)) {
     core.income = normalizeResourceObject(core.income);

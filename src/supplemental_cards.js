@@ -293,7 +293,7 @@ export default [
       gold: 8,
       electric: 0,
       fuel: 0,
-      magic: 1,
+      magic: 0,
     },
     generates: {},
     tags: ["リ･サンティウ連合王国"],
