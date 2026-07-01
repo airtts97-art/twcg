@@ -2,6 +2,9 @@ Original prompt: ブラウザで対戦できるカードゲームを目指す。
 
 ## Progress
 
+- 2026-07-01: Fixed the Notion Artillery payment-choice crash. Boolean choice parameters no longer shadow the shared `pay()` resource-payment function; the same collision was also removed from the optional summon-search and defender-cost bonus resolvers.
+
+- 2026-07-01: Fixed 実働概念投射部隊's rest activation. The chosen payment resource must now appear in the target's act cost, the target must pass the same attackability/range checks as a normal attack, legal resource choices are filtered before payment, and a legal target is selected after payment. Added in-range success and out-of-range rejection regressions plus browser verification.
 - 2026-07-01: Confirmed 王城ノーベルグ has no recurring income of any kind and now starts with funds 8 only; removed its initial magic 1. Added explicit regression assertions for funds income 0, initial funds 8, and initial magic 0.
 - 2026-07-01: Fixed five gameplay issues: 王城ノーベルグ now has zero turn income; 第二墓標 revives only into its controller's battle row; deck/hand selection overlays and text summaries are redacted from the opponent; [魂] now prompts for an optional exact replacement count before play; and 攪乱工兵's adjacent effect protection remains valid through simultaneous damage/destruction batches.
 - Added focused regressions in `tests/keyword-tests.mjs`. Focused browser checks pass, and the [魂]/private-selection overlays were visually inspected. The full legacy suite currently stops at the pre-existing mobile movement case because row 2 / col 0 is no longer a valid unit-field cell.

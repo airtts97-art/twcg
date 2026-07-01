@@ -5045,7 +5045,17 @@ function parseDeckmakerAbilities(card, localType) {
   if (localType === "unit" && /任意の資源([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)を支払い.*レストする/.test(text)) {
     const amountStr = text.match(/任意の資源([0-9０-９\u2460-\u2473\u24EA\u24F5-\u24FE]+)/)?.[1] || "①";
     const amount = parseDeckmakerKeywordValue(amountStr) || 1;
-    abilities.push({ trigger: "onActivate", effect: "restTargetNoUnrest", activationCostType: "anyOne", activationCostAmount: amount });
+    const requiresAttackableTarget = /攻撃可能な相手ユニット/.test(text);
+    const requiresPaidResourceInTargetActCost = /支払った資源をアクトコストに含む/.test(text);
+    abilities.push({
+      trigger: "onActivate",
+      effect: "restTargetNoUnrest",
+      target: "enemyUnit",
+      activationCostType: "anyOne",
+      activationCostAmount: amount,
+      requiresAttackableTarget,
+      requiresPaidResourceInTargetActCost,
+    });
   }
 
   // struct HP-cost ability: "ライフをN支払う(1ターンに1度)：資源X得る" — uses onStructurePhaseHP (separate from normal rest activation)
@@ -9927,6 +9937,10 @@ function resolveChooseActivationResource(resource) {
   const pending = state.pendingChoice;
   if (pending?.type !== "chooseActivationResource") return false;
   const player = state.players[pending.playerId];
+  if (pending.resources?.length && !pending.resources.includes(resource)) {
+    state.message = "その資源で対象にできるユニットがいません。";
+    return false;
+  }
   if ((player.resources[resource] || 0) < pending.amount) {
     state.message = "その資源が不足しています。";
     return false;
@@ -9940,10 +9954,11 @@ function resolveChooseActivationResource(resource) {
   state.pendingChoice = null;
   state.selected = null;
   if (pending.ability) {
+    const resolvedAbility = { ...pending.ability, paidResource: resource };
     state.effectQueue.push({
       playerId: pending.playerId,
       card: unit,
-      ability: pending.ability,
+      ability: resolvedAbility,
       source: { zone: "board" },
     });
     processEffectQueue(state);
@@ -10393,6 +10408,11 @@ function isValidAbilityTarget(item, target) {
     return true;
   }
   if (!["enemyUnit", "friendlyUnit", "anyUnit", "friendlyNeutralUnit"].includes(item.ability.target)) return false;
+  if (item.ability.requiresAttackableTarget && !canAttackUnit(item.card, target).ok) return false;
+  if (item.ability.requiresPaidResourceInTargetActCost) {
+    const paidResource = item.ability.paidResource;
+    if (!paidResource || (normalizeResourceObject(target.actCost || {})[paidResource] || 0) <= 0) return false;
+  }
   // 効果保護チェック（敵ユニットを対象にする場合）
   if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
     if (isAmbushHidden(target)) return false;
@@ -12149,6 +12169,16 @@ function retreatSelectedUnit() {
   return relocateUnit(unit, toRow, destCol, "後退", "retreatUnit");
 }
 
+function activationResourceOptions(player, unit, ability, amount = 1) {
+  return RESOURCE_KEYS.filter((resource) => {
+    if ((player.resources[resource] || 0) < amount) return false;
+    if (!ability.requiresPaidResourceInTargetActCost && !ability.requiresAttackableTarget) return true;
+    const resolvedAbility = { ...ability, paidResource: resource };
+    const item = { playerId: unit.owner, card: unit, ability: resolvedAbility };
+    return unitsOwnedBy(opponentOf(unit.owner), state).some((target) => isValidAbilityTarget(item, target));
+  });
+}
+
 function executeUnitActivate(unit, ability) {
   if (!unit || !ability) return false;
   revealAmbushUnit(state, unit);
@@ -12158,8 +12188,12 @@ function executeUnitActivate(unit, ability) {
   }
   if (ability.activationCostType === "anyOne") {
     const amount = ability.activationCostAmount || 1;
-    const affordable = RESOURCE_KEYS.filter((r) => (player.resources[r] || 0) >= amount);
-    if (!affordable.length) return fail("支払える資源がありません。");
+    const affordable = activationResourceOptions(player, unit, ability, amount);
+    if (!affordable.length) {
+      return fail(ability.requiresAttackableTarget
+        ? "支払い条件を満たす攻撃可能な相手ユニットがいません。"
+        : "支払える資源がありません。");
+    }
     state.pendingChoice = {
       type: "chooseActivationResource",
       playerId: unit.owner,
@@ -12168,6 +12202,7 @@ function executeUnitActivate(unit, ability) {
       unitCol: unit.col,
       abilityEffect: ability.effect,
       ability,
+      resources: affordable,
       noRest: ability.noRest || false,
     };
     state.selected = { kind: "choice", choice: "chooseActivationResource" };
@@ -12519,12 +12554,12 @@ function triggerDefenderAttackedAbilities(defender, attacker) {
   processEffectQueue(state);
 }
 
-function resolvePayOptionalOnSummonSearch(pay) {
+function resolvePayOptionalOnSummonSearch(shouldPay) {
   const pending = state.pendingChoice;
   if (pending?.type !== "payOptionalOnSummonSearch") return false;
   const player = state.players[pending.playerId];
   const qi = pending.queueItem;
-  if (pay) {
+  if (shouldPay) {
     const unit = qi?.card;
     if (!canPayForCard(player, pending.payCost || {}, unit)) {
       state.message = "資源が不足しています。";
@@ -12565,13 +12600,13 @@ function resolvePayOptionalOnSummonSearch(pay) {
   return true;
 }
 
-function resolvePayEnemyAttackCostsAndRest(pay) {
+function resolvePayEnemyAttackCostsAndRest(shouldPay) {
   const pending = state.pendingChoice;
   if (pending?.type !== "payEnemyAttackCostsAndRest") return false;
   if (!canControlChoicePlayer(pending.playerId)) return false;
   const player = state.players[pending.playerId];
   const qi = pending.queueItem;
-  if (pay) {
+  if (shouldPay) {
     const total = pending.total || 0;
     if (total > 0 && !canPay(player, pending.combinedActCost || {})) {
       state.message = "資源が不足しています。";
@@ -12611,13 +12646,13 @@ function resolvePayEnemyAttackCostsAndRest(pay) {
   return true;
 }
 
-function resolvePayDefenderActCostBonus(pay) {
+function resolvePayDefenderActCostBonus(shouldPay) {
   const pending = state.pendingChoice;
   if (pending?.type !== "payDefenderActCostBonus") return false;
   if (!canControlChoicePlayer(pending.playerId)) return false;
   const player = state.players[pending.playerId];
   const qi = pending.queueItem;
-  if (pay) {
+  if (shouldPay) {
     if (!canPay(player, pending.defenderActCost || {})) {
       state.message = "資源が不足しています。";
       render();
@@ -17254,7 +17289,7 @@ function drawReviveFromExilePanel(pending) {
 
 function drawChooseActivationResourcePanel(pending) {
   const player = state.players[pending.playerId];
-  const affordable = RESOURCE_KEYS.filter((r) => (player.resources[r] || 0) >= pending.amount);
+  const affordable = pending.resources || RESOURCE_KEYS.filter((r) => (player.resources[r] || 0) >= pending.amount);
   const btnW = 100, btnH = 44, gap = 12;
   const w = Math.max(500, affordable.length * (btnW + gap) + gap * 2);
   const h = 180;
@@ -18953,6 +18988,7 @@ const testing = {
   activatePermanentTact,
   resolveMarketChoice,
   finishMarketChoice,
+  resolveChooseActivationResource,
   resolveChooseGainResource,
   resolveChooseUnitActivate,
   resolveChooseStructPhaseActivate,

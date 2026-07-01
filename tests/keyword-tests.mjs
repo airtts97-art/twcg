@@ -338,6 +338,35 @@ const results = await page.evaluate(() => {
   out.push(snapshot("no_attack_cannot_attack"));
 
   reset();
+  api.testing.setResources("p1", { ore: 1 });
+  api.testing.placeUnit("card_1753681798567", "p1", 2, 4, { rested: false });
+  api.testing.placeUnit("card_1753681798567", "p2", 1, 4, { rested: false });
+  api.testing.selectUnit(2, 4);
+  const projectionActivated = api.testing.activateSelectedUnit();
+  const projectionResourceOptions = [...(api.state.pendingChoice?.resources || [])];
+  api.testing.resolveChooseActivationResource("ore");
+  const projectionPendingTarget = api.state.pendingTarget?.ability?.effect || null;
+  api.testing.resolveTarget(1, 4);
+  out.push({
+    ...snapshot("concept_projection_rests_attackable_target"),
+    projectionActivated,
+    projectionResourceOptions,
+    projectionPendingTarget,
+    targetLockedRestTurns: api.state.board[1][4]?.lockedRestTurns || 0,
+  });
+
+  reset();
+  api.testing.setResources("p1", { ore: 1 });
+  api.testing.placeUnit("card_1753681798567", "p1", 2, 4, { rested: false });
+  api.testing.placeUnit("card_1753681798567", "p2", 0, 4, { rested: false });
+  api.testing.selectUnit(2, 4);
+  const projectionOutOfRangeActivated = api.testing.activateSelectedUnit();
+  out.push({
+    ...snapshot("concept_projection_rejects_out_of_range_target"),
+    projectionOutOfRangeActivated,
+  });
+
+  reset();
   api.testing.setResources("p1", { funds: 1, magic: 0 });
   api.testing.addDumpCard("p1", "lifeFairy");
   api.testing.addDumpCard("p1", "fieldOrder");
@@ -2665,6 +2694,15 @@ assert(byName.immobile_cannot_move.board[3][0].rested === false, "failed immobil
 
 assert(byName.no_attack_cannot_attack.board[1][0].hp === 4, "noAttack unit should not damage target");
 assert(byName.no_attack_cannot_attack.board[2][0].rested === false, "failed noAttack should not rest attacker");
+
+assert(byResult.concept_projection_rests_attackable_target.projectionActivated === true, "concept projection should activate when a legal target exists");
+assert(byResult.concept_projection_rests_attackable_target.projectionResourceOptions.length === 1 && byResult.concept_projection_rests_attackable_target.projectionResourceOptions[0] === "ore", "concept projection should offer only payable resources contained in an attackable target act cost");
+assert(byResult.concept_projection_rests_attackable_target.projectionPendingTarget === "restTargetNoUnrest", "concept projection should wait for an enemy target after payment");
+assert(byName.concept_projection_rests_attackable_target.board[2][4].rested === true, "concept projection should rest itself on activation");
+assert(byName.concept_projection_rests_attackable_target.board[1][4].rested === true, "concept projection should rest the attackable target");
+assert(byResult.concept_projection_rests_attackable_target.targetLockedRestTurns === 1, "concept projection target should stay rested through its next unrest");
+assert(byResult.concept_projection_rejects_out_of_range_target.projectionOutOfRangeActivated === false, "concept projection should not activate without an attackable target");
+assert(byName.concept_projection_rejects_out_of_range_target.pendingChoice === null, "out-of-range concept projection should not consume a resource choice");
 
 assert(byName.soul_pay_uses_dump_for_missing_magic.board[3][0]?.name === "魂術師", "soulPay should allow summon with dump cards");
 assert(byName.soul_pay_uses_dump_for_missing_magic.players.p1.dumpCount === 0, "soulPay should exile dump cards used for magic");
