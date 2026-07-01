@@ -195,6 +195,50 @@ const results = await page.evaluate(() => {
   api.testing.changeStructDeckScroll(1);
   out.push(snapshot("struct_deck_scrolls"));
 
+  reset();
+  api.testing.setResources("p1", { funds: 20, people: 20, nature: 20, ore: 20, fuel: 20, electric: 20, magic: 20 });
+  const townTemplate = JSON.parse(JSON.stringify(api.cardCatalog.structs.town));
+  api.state.players.p1.structs = [];
+  for (let i = 0; i < 10; i += 1) {
+    api.state.players.p1.structs.push({
+      ...JSON.parse(JSON.stringify(townTemplate)),
+      id: `town-zone-${i}`,
+      name: `村${i + 1}`,
+    });
+  }
+  const deckIndex = api.state.players.p1.structDeck.length - 1;
+  const cardToBuild = api.state.players.p1.structDeck[deckIndex];
+  api.testing.playStruct(deckIndex);
+  const replacePending = api.state.pendingChoice?.type === "structZoneReplace";
+  const replacedName = replacePending ? api.state.players.p1.structs[0]?.name : null;
+  if (replacePending) api.testing.resolveStructZoneReplace(0);
+  out.push({
+    name: "struct_zone_limit_replace",
+    summary: {
+      replacePending,
+      zoneCount: api.state.players.p1.structs.length,
+      deckCount: api.state.players.p1.structDeck.length,
+      replacedName,
+      builtName: cardToBuild?.name,
+      deckContainsReplaced: replacedName ? api.state.players.p1.structDeck.some((c) => c.name === replacedName) : false,
+      zoneContainsBuilt: cardToBuild ? api.state.players.p1.structs.some((c) => c.name === cardToBuild.name) : false,
+    },
+  });
+
+  reset();
+  api.state.players.p1.hand.push(JSON.parse(JSON.stringify(api.cardCatalog.structs.grove)));
+  api.state.players.p1.dump.push(JSON.parse(JSON.stringify(api.cardCatalog.structs.mine)));
+  const moved = api.testing.normalizeMisplacedStructCards("p1");
+  out.push({
+    name: "normalize_misplaced_struct_cards",
+    summary: {
+      moved,
+      handHasStruct: api.state.players.p1.hand.some((c) => c.type === "struct"),
+      dumpHasStruct: api.state.players.p1.dump.some((c) => c.type === "struct"),
+      structDeckCount: api.state.players.p1.structDeck.length,
+    },
+  });
+
   api.testing.importDeckmakerDeckData({
     name: "Deckmaker Sample",
     coreCardId: "frontierCore",
@@ -2639,6 +2683,13 @@ assert(byName.struct_use_confirms_build.cardReveal?.playerId === "p1", "built st
 assert(byName.field_struct_click_shows_detail.selected.kind === "fieldStruct", "clicking a field struct should select the field struct");
 assert(byName.field_struct_click_shows_detail.selected.detailOpen === true, "clicking a field struct should open card details");
 assert(byName.struct_deck_scrolls.app.structDeckScroll === 1, "struct deck should support scrolling to later rows");
+assert(byName.struct_zone_limit_replace.replacePending === true, "building at struct zone cap should open replace choice");
+assert(byName.struct_zone_limit_replace.zoneCount === 10, "struct zone should stay at 10 after replace-and-build");
+assert(byName.struct_zone_limit_replace.deckContainsReplaced === true, "replaced struct should return to struct deck");
+assert(byName.struct_zone_limit_replace.zoneContainsBuilt === true, "new struct should appear in struct zone");
+assert(byName.normalize_misplaced_struct_cards.moved === 2, "misplaced struct cards should be collected from other zones");
+assert(byName.normalize_misplaced_struct_cards.handHasStruct === false, "hand should not keep struct cards after normalize");
+assert(byName.normalize_misplaced_struct_cards.dumpHasStruct === false, "dump should not keep struct cards after normalize");
 assert(byName.deckmaker_deck_imports.app.deckName === "Deckmaker Sample", "Deckmaker import should set deck name");
 assert(byName.deckmaker_deck_imports.app.deck.core === "frontierCore", "Deckmaker import should map coreCardId");
 assert(byName.deckmaker_deck_imports.app.deck.main.length === 3, "Deckmaker import should map mainDeckCardIds");

@@ -138,6 +138,7 @@ const DEFAULT_MAIN_DECK_IDS = [
   "grandMandate",
 ];
 const DEFAULT_STRUCT_DECK_IDS = ["town", "grove", "mine", "refinery", "powerPlant", "magicWell"];
+const MAX_STRUCT_ZONE = 10;
 const BUNDLED_PRODUCTION_STRUCT_IDS = new Set(DEFAULT_STRUCT_DECK_IDS);
 const STRUCT_PHASE_TRIGGERS = ["onStructurePhase", "onStructurePhaseHP"];
 const MAIN_PHASE_TACT_TRIGGERS = ["onMainPhase"];
@@ -951,8 +952,7 @@ const abilityEffects = {
         dumpChanged = true;
       }
       while (player.structs.length) {
-        player.dump.push(player.structs.pop());
-        dumpChanged = true;
+        returnStructCardToDeck(player, player.structs.pop(), game, "全破壊");
       }
       if (dumpChanged) notifyDumpChanged(game, pid);
     }
@@ -1983,14 +1983,18 @@ const abilityEffects = {
   },
   reviveStructFromDump({ game, playerId, card, ability }) {
     const player = game.players[playerId];
-    const idx = player.dump.findIndex((c) => c.type === "struct");
+    normalizeMisplacedStructCards(game, playerId);
+    const idx = player.structDeck.findIndex((c) => c.type === "struct");
     if (idx < 0) {
       if (ability.fallback) return abilityEffects[ability.fallback.effect]?.({ game, playerId, card, ability: ability.fallback });
       return;
     }
-    const [struct] = player.dump.splice(idx, 1);
-    player.structs.push(struct);
-    log(game, `${player.name}: 墓地から「${struct.name}」を建設`);
+    if (structZoneIsFull(player)) {
+      log(game, `${player.name}: ストラクト上限のため墓地からの建設効果は発動しませんでした`);
+      return;
+    }
+    const [struct] = player.structDeck.splice(idx, 1);
+    installStructInZone(game, playerId, struct, { triggerOnPlay: false, logVerb: "ストラクトデッキから建設" });
   },
   buffFriendlyUnitsAtk({ game, playerId, ability }) {
     for (const row of game.board) {
@@ -2566,9 +2570,13 @@ const abilityEffects = {
     // ストラクトデッキから指定施設名を建設
     for (let i = 0; i < player.structDeck.length && placed < max; i++) {
       if (player.structDeck[i].name !== ability.structName) continue;
+      if (structZoneIsFull(player)) {
+        log(game, `${player.name}: ストラクト上限のため「${player.structDeck[i].name}」を建設できません`);
+        break;
+      }
       const sc = player.structDeck.splice(i, 1)[0];
-      player.structs.push(sc);
-      log(game, `${player.name}: 「${card.name}」効果 — 「${sc.name}」建設`);
+      installStructInZone(game, playerId, sc, { triggerOnPlay: true, logVerb: "建設" });
+      log(game, `${player.name}: 「${card.name}」効果 — 「${sc.name}」を建設`);
       placed++;
       i--;
     }
@@ -7693,6 +7701,7 @@ function createGame(
 
   for (const playerId of ["p1", "p2"]) {
     drawCards(game, playerId, game.players[playerId].core.initialHand || 4, false);
+    normalizeMisplacedStructCards(game, playerId);
   }
   log(game, "ゲーム開始");
   startTurn(game, "p1", { skipDraw: true });
@@ -7732,6 +7741,91 @@ function shuffleCards(cards) {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
   return shuffled;
+}
+
+function isStructCard(card) {
+  return card?.type === "struct";
+}
+
+function prepareStructForDeck(card) {
+  const copy = stripRuntime(cloneCard(card));
+  delete copy.hpActivatedThisTurn;
+  delete copy.tacticalRestBy;
+  delete copy.activationCount;
+  delete copy.underlyingStruct;
+  delete copy.permanentTact;
+  syncBundledRuntimeCard(copy);
+  ensureStructPhaseAbilities(copy);
+  return copy;
+}
+
+function returnStructCardToDeck(player, structCard, game, reason = "") {
+  if (!structCard || !player) return;
+  player.structDeck.push(prepareStructForDeck(structCard));
+  if (game) {
+    const suffix = reason ? `（${reason}）` : "";
+    log(game, `${player.name}: 「${structCard.name}」をストラクトデッキに戻した${suffix}`);
+  }
+}
+
+function removeStructFromZoneAt(player, structIndex) {
+  if (!player?.structs || structIndex < 0 || structIndex >= player.structs.length) return null;
+  return player.structs.splice(structIndex, 1)[0];
+}
+
+function structZoneIsFull(player) {
+  return (player?.structs || []).length >= MAX_STRUCT_ZONE;
+}
+
+function normalizeMisplacedStructCards(game, playerId) {
+  const player = game.players[playerId];
+  if (!player) return 0;
+  let moved = 0;
+  const zones = ["hand", "mainDeck", "dump", "exileZone", "tactZone", "wildZone", "grandZone"];
+  for (const zone of zones) {
+    const list = player[zone];
+    if (!Array.isArray(list) || !list.length) continue;
+    const kept = [];
+    for (const card of list) {
+      if (isStructCard(card)) {
+        returnStructCardToDeck(player, card, game, "場外から回収");
+        moved += 1;
+      } else {
+        kept.push(card);
+      }
+    }
+    player[zone] = kept;
+  }
+  if (moved) notifyDumpChanged(game, playerId);
+  return moved;
+}
+
+function installStructInZone(game, playerId, structCard, { triggerOnPlay = true, logVerb = "建設" } = {}) {
+  const player = game.players[playerId];
+  syncBundledRuntimeCard(structCard);
+  ensureStructPhaseAbilities(structCard);
+  structCard.rested = false;
+  player.structs.push(structCard);
+  log(game, `${player.name}: 「${structCard.name}」を${logVerb}`);
+  if (triggerOnPlay) {
+    triggerAbilities(game, playerId, structCard, "onPlay", { zone: "struct" });
+  }
+  return structCard;
+}
+
+function beginStructZoneReplaceChoice(playerId, structDeckIndex, soulPayAmount = undefined) {
+  const player = state.players[playerId];
+  state.pendingChoice = {
+    type: "structZoneReplace",
+    playerId,
+    structDeckIndex,
+    soulPayAmount,
+    cardName: player.structDeck[structDeckIndex]?.name,
+    candidates: (player.structs || []).map((struct, index) => ({ struct, index })),
+  };
+  state.selected = { kind: "choice", choice: "structZoneReplace" };
+  state.message = `ストラクト上限（${MAX_STRUCT_ZONE}枚）に達しています。ストラクトデッキに戻す施設を選んでください。`;
+  render();
 }
 
 function cloneCard(card) {
@@ -8556,7 +8650,9 @@ function resolveSoulPayChoice(amount) {
   if (continuation?.type === "tact") return playTactFromHand(continuation.handIndex, soulPayAmount);
   if (continuation?.type === "wild") return playWildFromHand(continuation.handIndex, soulPayAmount);
   if (continuation?.type === "grand") return playGrandFromHand(continuation.handIndex, soulPayAmount);
-  if (continuation?.type === "struct") return playStruct(continuation.index, soulPayAmount);
+  if (continuation?.type === "struct") {
+    return playStruct(continuation.index, soulPayAmount, continuation.replaceStructIndex);
+  }
   return false;
 }
 
@@ -10103,8 +10199,7 @@ function destroyChoiceItems(pending) {
       const struct = player?.structs?.[index];
       if (struct) {
         player.structs.splice(index, 1);
-        player.dump.push(struct);
-        notifyDumpChanged(state, playerId);
+        returnStructCardToDeck(player, struct, state, "破壊");
         destroyed.push(struct.name);
       }
     }
@@ -10170,7 +10265,7 @@ function resolveKaijuAwakenChoice() {
   state.board[unit.row][unit.col] = null;
   triggerAbilities(state, unit.owner, unit, "onExile");
   player.exileZone.push(stripRuntime(unit));
-  player.exileZone.push(player.structs.splice(pending.selectedStructIndex, 1)[0]);
+  returnStructCardToDeck(player, player.structs.splice(pending.selectedStructIndex, 1)[0], state, "覚醒コスト");
   player.exileZone.push(player.hand.splice(pending.selectedHandIndex, 1)[0]);
   removeKeywords(kaiju, ["immobile", "noAttack"]);
   kaiju.noRetreatUntilOpponentTurnEnd = opponentOf(pending.playerId);
@@ -10379,7 +10474,7 @@ function destroyEnemyStructAt(game, playerId, opponentId, structIndex, sourceCar
     addResources(player, "fuel", -fuelCost);
   }
   const [removed] = structs.splice(structIndex, 1);
-  game.players[opponentId].structDeck.push(removed);
+  returnStructCardToDeck(game.players[opponentId], removed, game, "破壊");
   const fuelLabel = fuelCost > 0 ? `燃${fuelCost}支払い → ` : "";
   log(game, `${player.name}: 「${cardName}」${fuelLabel}相手の「${removed.name}」を破壊`);
   return true;
@@ -11491,29 +11586,56 @@ function playGrandFromHand(handIndex, soulPayAmount = undefined) {
   return true;
 }
 
-function playStruct(index, soulPayAmount = undefined) {
+function playStruct(index, soulPayAmount = undefined, replaceStructIndex = undefined) {
   if (!requireActivePlayerControl()) return false;
   const player = state.players[state.activePlayer];
   const card = player.structDeck[index];
-  if (!card) return;
+  if (!card) return false;
+
+  if (structZoneIsFull(player) && replaceStructIndex === undefined) {
+    beginStructZoneReplaceChoice(state.activePlayer, index, soulPayAmount);
+    return true;
+  }
+
   if (
     soulPayAmount === undefined
-    && requestSoulPayChoice(player, card.cost, card, { type: "struct", index })
+    && requestSoulPayChoice(player, card.cost, card, { type: "struct", index, replaceStructIndex })
   ) return true;
+
   if (!payForCard(player, card.cost, card, { soulPayAmount })) return fail("施設のプレイコストが不足しています。");
-  revealCardUse(state.activePlayer, card, "build");
-  syncBundledRuntimeCard(card);
-  ensureStructPhaseAbilities(card);
-  player.structs.push(card);
-  player.structDeck.splice(index, 1);
-  state.selected = null;
-  log(state, `${player.name}: 「${card.name}」を建設`);
-  triggerAbilities(state, state.activePlayer, card, "onPlay", { zone: "struct" });
-  if (syncOnlineAction("buildStruct", state.activePlayer)) {
-    attachPendingLocalPopup(state.activePlayer, card, "build");
-  } else {
-    app.localCardPopup = buildCardRevealPayload(state.activePlayer, card, "build", `local-build-${Date.now()}`);
+
+  if (structZoneIsFull(player)) {
+    const removed = removeStructFromZoneAt(player, replaceStructIndex);
+    if (!removed) return fail("戻すストラクトを選んでください。");
+    returnStructCardToDeck(player, removed, state, "上限のため");
   }
+
+  revealCardUse(state.activePlayer, card, "build");
+  const [played] = player.structDeck.splice(index, 1);
+  installStructInZone(state, state.activePlayer, played, { triggerOnPlay: true, logVerb: "建設" });
+  state.selected = null;
+  if (syncOnlineAction("buildStruct", state.activePlayer)) {
+    attachPendingLocalPopup(state.activePlayer, played, "build");
+  } else {
+    app.localCardPopup = buildCardRevealPayload(state.activePlayer, played, "build", `local-build-${Date.now()}`);
+  }
+  return true;
+}
+
+function resolveStructZoneReplace(structIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "structZoneReplace") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const replaceIndex = Number(structIndex);
+  if (!Number.isInteger(replaceIndex) || replaceIndex < 0) return false;
+  const player = state.players[pending.playerId];
+  if (!player?.structs?.[replaceIndex]) return false;
+  const deckIndex = pending.structDeckIndex;
+  const soulPayAmount = pending.soulPayAmount;
+  state.pendingChoice = null;
+  state.selected = null;
+  playStruct(deckIndex, soulPayAmount, replaceIndex);
+  syncOnlineAction("resolveChoice", pending.playerId);
   return true;
 }
 
@@ -15023,14 +15145,15 @@ function drawStructZoneRow(playerId, box, mirrored) {
     drawFieldStructCard(playerId, cx2, y + 3, cardW, cardH, card, i);
   });
 
-  // Struct zone label (empty area)
-  if (player.structs.length === 0) {
-    ctx.fillStyle = "rgba(100,130,200,0.18)";
-    ctx.font = "500 9px 'Yu Gothic UI', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("Structure Zone", structStartX + (structEndX - structStartX) / 2, y + h / 2 + 3);
-    ctx.textAlign = "left";
-  }
+  // Struct zone label
+  ctx.fillStyle = player.structs.length >= MAX_STRUCT_ZONE ? "rgba(255,180,120,0.55)" : "rgba(100,130,200,0.35)";
+  ctx.font = "500 9px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  const zoneLabel = player.structs.length === 0
+    ? "Structure Zone"
+    : `Structure Zone (${player.structs.length}/${MAX_STRUCT_ZONE})`;
+  ctx.fillText(zoneLabel, structStartX + (structEndX - structStartX) / 2, y + h / 2 + 3);
+  ctx.textAlign = "left";
 
   // Main Deck インジケーター (player=右端col12, opp=左端col0)
   const mdCol = mirrored ? 0 : 12;
@@ -15866,6 +15989,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "payEnemyAttackCostsAndRest") drawPayEnemyAttackCostsAndRestPanel(pending);
   else if (pending.type === "payOptionalOnSummonSearch") drawPayOptionalOnSummonSearchPanel(pending);
   else if (pending.type === "soulPay") drawSoulPayPanel(pending);
+  else if (pending.type === "structZoneReplace") drawStructZoneReplacePanel(pending);
 }
 
 function drawSoulPayPanel(pending) {
@@ -16828,6 +16952,47 @@ function drawChargeAttackPanel(pending) {
     drawButton(x + 28, y + h - 58, 240, 36, `帯電攻撃（電${pending.electricCost}）`, () => { resolveChargeAttack(true); render(); }, null, { accent: "p1" });
     drawButton(x + 290, y + h - 58, 220, 36, "通常攻撃", () => { resolveChargeAttack(false); render(); });
   }
+}
+
+function drawStructZoneReplacePanel(pending) {
+  const player = state.players[pending.playerId];
+  const structs = player?.structs || [];
+  const cardW = 84;
+  const cardH = Math.round(cardW / CARD_ASPECT);
+  const gap = 10;
+  const maxCols = 5;
+  const rows = Math.ceil(structs.length / maxCols) || 1;
+  const panelW = Math.max(520, maxCols * (cardW + gap) + 96);
+  const panelH = 120 + rows * (cardH + gap) + 40;
+  const x = Math.round((W - panelW) / 2);
+  const y = Math.round((H - panelH) / 2);
+  drawChoicePanelBase(x, y, panelW, panelH, "rgba(50,70,120,0.78)", "#6080d0");
+  ctx.fillStyle = "#d8e4ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`ストラクト上限（${MAX_STRUCT_ZONE}枚）`, x + 24, y + 34);
+  ctx.fillStyle = "rgba(190,210,255,0.88)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  const buildName = pending.cardName || "新しいストラクト";
+  ctx.fillText(`「${buildName}」を建設するため、ストラクトデッキに戻す施設を選んでください。`, x + 24, y + 60, panelW - 48);
+  const isController = canControlChoicePlayer(pending.playerId);
+  const startX = x + 28;
+  const startY = y + 88;
+  if (!structs.length) {
+    ctx.fillStyle = "rgba(220,180,180,0.8)";
+    ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("場にストラクトがありません", startX, startY + 24);
+    return;
+  }
+  structs.forEach((struct, idx) => {
+    const col = idx % maxCols;
+    const row = Math.floor(idx / maxCols);
+    const cx = startX + col * (cardW + gap);
+    const cy = startY + row * (cardH + gap);
+    drawSelectableChoiceCard(cx, cy, cardW, cardH, struct, {
+      label: "デッキへ",
+      onClick: isController ? () => { resolveStructZoneReplace(idx); render(); } : null,
+    });
+  });
 }
 
 function drawDestroyEnemyStructPanel(pending) {
@@ -19012,6 +19177,8 @@ const testing = {
   resolveSummonPlacement,
   resolveSoulPayChoice,
   cancelSoulPayChoice,
+  resolveStructZoneReplace,
+  normalizeMisplacedStructCards: (playerId) => normalizeMisplacedStructCards(state, playerId),
   resolveChargeAttack,
   resolvePayOnAttackEnhance,
   resolvePayDefenderActCostBonus,
