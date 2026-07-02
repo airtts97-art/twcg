@@ -1251,4 +1251,30 @@ export default [
     roles: [],
     rarity: "通常",
   },
+  {
+    id: "card_1782926307471",
+    name: "サキュバス",
+    type: "ユニット",
+    world: "ニュートラル",
+    description:
+      "[機動]　[航空③]　[警戒]\n"
+      + "魔①を支払い、レストする：任意の相手ユニット１体に、魅了カウンターを①個ずつ載せる\n"
+      + "＊魅了カウンター\n"
+      + "カウンターが乗っている数だけ、ユニットのATKを下げる\n"
+      + "(0未満にはならない)\n"
+      + "[純人間]タグを持つ相手にダメージを与えた時：その値の分だけHPを回復する\n"
+      + "被撃破時：このカードは除外される",
+    flavorText: "",
+    tags: ["悪魔", "夢魔", "魔法", "神秘"],
+    costs: {
+      play: { human: 1, gold: 0, magic: 1, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: { human: 0, gold: 0, magic: 1, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: {},
+    limit: 4,
+    roles: [],
+    rarity: "通常",
+  },
 ];

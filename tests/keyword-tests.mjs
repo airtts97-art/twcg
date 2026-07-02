@@ -2059,6 +2059,53 @@ const results = await page.evaluate(() => {
     },
   });
 
+  const succubusCard = api.cardCatalog.main["card_1782926307471"];
+  out.push({
+    name: "succubus_parsed",
+    summary: {
+      mobile: (succubusCard?.keywords || []).some((k) => k.id === "mobile"),
+      flying: (succubusCard?.keywords || []).some((k) => k.id === "flying"),
+      alert: (succubusCard?.keywords || []).some((k) => k.id === "alert"),
+      charmActivate: (succubusCard?.abilities || []).some((a) => a.effect === "succubusPlaceCharmCounter"),
+      pureHumanHeal: (succubusCard?.abilities || []).some((a) => a.effect === "succubusHealFromPureHumanDamage"),
+      exileOnDestroy: (succubusCard?.abilities || []).some((a) => a.effect === "exileSelfOnDestroy"),
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.state.activePlayer = "p1";
+  api.testing.setResources("p1", { magic: 3, people: 3 });
+  api.testing.placeUnit("card_1782926307471", "p1", 2, 2, { rested: false });
+  api.testing.placeUnit("militia", "p2", 1, 2, { rested: false });
+  const enemyAtkBefore = api.testing.effectiveAttackPower(api.state.board[1][2]);
+  api.testing.selectUnit(2, 2);
+  api.testing.activateSelectedUnit();
+  if (api.state.pendingTarget) api.testing.resolveTarget(1, 2);
+  const charmedEnemy = api.state.board[1][2];
+  out.push({
+    name: "succubus_charm_counter",
+    summary: {
+      charmCounters: charmedEnemy?.charmCounters || 0,
+      enemyAtkBefore,
+      enemyEffectiveAtk: api.testing.effectiveAttackPower(charmedEnemy),
+      succubusRested: api.state.board[2][2]?.rested,
+    },
+  });
+
+  reset();
+  api.state.phase = "main";
+  api.testing.placeUnit("card_1782926307471", "p1", 2, 2);
+  api.state.board[2][2].currentHp = 0;
+  api.testing.cleanupAllDestroyed();
+  out.push({
+    name: "succubus_exile_on_destroy",
+    summary: {
+      inExile: api.state.players.p1.exileZone.some((c) => c.id === "card_1782926307471"),
+      inDump: api.state.players.p1.dump.some((c) => c.id === "card_1782926307471"),
+    },
+  });
+
   reset();
   api.testing.placeUnit("card_1755671140352", "p1", 3, 0);
   api.testing.placeUnit("militia", "p2", 0, 1);
@@ -3380,5 +3427,14 @@ assert(byName.identity_investigation_play_blocked_non_identity.blocked === true,
 assert(byName.identity_investigation_mode_choice.pending === true, "正体究明 should open mode choice when legal");
 assert(byName.identity_investigation_mode_choice.modes.includes("reviveIdentity"), "正体究明 should offer revive mode");
 assert(byName.identity_ghost_gate_blocked.blocked === true, "衰退の病 should block without 私+虚空 sacrifice");
+
+assert(byName.succubus_parsed.charmActivate === true, "サキュバス should parse charm counter activate");
+assert(byName.succubus_parsed.pureHumanHeal === true, "サキュバス should parse pure human damage heal");
+assert(byName.succubus_parsed.exileOnDestroy === true, "サキュバス should parse exile on destroy");
+assert(byName.succubus_charm_counter.charmCounters === 1, "サキュバス should place one charm counter");
+assert(byName.succubus_charm_counter.enemyEffectiveAtk === Math.max(0, byName.succubus_charm_counter.enemyAtkBefore - 1), "charm counter should reduce effective ATK by 1");
+assert(byName.succubus_charm_counter.succubusRested === true, "サキュバス activate should rest the unit");
+assert(byName.succubus_exile_on_destroy.inExile === true, "サキュバス should go to exile when destroyed");
+assert(byName.succubus_exile_on_destroy.inDump === false, "サキュバス should not go to dump when destroyed");
 
 console.log(JSON.stringify({ ok: true, cases: results.map((result) => result.name) }, null, 2));

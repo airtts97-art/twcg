@@ -372,6 +372,7 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782813364684",  // セカンド・バベル
   "card_1782887804196",  // 正体究明
   "card_1782888174807",  // 正体判明・衰退の病
+  "card_1782926307471",  // サキュバス
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -1816,6 +1817,32 @@ const abilityEffects = {
     const player = game.players[playerId];
     player.mainDeck.unshift(stripRuntime(card));
     log(game, `${player.name}: 「${card.name}」をデッキの一番上に戻した`);
+  },
+  succubusPlaceCharmCounter({ game, playerId, card, target }) {
+    if (!target || target.owner === playerId) return;
+    target.charmCounters = (target.charmCounters || 0) + 1;
+    log(
+      game,
+      `${game.players[playerId].name}: 「${card.name}」→ 「${target.name}」に魅了カウンター①（合計${target.charmCounters}、ATK-${target.charmCounters}）`,
+    );
+  },
+  succubusHealFromPureHumanDamage({ game, playerId, card, source, target }) {
+    const damage = source?.damage || 0;
+    if (damage <= 0) return;
+    const victim = target || source?.attackTarget;
+    if (!victim || victim.owner === playerId) return;
+    if (!matchesCond(victim, { tag: "純人間" })) return;
+    const maxHp = card.maxHp || card.hp || 0;
+    const before = card.currentHp ?? maxHp;
+    card.currentHp = Math.min(maxHp, before + damage);
+    log(
+      game,
+      `${game.players[playerId].name}: 「${card.name}」— [純人間]「${victim.name}」へ${damage}ダメージ → HP+${damage}（${before}→${card.currentHp}）`,
+    );
+  },
+  exileSelfOnDestroy({ game, playerId, card }) {
+    card.exileInsteadOfDump = true;
+    log(game, `${game.players[playerId].name}: 「${card.name}」は破壊時に除外される`);
   },
   otherworldKinTactPlay({ game, playerId, card }) {
     beginOtherworldKinChoice(game, playerId, card);
@@ -5728,6 +5755,18 @@ function parseDeckmakerAbilities(card, localType) {
     });
   }
 
+  if (card.id === "card_1782926307471") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onActivate",
+      effect: "succubusPlaceCharmCounter",
+      target: "enemyUnit",
+      activationCost: { magic: 1 },
+    });
+    abilities.push({ trigger: "onDamageDealt", effect: "succubusHealFromPureHumanDamage" });
+    abilities.push({ trigger: "onDestroy", effect: "exileSelfOnDestroy" });
+  }
+
   if (card.id === "card_1782802249493") {
     if (!abilities.some((a) => a.effect === "damageHighestEnemyUnitByOwnAtk")) {
       abilities.push({ trigger: "onSummon", effect: "damageHighestEnemyUnitByOwnAtk" });
@@ -9328,7 +9367,7 @@ function resumePendingAttackContinuation() {
           playerId: unit.owner,
           card: unit,
           ability,
-          source: { zone: "board" },
+          source: { zone: "board", damage: cont.damage || 0 },
           target: defenderAlive ? defender : null,
         });
       }
@@ -12886,7 +12925,13 @@ function continueUnitAttackAfterOnAttack(unit, defender, { useCharge = false } =
     unit.dealtDamageThisTurn = true;
     for (const ability of (unit.abilities || [])) {
       if (ability.trigger === "onDamageDealt") {
-        state.effectQueue.push({ playerId: unit.owner, card: unit, ability, source: { zone: "board" }, target: defender });
+        state.effectQueue.push({
+          playerId: unit.owner,
+          card: unit,
+          ability,
+          source: { zone: "board", damage },
+          target: defender,
+        });
       }
     }
     processEffectQueue(state);
@@ -13317,6 +13362,9 @@ function syncPassiveCombatAbilitiesFromCatalog(card) {
 function effectiveAttackPower(attacker, defender = null) {
   if (!attacker) return 0;
   let atk = (attacker.atk || 0) + (attacker.attackStrikeBonus || 0);
+  if ((attacker.charmCounters || 0) > 0) {
+    atk = Math.max(0, atk - attacker.charmCounters);
+  }
   if (!defender) return atk;
   for (const ability of passiveCombatAbilitiesFor(attacker)) {
     if (ability.effect === "vsTagAtkBonus" && ability.vsTag && unitHasTag(defender, ability.vsTag)) {
@@ -13704,6 +13752,9 @@ function finalizePendingDestruction(unit, killer = null, game) {
   if (unit.descentReturnToHand) {
     g.players[unit.owner].hand.push(stripRuntime(unit));
     log(g, `${unit.name} → 手札に戻る（降臨効果）`);
+  } else if (unit.exileInsteadOfDump) {
+    g.players[unit.owner].exileZone.push(stripRuntime(unit));
+    log(g, `「${unit.name}」が破壊され除外された`);
   } else {
     g.players[unit.owner].dump.push(stripRuntime(unit));
     notifyDumpChanged(g, unit.owner);
@@ -18897,6 +18948,30 @@ function drawCard(x, y, w, h, card, options = {}) {
       ctx.textBaseline = "alphabetic";
       ctx.restore();
     }
+    if ((card.charmCounters || 0) > 0) {
+      const r = options.small ? 9 : 12;
+      const bx = x + r + 4;
+      const by = y + r + 4;
+      ctx.save();
+      ctx.shadowColor = "#c060c0";
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(100,40,100,0.92)";
+      ctx.fill();
+      ctx.strokeStyle = "#f0a0f0";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#ffe8ff";
+      ctx.font = `800 ${options.small ? 8 : 10}px 'Yu Gothic UI', sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`魅${card.charmCounters}`, bx, by);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.restore();
+    }
     return;
   }
 
@@ -19222,6 +19297,9 @@ function abilityText(card) {
         identityTurnEndFieldDecay: "ターン終了時：全场-X/-1",
         identityGhostRevivePrivateFromDump: "破壊時：墓地から【正体不明】私を出す",
         returnSelfToDeckTop: "ターン終了時：デッキの一番上に戻る",
+        succubusPlaceCharmCounter: "魔①・レスト：相手ユニットに魅了カウンター①",
+        succubusHealFromPureHumanDamage: "[純人間]への与ダメージ分HP回復",
+        exileSelfOnDestroy: "破壊時：除外",
         restTargetNoUnrest: "相手ユニットをレスト（次ターン解除不可）",
         produceResourceCostHP: `ライフ${ability.hpCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         produceResourceCostHuman: `人${ability.humanCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,

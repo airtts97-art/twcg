@@ -27,6 +27,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "stripNeutralUnitAbilities", "discardEqualToFieldUnits", "colorfulTurnEndRemap", "sheriffOnSummon",
   "identityInvestigationPlay", "identityGhostAttackDebuff", "identityTurnEndFieldDecay",
   "identityGhostRevivePrivateFromDump", "returnSelfToDeckTop",
+  "succubusPlaceCharmCounter", "succubusHealFromPureHumanDamage", "exileSelfOnDestroy",
   "imposterTactPlay", "imposterDestroyNeutral",
   "otherworldKinTactPlay",
   "northeastGloryTactPlay",
