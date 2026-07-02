@@ -373,6 +373,17 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782887804196",  // 正体究明
   "card_1782888174807",  // 正体判明・衰退の病
   "card_1782926307471",  // サキュバス
+  "card_1782991941200",  // 黒曜の女司教ヴェルザリア
+  "card_1782992896163",  // 神喰らいの夢魔ヴェルザリア
+  "card_1782991288361",  // アーク・サキュバス
+  "card_1782990273879",  // サキュバスウォーメイデン
+  "card_1782997215577",  // ディメンションエスケープ
+  "card_1782990420906",  // ハイ・サキュバス
+  "card_1783011918209",  // 正体不明・蚕
+  "card_1783013688397",  // アシタノピポパ
+  "card_1783013402820",  // デイリー・トイ
+  "card_1783012700492",  // ロウニン-バットウ
+  "card_1783012268813",  // ネコマスター
 ]);
 const DECKMAKER_RESOURCE_KEYS = {
   people: "human",
@@ -945,7 +956,10 @@ const abilityEffects = {
     for (let row = 0; row < ROWS; row++) {
       for (let col = 0; col < COLS; col++) {
         const unit = game.board[row][col];
-        if (unit && (!card || canAffectUnitByEffect(game, unit, card))) unit.currentHp = 0;
+        if (unit && (!card || canAffectUnitByEffect(game, unit, card))) {
+          const result = effectDestroyUnit(game, unit, { source: card });
+          if (result === "pending") return "pending";
+        }
       }
     }
     cleanupAllDestroyed();
@@ -967,7 +981,10 @@ const abilityEffects = {
     for (let row = 0; row < ROWS; row++) {
       for (let col = 0; col < COLS; col++) {
         const unit = game.board[row][col];
-        if (unit && canAffectUnitByEffect(game, unit, card)) unit.currentHp = 0;
+        if (unit && canAffectUnitByEffect(game, unit, card)) {
+          const result = effectDestroyUnit(game, unit, { source: card });
+          if (result === "pending") return "pending";
+        }
       }
     }
     cleanupAllDestroyed(null, game);
@@ -980,7 +997,8 @@ const abilityEffects = {
       for (let col = 0; col < COLS; col += 1) {
         const unit = game.board[row][col];
         if (unit?.owner === opponent && canAffectUnitByEffect(game, unit, card)) {
-          unit.currentHp = 0;
+          const result = effectDestroyUnit(game, unit, { source: card });
+          if (result === "pending") return "pending";
           count += 1;
         }
       }
@@ -1588,7 +1606,8 @@ const abilityEffects = {
       for (let col = 0; col < COLS && remaining > 0; col++) {
         const unit = game.board[row][col];
         if (unit?.owner === opponent) {
-          unit.currentHp = 0;
+          const result = effectDestroyUnit(game, unit, { source: ability });
+          if (result === "pending") return "pending";
           remaining--;
         }
       }
@@ -1818,13 +1837,263 @@ const abilityEffects = {
     player.mainDeck.unshift(stripRuntime(card));
     log(game, `${player.name}: 「${card.name}」をデッキの一番上に戻した`);
   },
-  succubusPlaceCharmCounter({ game, playerId, card, target }) {
+  succubusPlaceCharmCounter({ game, playerId, card, target, ability }) {
     if (!target || target.owner === playerId) return;
-    target.charmCounters = (target.charmCounters || 0) + 1;
+    addCharmCounters(target, ability?.charmAmount || 1, game, `${game.players[playerId].name}: 「${card.name}」`);
+  },
+  placeCharmCounters({ game, playerId, card, ability, source, target }) {
+    const amount = ability.charmAmount || ability.amount || 1;
+    if (target) {
+      addCharmCounters(target, amount, game, `${game.players[playerId].name}: 「${card.name}」`);
+      return;
+    }
+    if ((ability.maxTargets || 1) > 1) {
+      beginCharmCounterPlacement(game, playerId, card, ability, source);
+      return "pending";
+    }
+  },
+  placeCharmOnDamageTarget({ game, playerId, card, ability, source, target }) {
+    const victim = target || source?.attackTarget;
+    const amount = ability.charmAmount || 2;
+    if (!victim || victim.owner === playerId) return;
+    addCharmCounters(victim, amount, game, `${game.players[playerId].name}: 「${card.name}」与ダメージ`);
+  },
+  verzariaConsumeZeroAtk({ game, playerId, card, target }) {
+    if (!target || target.owner === playerId) return;
+    if ((target.charmCounters || 0) <= 0) return;
+    if (effectiveAttackPower(target) > 0) return;
+    const gained = target.charmCounters;
+    target.charmCounters = 0;
+    game.board[target.row][target.col] = null;
+    game.players[target.owner].exileZone.push(stripRuntime(target));
+    card.atk = (card.atk || 0) + gained;
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」を除外しATK+${gained}`);
+  },
+  charmControlSteal({ game, playerId, card, target }) {
+    if (!target) return;
+    const cost = unitPlayCostTotal(target);
+    if ((target.charmCounters || 0) !== cost) return;
+    target.charmCounters = 0;
+    transferUnitControl(game, target, playerId, { rested: false });
+    target.rested = false;
+    target.lockedRestTurns = 0;
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」の支配を得た`);
+  },
+  highSuccubusForcedAttack({ game, playerId, card, target }) {
+    if (!target || (target.charmCounters || 0) < 5) return;
+    const adjacentEnemies = [];
+    for (const [row, col] of adjacentCells(target.row, target.col)) {
+      const unit = game.board[row]?.[col];
+      if (unit && unit.owner !== target.owner) adjacentEnemies.push(unit);
+    }
+    if (!adjacentEnemies.length) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 隣接する攻撃対象がいない`);
+      return;
+    }
+    target.charmCounters -= 5;
+    if (target.rested) {
+      target.rested = false;
+      target.lockedRestTurns = 0;
+    }
+    if (adjacentEnemies.length === 1) {
+      const defender = adjacentEnemies[0];
+      const damage = calculateAttackDamage(target, defender);
+      dealDamageToUnit(game, defender, damage, { source: target }, { cleanup: true, killer: target });
+      target.rested = true;
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」が「${defender.name}」を攻撃`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "highSuccubusForcedAttack",
+      playerId,
+      cardName: card.name,
+      attacker: target,
+      targets: adjacentEnemies,
+      queueItem: { playerId, card, ability: { effect: "highSuccubusForcedAttack" }, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "highSuccubusForcedAttack" };
+    game.message = `${card.name}: 強制攻撃する隣接ユニットを選んでください`;
+    return "pending";
+  },
+  warMaidenDamageAtkBuff({ game, playerId, card, source }) {
+    const damage = source?.damage || 0;
+    if (damage <= 0) return;
+    card.atk = (card.atk || 0) + damage;
+    log(game, `${game.players[playerId].name}: 「${card.name}」被ダメージ${damage} → ATK+${damage}`);
+  },
+  warMaidenCharmAttackBuff({ game, playerId, card, source }) {
+    const target = source?.attackTarget;
+    if (!target || target.owner === playerId) return;
+    if ((target.charmCounters || 0) <= 0) return;
+    card.attackStrikeBonus = (card.attackStrikeBonus || 0) + target.charmCounters;
     log(
       game,
-      `${game.players[playerId].name}: 「${card.name}」→ 「${target.name}」に魅了カウンター①（合計${target.charmCounters}、ATK-${target.charmCounters}）`,
+      `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」の魅了${target.charmCounters} → 攻撃力+${target.charmCounters}`,
     );
+  },
+  exileUnitSilently({ game, target }) {
+    if (!target) return;
+    game.board[target.row][target.col] = null;
+    game.players[target.owner].exileZone.push(stripRuntime(target));
+    log(game, `「${target.name}」を効果発動なしで除外`);
+  },
+  unknownWormSummonRest({ game, playerId, card, ability, source }) {
+    beginMultiUnitTargetSelection(game, playerId, card, {
+      ...ability,
+      maxTargets: 2,
+      minTargets: 0,
+      targetScope: "enemyUnit",
+      targetFilter: "noFlying",
+      confirmEffect: "unknownWormSummonRestApply",
+    }, source);
+    return "pending";
+  },
+  unknownWormSummonRestApply({ game, playerId, card, ability, targets = [] }) {
+    for (const target of targets) {
+      if (!target || target.owner === playerId) continue;
+      if (hasKeyword(target, "flying")) continue;
+      target.rested = true;
+      target.lockedRestTurns = Math.max(target.lockedRestTurns || 0, 2);
+      log(game, `「${target.name}」をレスト（次ターン終了まで解除不可）`);
+    }
+  },
+  unknownWormTurnEndShield({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    if (!canPay(player, { magic: 3 })) return;
+    game.pendingChoice = {
+      type: "optionalPayTurnEnd",
+      playerId,
+      payCost: { magic: 3 },
+      cardName: card.name,
+      confirmEffect: "unknownWormTurnEndShieldApply",
+      queueItem: { playerId, card, ability, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "optionalPayTurnEnd" };
+    game.message = `${card.name}: 魔③を支払い、次の相手ターン中効果指定免疫を得ますか？`;
+    return "pending";
+  },
+  unknownWormTurnEndShieldApply({ game, playerId, card }) {
+    card.effectTargetImmuneForActivePlayer = opponentOf(playerId);
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 次の相手ターン中、効果で指定されない`);
+  },
+  dailyToyRemoveCounter({ game, playerId, card, ability, source }) {
+    const eligible = collectUnitsWithCounters(game);
+    if (!eligible.length) return;
+    game.pendingChoice = {
+      type: "removeFieldCounter",
+      playerId,
+      cardName: card.name,
+      eligible,
+      queueItem: { playerId, card, ability, source: source || { zone: "board" } },
+      gainTactOnFriendly: true,
+    };
+    game.selected = { kind: "choice", choice: "removeFieldCounter" };
+    game.message = `${card.name}: カウンターを1つ取り除くユニットを選んでください`;
+    return "pending";
+  },
+  dailyToyReturnToHand({ game, playerId, card, target }) {
+    if (!target) return;
+    if (unitPlayCostTotal(target) > 4) return;
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」を手札に戻した`);
+    returnUnitToOwnerHand(game, target);
+  },
+  lowNinBatSummonStrike({ game, playerId, card, ability, source }) {
+    const enemies = unitsOwnedBy(opponentOf(playerId), game).filter((unit) => canAttackUnit(card, unit).ok);
+    if (!enemies.length) return;
+    if (enemies.length === 1) {
+      card.specialAttackNoRest = true;
+      card.specialAttackNoCounter = true;
+      executeUnitAttack(card, enemies[0], { row: enemies[0].row, col: enemies[0].col }, { skipActCost: true });
+      return;
+    }
+    game.pendingTarget = {
+      playerId,
+      card,
+      ability: { ...ability, effect: "lowNinBatSummonStrikeResolve" },
+      source: source || { zone: "board" },
+      filter: (unit) => unit.owner !== playerId && canAttackUnit(card, unit).ok,
+    };
+    game.selected = { kind: "target", target: "enemyUnit" };
+    game.message = `${card.name}: 攻撃する相手ユニットを選んでください`;
+    return "pending";
+  },
+  lowNinBatSummonStrikeResolve({ game, playerId, card, target }) {
+    if (!target || target.owner === playerId) return;
+    card.specialAttackNoRest = true;
+    card.specialAttackNoCounter = true;
+    executeUnitAttack(card, target, { row: target.row, col: target.col }, { skipActCost: true });
+  },
+  lowNinBatHigherAtkBuff({ game, playerId, card, source }) {
+    const opponent = source?.attackTarget || source?.attacker;
+    if (!opponent || opponent.owner === playerId) return;
+    if (effectiveAttackPower(opponent) <= effectiveAttackPower(card)) return;
+    card.attackStrikeBonus = (card.attackStrikeBonus || 0) + 2;
+    card.combatTempHpBonus = (card.combatTempHpBonus || 0) + 5;
+    card.maxHp = (card.maxHp || card.hp || 0) + 5;
+    card.currentHp = (card.currentHp || card.maxHp || 0) + 5;
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 高ATK対象へ +2/±5`);
+  },
+  ashitaStackDumpTactsOnSummon({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const tacts = [];
+    for (let i = player.dump.length - 1; i >= 0; i -= 1) {
+      const dumpCard = player.dump[i];
+      if (dumpCard.type === "tact" || dumpCard.type === "wild") {
+        tacts.unshift(player.dump.splice(i, 1)[0]);
+      }
+    }
+    if (tacts.length) notifyDumpChanged(game, playerId);
+    if (!tacts.length) return;
+    card.tactStack = [...(card.tactStack || []), ...tacts.map(cloneCard)];
+    log(game, `${player.name}: 「${card.name}」の下に墓地タクト${tacts.length}枚を重ねた`);
+  },
+  ashitaUseStackedTact({ game, playerId, card }) {
+    if (!card.tactStack?.length) return;
+    game.pendingChoice = {
+      type: "ashitaStackPick",
+      mode: "play",
+      playerId,
+      unitInstanceId: card.instanceId,
+      cardName: card.name,
+      stack: card.tactStack.map(cloneCard),
+      queueItem: { playerId, card, ability: { effect: "ashitaUseStackedTact" }, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "ashitaStackPick" };
+    game.message = `${card.name}: 使用する下敷きタクトを選んでください`;
+    return "pending";
+  },
+  ashitaStackDiscardBounce({ game, playerId, card, target }) {
+    if (!target || (card.tactStack || []).length < 2) return;
+    card.tactStack.splice(-2, 2);
+    returnUnitToOwnerHand(game, target);
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 下タクト2枚捨て「${target.name}」を手札へ`);
+  },
+  verzariaDivineOffer({ game, playerId, card }) {
+    const player = game.players[playerId];
+    game.pendingChoice = {
+      type: "verzariaDivine",
+      step: "chooseMode",
+      playerId,
+      cardName: card.name,
+      canRemove12: countCharmCountersOnField(game) >= 12,
+      canPayExile: canPay(player, { magic: 5 }),
+      queueItem: { playerId, card, ability: { effect: "verzariaDivineOffer" }, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "verzariaDivine" };
+    game.message = `${card.name}: [神格]条件 — 効果を選んでください`;
+    return "pending";
+  },
+  dimensionEscapeTactPlay({ game, playerId, card }) {
+    if (!game.globalEffects) game.globalEffects = [];
+    game.globalEffects.push({ type: "dimensionEscape", playerId });
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 味方が攻撃対象になった時に発動`);
+  },
+  exileSelfOnDestroyCoreDamage({ game, playerId, card, ability }) {
+    card.exileInsteadOfDump = true;
+    const dmg = ability.coreDamage || 10;
+    game.players[playerId].core.hp -= dmg;
+    log(game, `${game.players[playerId].name}: 「${card.name}」破壊 — 除外されコアに${dmg}ダメージ`);
+    checkWinner(game);
   },
   succubusHealFromPureHumanDamage({ game, playerId, card, source, target }) {
     const damage = source?.damage || 0;
@@ -5759,12 +6028,163 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.length = 0;
     abilities.push({
       trigger: "onActivate",
-      effect: "succubusPlaceCharmCounter",
+      effect: "placeCharmCounters",
       target: "enemyUnit",
+      targetScope: "enemyUnit",
+      maxTargets: 1,
+      charmAmount: 1,
       activationCost: { magic: 1 },
     });
     abilities.push({ trigger: "onDamageDealt", effect: "succubusHealFromPureHumanDamage" });
     abilities.push({ trigger: "onDestroy", effect: "exileSelfOnDestroy" });
+  }
+
+  if (card.id === "card_1782991941200") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onSummon",
+      effect: "placeCharmCounters",
+      maxTargets: 2,
+      charmAmount: 2,
+      targetScope: "enemyUnit",
+    });
+    abilities.push({
+      trigger: "onActivate",
+      effect: "verzariaConsumeZeroAtk",
+      target: "enemyUnit",
+    });
+    abilities.push({
+      trigger: "onDamageDealt",
+      effect: "placeCharmOnDamageTarget",
+      charmAmount: 2,
+    });
+    abilities.push({ trigger: "onDamageDealt", effect: "succubusHealFromPureHumanDamage" });
+    abilities.push({ trigger: "onDestroy", effect: "exileSelfOnDestroy" });
+  }
+
+  if (card.id === "card_1782992896163") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onSummon",
+      effect: "placeCharmCounters",
+      maxTargets: 4,
+      charmAmount: 2,
+      targetScope: "enemyUnit",
+    });
+    abilities.push({
+      trigger: "onDamageDealt",
+      effect: "placeCharmOnDamageTarget",
+      charmAmount: 3,
+    });
+    abilities.push({ trigger: "onDamageDealt", effect: "succubusHealFromPureHumanDamage" });
+    abilities.push({
+      trigger: "onDestroy",
+      effect: "exileSelfOnDestroyCoreDamage",
+      coreDamage: 10,
+    });
+  }
+
+  if (card.id === "card_1782991288361") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onSummon",
+      effect: "placeCharmCounters",
+      target: "anyUnit",
+      targetScope: "anyUnit",
+      maxTargets: 1,
+      charmAmount: 2,
+    });
+    abilities.push({
+      trigger: "onActivate",
+      effect: "placeCharmCounters",
+      targetScope: "anyUnit",
+      maxTargets: 1,
+      charmAmount: 2,
+      activationCost: { magic: 1 },
+    });
+    abilities.push({
+      trigger: "onActivate",
+      effect: "charmControlSteal",
+      target: "anyUnit",
+    });
+    abilities.push({ trigger: "onDamageDealt", effect: "succubusHealFromPureHumanDamage" });
+    abilities.push({ trigger: "onDestroy", effect: "exileSelfOnDestroy" });
+  }
+
+  if (card.id === "card_1782990273879") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onAttack", effect: "warMaidenCharmAttackBuff" });
+    abilities.push({ trigger: "onDamageDealt", effect: "succubusHealFromPureHumanDamage" });
+    abilities.push({ trigger: "onDamageReceived", effect: "warMaidenDamageAtkBuff" });
+    abilities.push({ trigger: "onDestroy", effect: "exileSelfOnDestroy" });
+  }
+
+  if (card.id === "card_1782990420906") {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onSummon",
+      effect: "placeCharmCounters",
+      target: "anyUnit",
+      targetScope: "anyUnit",
+      maxTargets: 1,
+      charmAmount: 1,
+    });
+    abilities.push({
+      trigger: "onActivate",
+      effect: "placeCharmCounters",
+      targetScope: "anyUnit",
+      maxTargets: 2,
+      charmAmount: 1,
+      activationCost: { magic: 1 },
+    });
+    abilities.push({
+      trigger: "onActivate",
+      effect: "highSuccubusForcedAttack",
+      target: "anyUnit",
+    });
+    abilities.push({ trigger: "onDamageDealt", effect: "succubusHealFromPureHumanDamage" });
+    abilities.push({ trigger: "onDestroy", effect: "exileSelfOnDestroy" });
+  }
+
+  if (card.id === "card_1782997215577") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "dimensionEscapeTactPlay" });
+  }
+
+  if (card.id === "card_1783011918209") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "unknownWormSummonRest" });
+    abilities.push({ trigger: "onTurnEnd", effect: "unknownWormTurnEndShield" });
+  }
+
+  if (card.id === "card_1783013688397") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "ashitaStackDumpTactsOnSummon" });
+    abilities.push({ trigger: "onActivate", effect: "ashitaUseStackedTact" });
+    abilities.push({ trigger: "onActivate", effect: "ashitaStackDiscardBounce", target: "anyUnit" });
+  }
+
+  if (card.id === "card_1783013402820") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "dailyToyRemoveCounter" });
+    abilities.push({ trigger: "onDamageReceived", effect: "dailyToyRemoveCounter", requiresDamage: true });
+    abilities.push({
+      trigger: "onActivate",
+      effect: "dailyToyReturnToHand",
+      target: "anyUnit",
+      activationCost: { electric: 3 },
+    });
+  }
+
+  if (card.id === "card_1783012700492") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "lowNinBatSummonStrike" });
+    abilities.push({ trigger: "onAttack", effect: "lowNinBatHigherAtkBuff" });
+    abilities.push({ trigger: "onAttacked", effect: "lowNinBatHigherAtkBuff" });
+  }
+
+  if (card.id === "card_1783012268813") {
+    abilities.length = 0;
   }
 
   if (card.id === "card_1782802249493") {
@@ -6112,6 +6532,67 @@ function fromDeckmakerCard(card) {
     if (card.id === "card_1782888174807") {
       base.identityRevealGate = { hostId: "card_1782211899987", stackedId: "card_1782297782539" };
       base.countsAsNeutral = true;
+    }
+    if (card.id === "card_1782991941200") {
+      ensureKeyword(base, "armor", 4);
+      ensureKeyword(base, "pierce", 1);
+      ensureKeyword(base, "shock");
+      ensureKeyword(base, "alert");
+      base.requiresFieldTag = "夢魔";
+      base.opponentTagTargetingImmune = true;
+    }
+    if (card.id === "card_1782992896163") {
+      ensureKeyword(base, "armor", 5);
+      ensureKeyword(base, "pierce", 2);
+      ensureKeyword(base, "shock");
+      ensureKeyword(base, "cleave");
+      ensureKeyword(base, "alert");
+      base.transformFromId = "card_1782991941200";
+      base.charmDestroyShield = 8;
+    }
+    if (card.id === "card_1782991288361") {
+      ensureKeyword(base, "mobile");
+      ensureKeyword(base, "pierce", 1);
+      ensureKeyword(base, "flying", 5);
+      ensureKeyword(base, "antiAir", 5);
+      ensureKeyword(base, "alert");
+    }
+    if (card.id === "card_1782990273879") {
+      ensureKeyword(base, "pierce", 1);
+      ensureKeyword(base, "shock");
+      ensureKeyword(base, "flying", 1);
+      ensureKeyword(base, "alert");
+    }
+    if (card.id === "card_1782990420906") {
+      ensureKeyword(base, "mobile");
+      ensureKeyword(base, "pierce", 1);
+      ensureKeyword(base, "flying", 3);
+      ensureKeyword(base, "alert");
+    }
+    if (card.id === "card_1783011918209") {
+      ensureKeyword(base, "immobile");
+      ensureKeyword(base, "noAttack");
+      ensureKeyword(base, "raid");
+      base.countsAsNeutral = true;
+    }
+    if (card.id === "card_1783013688397") {
+      ensureKeyword(base, "mobile");
+      ensureKeyword(base, "charge");
+      ensureKeyword(base, "flying");
+      ensureKeyword(base, "arc", 2);
+    }
+    if (card.id === "card_1783013402820") {
+      ensureKeyword(base, "armor", 3);
+      ensureKeyword(base, "suppression", 2);
+      ensureKeyword(base, "shock");
+    }
+    if (card.id === "card_1783012700492") {
+      ensureKeyword(base, "charge");
+      ensureKeyword(base, "alert");
+    }
+    if (card.id === "card_1783012268813") {
+      ensureKeyword(base, "charge");
+      base.handQuickTactUnit = true;
     }
     if (["card_1782211899987", "card_1782297782539", "card_1782208064951", "card_1782211496085"].includes(card.id)) {
       base.countsAsNeutral = true;
@@ -8035,6 +8516,268 @@ function applyPermanentStatMod(unit, atkDelta, hpDelta, game, sourceLabel = "") 
   if (sourceLabel) log(game, `${sourceLabel}：「${unit.name}」${atkDelta || 0}/${hpDelta || 0}の修正`);
 }
 
+function addCharmCounters(unit, amount, game, sourceLabel = "") {
+  if (!unit || amount <= 0) return;
+  unit.charmCounters = (unit.charmCounters || 0) + amount;
+  if (sourceLabel) {
+    log(game, `${sourceLabel}：「${unit.name}」に魅了カウンター${amount}（合計${unit.charmCounters}）`);
+  }
+}
+
+function countCharmCountersOnField(game, options = {}) {
+  let total = 0;
+  for (const row of game.board) {
+    for (const unit of row) {
+      if (!unit) continue;
+      if (options.ownerId && unit.owner !== options.ownerId) continue;
+      total += unit.charmCounters || 0;
+    }
+  }
+  return total;
+}
+
+function removeCharmCountersFromField(game, amount, options = {}) {
+  let remaining = amount;
+  for (const row of game.board) {
+    for (const unit of row) {
+      if (!unit || remaining <= 0) continue;
+      if (options.ownerId && unit.owner !== options.ownerId) continue;
+      const take = Math.min(remaining, unit.charmCounters || 0);
+      if (take > 0) {
+        unit.charmCounters -= take;
+        remaining -= take;
+        log(game, `「${unit.name}」の魅了カウンター-${take}（残り${unit.charmCounters || 0}）`);
+      }
+    }
+  }
+  return amount - remaining;
+}
+
+function unitPlayCostTotal(unit) {
+  return totalCostAmount(unit?.cost || {});
+}
+
+function copyStatModificationsFromUnit(fromUnit, toUnit, game) {
+  const templateFrom = cardCatalog.main[fromUnit.id];
+  const templateTo = cardCatalog.main[toUnit.id];
+  const baseFromAtk = templateFrom?.atk ?? 0;
+  const baseFromHp = templateFrom?.hp ?? 0;
+  const baseToAtk = templateTo?.atk ?? toUnit.atk ?? 0;
+  const baseToHp = templateTo?.hp ?? toUnit.maxHp ?? toUnit.hp ?? 0;
+  const atkDelta = (fromUnit.atk || 0) - baseFromAtk;
+  const hpDelta = (fromUnit.maxHp || fromUnit.hp || 0) - baseFromHp;
+  toUnit.atk = Math.max(0, baseToAtk + atkDelta);
+  toUnit.maxHp = Math.max(1, baseToHp + hpDelta);
+  toUnit.currentHp = Math.min(toUnit.maxHp, (toUnit.currentHp ?? toUnit.maxHp) + hpDelta);
+  if (atkDelta || hpDelta) {
+    log(game, `「${toUnit.name}」が「${fromUnit.name}」の修正 +${atkDelta}/+${hpDelta} を引き継いだ`);
+  }
+}
+
+function fieldHasUnitWithTag(playerId, tag, game = state) {
+  return unitsOwnedBy(playerId, game).some((unit) => matchesCond(unit, { tag }, { selectorPlayerId: playerId }));
+}
+
+function findTransformHostUnit(playerId, transformFromId, game = state) {
+  return unitsOwnedBy(playerId, game).find((unit) => unit.id === transformFromId);
+}
+
+function isValidCharmPlacementTarget(unit, pending) {
+  if (!unit) return false;
+  const scope = pending.targetScope || "enemyUnit";
+  if (scope === "enemyUnit") return unit.owner !== pending.playerId;
+  if (scope === "friendlyUnit") return unit.owner === pending.playerId;
+  return true;
+}
+
+function isValidMultiUnitTarget(unit, pending) {
+  if (!isValidCharmPlacementTarget(unit, pending)) return false;
+  if (pending.targetFilter === "noFlying" && hasKeyword(unit, "flying")) return false;
+  return true;
+}
+
+function beginMultiUnitTargetSelection(game, playerId, card, ability, source) {
+  game.pendingChoice = {
+    type: "multiUnitTarget",
+    playerId,
+    cardName: card.name,
+    maxTargets: ability.maxTargets || 1,
+    minTargets: ability.minTargets || 0,
+    targetScope: ability.targetScope || ability.target || "enemyUnit",
+    targetFilter: ability.targetFilter || null,
+    confirmEffect: ability.confirmEffect,
+    selected: [],
+    queueItem: { playerId, card, ability, source: source || { zone: "board" } },
+  };
+  game.selected = { kind: "choice", choice: "multiUnitTarget" };
+  game.message = `${card.name}: 対象ユニットを選んでください（最大${ability.maxTargets || 1}体）`;
+}
+
+function collectUnitsWithCounters(game) {
+  const out = [];
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const unit = game.board[row]?.[col];
+      if (!unit) continue;
+      if (
+        (unit.counters || 0) > 0
+        || (unit.charmCounters || 0) > 0
+        || (unit.braveBloodCounter || 0) > 0
+        || (unit.smokeScreenCounter || 0) > 0
+      ) {
+        out.push({ row, col, unit });
+      }
+    }
+  }
+  return out;
+}
+
+function removeOneCounterFromUnit(unit, game) {
+  if (!unit) return false;
+  if ((unit.charmCounters || 0) > 0) {
+    unit.charmCounters -= 1;
+    log(game, `「${unit.name}」の魅了カウンター-1`);
+    return true;
+  }
+  if ((unit.counters || 0) > 0) {
+    unit.counters -= 1;
+    log(game, `「${unit.name}」のカウンター-1`);
+    return true;
+  }
+  if ((unit.braveBloodCounter || 0) > 0) {
+    unit.braveBloodCounter -= 1;
+    log(game, `「${unit.name}」の勇血カウンター-1`);
+    return true;
+  }
+  if ((unit.smokeScreenCounter || 0) > 0) {
+    unit.smokeScreenCounter -= 1;
+    log(game, `「${unit.name}」の煙幕カウンター-1`);
+    return true;
+  }
+  return false;
+}
+
+function returnUnitToOwnerHand(game, unit) {
+  if (!unit) return;
+  game.board[unit.row][unit.col] = null;
+  game.players[unit.owner].hand.push(stripRuntime(unit));
+  if (game.selected?.row === unit.row && game.selected?.col === unit.col) game.selected = null;
+}
+
+function isUnitEffectTargetImmune(unit, selectorPlayerId, game = state) {
+  if (!unit?.effectTargetImmuneForActivePlayer) return false;
+  return unit.effectTargetImmuneForActivePlayer === game.activePlayer && selectorPlayerId !== unit.owner;
+}
+
+function tryNekoMasterIntercept(defender, attacker, game = state) {
+  if (!defender || !attacker) return false;
+  if (defender.nekoMasterOfferedThisAttack) return false;
+  if (!(defender.tags || []).includes("プログラム")) return false;
+  const owner = game.players[defender.owner];
+  const handIdx = owner.hand.findIndex((card) => card.id === "card_1783012268813");
+  if (handIdx < 0) return false;
+  const nekoCard = owner.hand[handIdx];
+  if (!canPayForCard(owner, nekoCard.cost || {}, nekoCard)) return false;
+  defender.nekoMasterOfferedThisAttack = true;
+  game.pendingChoice = {
+    type: "nekoMasterIntercept",
+    playerId: defender.owner,
+    defenderInstanceId: defender.instanceId,
+    attackerInstanceId: attacker.instanceId,
+    handIndex: handIdx,
+    cardName: nekoCard.name,
+  };
+  game.selected = { kind: "choice", choice: "nekoMasterIntercept" };
+  game.message = `「${nekoCard.name}」でダメージを0にしますか？`;
+  return true;
+}
+
+function beginCharmCounterPlacement(game, playerId, card, ability, source) {
+  game.pendingChoice = {
+    type: "charmCounterPlacement",
+    playerId,
+    cardName: card.name,
+    maxTargets: ability.maxTargets || 1,
+    charmAmount: ability.charmAmount || ability.amount || 1,
+    targetScope: ability.targetScope || ability.target || "enemyUnit",
+    selected: [],
+    queueItem: { playerId, card, ability, source: source || { zone: "board" } },
+  };
+  game.selected = { kind: "choice", choice: "charmCounterPlacement" };
+  game.message = `${card.name}: 魅了カウンターを載せるユニットを選んでください（最大${ability.maxTargets || 1}体）`;
+}
+
+function notifyDivineTagPresence(game, playerId, reasonUnit = null) {
+  const eater = unitsOwnedBy(playerId, game).find((unit) => unit.id === "card_1782992896163");
+  if (!eater) return;
+  const divinePresent = unitsOwnedBy(playerId, game).some(
+    (unit) => unit.instanceId !== eater.instanceId && matchesCond(unit, { tag: "神格" }, { selectorPlayerId: playerId }),
+  );
+  const divineSummoned = reasonUnit && matchesCond(reasonUnit, { tag: "神格" });
+  if (!divinePresent && !divineSummoned) return;
+  if (game.pendingChoice?.type === "verzariaDivine") return;
+  abilityEffects.verzariaDivineOffer({ game, playerId, card: eater, ability: {} });
+}
+
+function tryDimensionEscapeIntercept(defender, attacker, game = state) {
+  if (!defender || !attacker || defender.owner === attacker.owner) return false;
+  const ownerId = defender.owner;
+  const player = game.players[ownerId];
+  const hasEffect = (game.globalEffects || []).some((effect) => effect.type === "dimensionEscape" && effect.playerId === ownerId);
+  const handIdx = player.hand.findIndex((card) => card.id === "card_1782997215577");
+  const handCard = handIdx >= 0 ? player.hand[handIdx] : null;
+  const canUseFromHand = handCard && canPayForCard(player, handCard.cost || {}, handCard);
+  if (!hasEffect && !canUseFromHand) return false;
+  if (!hasEffect && !payForCard(player, handCard.cost || {}, handCard)) return false;
+  game.board[defender.row][defender.col] = null;
+  player.exileZone.push(stripRuntime(defender));
+  attacker.rested = true;
+  attacker.lockedRestTurns = Math.max(attacker.lockedRestTurns || 0, 1);
+  log(game, `${player.name}: 「ディメンションエスケープ」— 「${defender.name}」を除外、「${attacker.name}」をレスト`);
+  if (!hasEffect) {
+    const [used] = player.hand.splice(handIdx, 1);
+    player.dump.push(used);
+    notifyDumpChanged(game, ownerId);
+  } else {
+    game.globalEffects = (game.globalEffects || []).filter(
+      (effect) => !(effect.type === "dimensionEscape" && effect.playerId === ownerId),
+    );
+  }
+  return true;
+}
+
+function tryCharmShieldBeforeDestroy(game, unit, source = {}) {
+  const needed = unit?.charmDestroyShield || 0;
+  if (!needed || countCharmCountersOnField(game) < needed) return false;
+  if (game.pendingChoice?.type === "charmDestroyShield") return true;
+  game.pendingChoice = {
+    type: "charmDestroyShield",
+    playerId: unit.owner,
+    unitInstanceId: unit.instanceId,
+    needed,
+    sourceCardName: source?.source?.name || source?.source?.id || "破壊効果",
+    queueItem: null,
+  };
+  game.selected = { kind: "choice", choice: "charmDestroyShield" };
+  game.message = `魅了カウンター${needed}個消費で「${unit.name}」への破壊効果を無効化できます`;
+  return true;
+}
+
+function destroyUnitByEffect(game, unit, source = {}) {
+  if (!unit) return false;
+  if (tryCharmShieldBeforeDestroy(game, unit, source)) return "pending";
+  unit.currentHp = 0;
+  cleanupAllDestroyed(source?.source || null, game);
+  return true;
+}
+
+function effectDestroyUnit(game, unit, source = {}) {
+  if (!unit) return false;
+  if (tryCharmShieldBeforeDestroy(game, unit, source)) return "pending";
+  unit.currentHp = 0;
+  return true;
+}
+
 function refreshBoardUnit(game, unit) {
   const template = cardCatalog.main[unit.id];
   if (!template) return;
@@ -8089,6 +8832,8 @@ function makeUnit(cardId, owner, row, col, options = {}) {
     mobileMoveUsed: Boolean(options.mobileMoveUsed),
     counters: options.counters || 0,
     fromDump: Boolean(options.fromDump),
+    opponentTagTargetingImmune: Boolean(card.opponentTagTargetingImmune),
+    charmDestroyShield: card.charmDestroyShield || 0,
   });
 }
 
@@ -8165,6 +8910,9 @@ function refreshCounterConditionalKeywords(card) {
 
 function keywordValue(card, id, fallback = 0) {
   const keywords = (card?.keywords || []).filter((keyword) => keyword.id === id);
+  if (id === "flying" && card?.tactStack?.length && keywords.length) {
+    return Math.max(fallback, card.tactStack.length, ...keywords.map((keyword) => (typeof keyword.value === "number" ? keyword.value : 1)));
+  }
   if (!keywords.length) return fallback;
   const values = keywords.map((keyword) => (typeof keyword.value === "number" ? keyword.value : 1));
   return Math.max(fallback, ...values);
@@ -8760,6 +9508,12 @@ function effectiveCostForCard(player, cost = {}, card = null) {
   if (findCopperMineReduction(player, card, effective)) {
     effective.ore = Math.max(0, (effective.ore || 0) - 1);
   }
+  if (card.id === "card_1783013688397") {
+    const tactInDump = (player.dump || []).filter((dumpCard) => dumpCard.type === "tact" || dumpCard.type === "wild").length;
+    if (tactInDump > 0) {
+      effective.electric = Math.max(0, (effective.electric || 0) - tactInDump);
+    }
+  }
   if (card.row != null && card.col != null && hasKeyword(card, "dataLink") && (effective.electric || 0) > 0) {
     const reduction = dataLinkReductionCount(card);
     if (reduction > 0) effective.electric = Math.max(0, (effective.electric || 0) - reduction);
@@ -8940,8 +9694,11 @@ function matchesBracketRef(card, ref) {
   return name === ref || name.includes(ref);
 }
 
-function matchesCond(card, cond) {
+function matchesCond(card, cond, options = {}) {
   if (!cond) return true;
+  if (cond.tag && card?.opponentTagTargetingImmune && options.selectorPlayerId && options.selectorPlayerId !== card.owner) {
+    return false;
+  }
   if (typeof cond === "string") return matchesBracketRef(card, cond);
   if (cond.tag) return matchesBracketRef(card, cond.tag);
   if (cond.nameContains) return (card.name || "").includes(cond.nameContains);
@@ -10169,6 +10926,313 @@ function resolveIdentityInvestigationRemoveKeywords(unitIndex) {
   return true;
 }
 
+function charmPlacementUnitKey(unit) {
+  return `${unit.row},${unit.col}`;
+}
+
+function toggleCharmCounterPlacementTarget(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "charmCounterPlacement") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const unit = state.board[row]?.[col];
+  if (!isValidCharmPlacementTarget(unit, pending)) return false;
+  const key = charmPlacementUnitKey(unit);
+  const selected = new Set(pending.selected || []);
+  if (selected.has(key)) selected.delete(key);
+  else if (selected.size < pending.maxTargets) selected.add(key);
+  pending.selected = [...selected];
+  state.message = `${pending.cardName}: ${selected.size}/${pending.maxTargets}体選択`;
+  render();
+  return true;
+}
+
+function resolveCharmCounterPlacementConfirm() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "charmCounterPlacement") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const selected = pending.selected || [];
+  if (!selected.length) {
+    state.message = "魅了カウンターを載せるユニットを選んでください。";
+    render();
+    return false;
+  }
+  for (const key of selected) {
+    const [row, col] = key.split(",").map(Number);
+    const unit = state.board[row]?.[col];
+    if (unit) addCharmCounters(unit, pending.charmAmount, state, `${state.players[pending.playerId].name}: 「${pending.cardName}」`);
+  }
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function toggleMultiUnitTarget(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "multiUnitTarget") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const unit = state.board[row]?.[col];
+  if (!isValidMultiUnitTarget(unit, pending)) return false;
+  const key = charmPlacementUnitKey(unit);
+  const selected = new Set(pending.selected || []);
+  if (selected.has(key)) selected.delete(key);
+  else if (selected.size < pending.maxTargets) selected.add(key);
+  pending.selected = [...selected];
+  state.message = `${pending.cardName}: ${selected.size}/${pending.maxTargets}体選択`;
+  render();
+  return true;
+}
+
+function resolveMultiUnitTargetConfirm() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "multiUnitTarget") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const selected = pending.selected || [];
+  if (selected.length < (pending.minTargets || 0)) {
+    state.message = "対象ユニットを選んでください。";
+    render();
+    return false;
+  }
+  const targets = selected.map((key) => {
+    const [row, col] = key.split(",").map(Number);
+    return state.board[row]?.[col];
+  }).filter(Boolean);
+  const qi = pending.queueItem;
+  const effect = abilityEffects[pending.confirmEffect];
+  if (effect) {
+    effect({
+      game: state,
+      playerId: pending.playerId,
+      card: qi?.card,
+      ability: qi?.ability,
+      targets,
+    });
+  }
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveOptionalPayTurnEnd(usePay) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "optionalPayTurnEnd") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (usePay) {
+    if (!pay(player, pending.payCost || {})) {
+      state.message = "資源が不足しています。";
+      render();
+      return false;
+    }
+    const effect = abilityEffects[pending.confirmEffect];
+    if (effect) effect({ game: state, playerId: pending.playerId, card: qi?.card, ability: qi?.ability });
+  }
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveRemoveFieldCounter(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "removeFieldCounter") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const unit = state.board[row]?.[col];
+  if (!unit || !pending.eligible?.some((entry) => entry.row === row && entry.col === col)) return false;
+  const removed = removeOneCounterFromUnit(unit, state);
+  if (!removed) return false;
+  const player = state.players[pending.playerId];
+  if (pending.gainTactOnFriendly && unit.owner === pending.playerId) {
+    const tactIdx = player.dump.findIndex((card) => card.type === "tact" || card.type === "wild");
+    if (tactIdx >= 0) {
+      const [tact] = player.dump.splice(tactIdx, 1);
+      player.hand.push(tact);
+      notifyDumpChanged(state, pending.playerId);
+      log(state, `${player.name}: 墓地から「${tact.name}」を手札に加えた`);
+    }
+  }
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function playAshitaStackedTact(game, unit, tactIndex) {
+  if (!unit?.tactStack?.[tactIndex]) return;
+  const tact = unit.tactStack.splice(tactIndex, 1)[0];
+  const player = game.players[unit.owner];
+  for (const ability of tact.abilities || []) {
+    if (ability.trigger === "onPlay") {
+      abilityEffects[ability.effect]?.({
+        game,
+        playerId: unit.owner,
+        card: tact,
+        ability,
+        source: { zone: "stack", host: unit },
+      });
+    }
+  }
+  player.dump.push(tact);
+  notifyDumpChanged(game, unit.owner);
+  log(game, `${player.name}: 「${unit.name}」の下敷き「${tact.name}」を使用`);
+}
+
+function resolveAshitaStackPick(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "ashitaStackPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const unit = unitsOwnedBy(pending.playerId, state).find((candidate) => candidate.instanceId === pending.unitInstanceId);
+  if (!unit || index < 0 || index >= (unit.tactStack || []).length) return false;
+  playAshitaStackedTact(state, unit, index);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveNekoMasterIntercept(useCard) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "nekoMasterIntercept") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const nekoCard = player.hand[pending.handIndex];
+  state.pendingChoice = null;
+  state.selected = null;
+  if (useCard && nekoCard) {
+    if (!payForCard(player, nekoCard.cost || {}, nekoCard)) {
+      state.message = "資源が不足しています。";
+      render();
+      return false;
+    }
+    player.hand.splice(pending.handIndex, 1);
+    player.dump.push(nekoCard);
+    notifyDumpChanged(state, pending.playerId);
+    log(state, `${player.name}: 「${nekoCard.name}」でダメージを0にした`);
+    state.nekoMasterDamageBlocked = pending.defenderInstanceId;
+  }
+  if (state.pendingAttackContinuation?.waitingNeko) {
+    const cont = state.pendingAttackContinuation;
+    state.pendingChoice = null;
+    state.selected = null;
+    state.pendingAttackContinuation = null;
+    const unit = state.board[cont.attackerRow]?.[cont.attackerCol];
+    const defender = state.board[cont.defenderRow]?.[cont.defenderCol];
+    if (unit && defender) continueUnitAttackAfterOnAttack(unit, defender, { useCharge: cont.useCharge || false });
+    syncOnlineAction("resolveChoice", pending.playerId);
+    render();
+    return true;
+  }
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveCharmDestroyShield(useShield) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "charmDestroyShield") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (useShield) {
+    removeCharmCountersFromField(state, pending.needed);
+    log(state, `${state.players[pending.playerId].name}: 魅了カウンター${pending.needed}個で破壊効果を無効化`);
+  }
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveVerzariaDivineMode(mode) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "verzariaDivine" || pending.step !== "chooseMode") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  if (mode === "remove12") {
+    if (!pending.canRemove12) return false;
+    removeCharmCountersFromField(state, 12);
+    log(state, `${player.name}: 「${pending.cardName}」— 魅了カウンター12個を取り除いた`);
+    state.pendingChoice = null;
+    state.selected = null;
+    completeAbilitySource(state, pending.queueItem);
+    processEffectQueue(state);
+    syncOnlineAction("resolveChoice", pending.playerId);
+    render();
+    return true;
+  }
+  if (mode === "payExile") {
+    if (!pending.canPayExile) return false;
+    if (!pay(player, { magic: 5 })) return false;
+    state.pendingChoice = {
+      type: "verzariaDivine",
+      step: "pickExileTarget",
+      playerId: pending.playerId,
+      cardName: pending.cardName,
+      queueItem: pending.queueItem,
+    };
+    state.selected = { kind: "target", target: "enemyUnit" };
+    state.message = `${pending.cardName}: 効果発動なしで除外するユニットを選んでください`;
+    render();
+    return true;
+  }
+  return false;
+}
+
+function resolveVerzariaDivineExileTarget(row, col) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "verzariaDivine" || pending.step !== "pickExileTarget") return false;
+  const target = state.board[row]?.[col];
+  if (!target || target.owner === pending.playerId) return false;
+  abilityEffects.exileUnitSilently({ game: state, target });
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, pending.queueItem);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveHighSuccubusForcedAttackTarget(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "highSuccubusForcedAttack") return false;
+  const attacker = pending.attacker;
+  const defender = pending.targets?.[index];
+  if (!attacker || !defender) return false;
+  const damage = calculateAttackDamage(attacker, defender);
+  dealDamageToUnit(state, defender, damage, { source: attacker }, { cleanup: true, killer: attacker });
+  attacker.rested = true;
+  log(state, `${state.players[pending.playerId].name}: 「${pending.cardName}」— 「${attacker.name}」が「${defender.name}」を攻撃`);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function resolveImposterVictim(unitIndex) {
   const pending = state.pendingChoice;
   if (pending?.type !== "imposterTact" || pending.step !== "pickVictim") return false;
@@ -10582,6 +11646,7 @@ function effectPenetrateLevel(sourceCard, game = state) {
 function canAffectUnitByEffect(game, target, sourceCard) {
   if (!target) return false;
   if (isAmbushHidden(target, game)) return false;
+  if (sourceCard?.owner && isUnitEffectTargetImmune(target, sourceCard.owner, game)) return false;
   if (unitImmuneToMagicPlayTactEffects(target) && tactSourceIncludesMagicPlayCost(sourceCard)) {
     return false;
   }
@@ -10788,6 +11853,23 @@ function isValidAbilityTarget(item, target) {
   if (item.ability.target === "friendlyNeutralUnit") {
     if (target.owner !== item.playerId || !isNeutralUnit(target)) return false;
     return true;
+  }
+  if (item.ability.effect === "charmControlSteal") {
+    return (target.charmCounters || 0) === unitPlayCostTotal(target);
+  }
+  if (item.ability.effect === "highSuccubusForcedAttack") {
+    return (target.charmCounters || 0) >= 5;
+  }
+  if (item.ability.effect === "verzariaConsumeZeroAtk") {
+    return target.owner !== item.playerId && (target.charmCounters || 0) > 0 && effectiveAttackPower(target) <= 0;
+  }
+  if (item.ability.effect === "dailyToyReturnToHand" || item.ability.effect === "ashitaStackDiscardBounce") {
+    if (unitPlayCostTotal(target) > 4) return false;
+  }
+  if (item.ability.effect === "ashitaStackDiscardBounce" && (item.card.tactStack || []).length < 2) return false;
+  if (item.ability.effect === "ashitaUseStackedTact" && !(item.card.tactStack || []).length) return false;
+  if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
+    if (isUnitEffectTargetImmune(target, item.playerId, state)) return false;
   }
   if (!["enemyUnit", "friendlyUnit", "anyUnit", "friendlyNeutralUnit"].includes(item.ability.target)) return false;
   if (item.ability.requiresAttackableTarget && !canAttackUnit(item.card, target).ok) return false;
@@ -11459,6 +12541,7 @@ function endTurn() {
   clearTacticalStructRestLocks(state, endingPlayer);
   for (const unit of unitsOwnedBy(endingPlayer)) {
     if (unit.indestructibleUntilTurnEnd === endingPlayer) delete unit.indestructibleUntilTurnEnd;
+    if (unit.effectTargetImmuneForActivePlayer === endingPlayer) delete unit.effectTargetImmuneForActivePlayer;
     // ターン終了時に期間切れの一時的ability（保険金など）を削除
     if (unit.abilities) {
       unit.abilities = unit.abilities.filter((a) => a.untilPlayerTurnEnd !== endingPlayer);
@@ -11695,6 +12778,18 @@ function placeUnitFromHand(handIndex, row, col, soulPayAmount = undefined) {
   if (card.identityRevealGate && !findIdentityRevealSacrifice(state.activePlayer, card.identityRevealGate)) {
     return fail(identityRevealGateFailMessage(card.identityRevealGate));
   }
+  if (card.requiresFieldTag && !fieldHasUnitWithTag(state.activePlayer, card.requiresFieldTag)) {
+    return fail(`[${card.requiresFieldTag}]タグのユニットが場にないため出撃できません。`);
+  }
+  let transformHost = null;
+  if (card.transformFromId) {
+    transformHost = findTransformHostUnit(state.activePlayer, card.transformFromId);
+    if (!transformHost) {
+      const hostName = cardCatalog.main[card.transformFromId]?.name || "変身元";
+      return fail(`「${hostName}」が場にないため出撃できません。`);
+    }
+    if (row !== player.summonRow) return fail("変身召喚は第一列にのみ配置できます。");
+  }
   if (!canSummonToRow(card, player, row)) {
     return fail(isOpponentSummonRow(state.activePlayer, row)
       ? "相手のサモンフィールドには配置できません。"
@@ -11718,12 +12813,19 @@ function placeUnitFromHand(handIndex, row, col, soulPayAmount = undefined) {
   }
   revealCardUse(state.activePlayer, card, "summon");
   const unit = makeUnit(card.id, state.activePlayer, row, col, { rested: false });
+  if (transformHost) {
+    state.board[transformHost.row][transformHost.col] = null;
+    player.exileZone.push(stripRuntime(transformHost));
+    copyStatModificationsFromUnit(transformHost, unit, state);
+    log(state, `${player.name}: 「${transformHost.name}」を除外し「${unit.name}」に変身`);
+  }
   commitUnitToBoard(state, unit, row, col);
   player.hand.splice(handIndex, 1);
   state.selected = { kind: "unit", row, col };
   state.message = `${card.name} をサモンしました。`;
   log(state, `${player.name}: 「${card.name}」を出撃`);
   triggerAbilities(state, state.activePlayer, unit, "onSummon");
+  notifyDivineTagPresence(state, state.activePlayer, unit);
   refreshContinuousEffects(state);
   syncOnlineAction("summon", unit.owner);
   return true;
@@ -12866,6 +13968,27 @@ function continueCoreAttackAfterOnAttack(unit, defenderId) {
 }
 
 function continueUnitAttackAfterOnAttack(unit, defender, { useCharge = false } = {}) {
+  if (state.nekoMasterDamageBlocked === defender.instanceId) {
+    delete state.nekoMasterDamageBlocked;
+    startAttackAnimation(unit, unit.row, unit.col, defender.row, defender.col);
+    afterAttack(unit);
+    log(state, `「${unit.name}」が「${defender.name}」を攻撃（ダメージ0）`);
+    cleanupAllDestroyed(unit);
+    syncOnlineAction("attackUnit", unit.owner);
+    return true;
+  }
+  if (tryNekoMasterIntercept(defender, unit, state)) {
+    state.pendingAttackContinuation = {
+      waitingNeko: true,
+      attackerRow: unit.row,
+      attackerCol: unit.col,
+      defenderRow: defender.row,
+      defenderCol: defender.col,
+      useCharge,
+    };
+    render();
+    return true;
+  }
   const rawDamage = calculateAttackDamage(unit, defender, { useCharge });
   const { damage, pending } = dealDamageToUnit(state, defender, rawDamage, { source: unit }, { cleanup: false });
   applySuppressionToTarget(unit, defender);
@@ -12945,9 +14068,14 @@ function continueUnitAttackAfterOnAttack(unit, defender, { useCharge = false } =
   return true;
 }
 
-function executeUnitAttack(unit, defender, target, { useCharge = false } = {}) {
+function executeUnitAttack(unit, defender, target, { useCharge = false, skipActCost = false } = {}) {
   const player = state.players[unit.owner];
-  if (!payAttackCosts(player, unit, { useCharge })) return fail("アクトコストが不足しています。");
+  if (tryDimensionEscapeIntercept(defender, unit, state)) {
+    syncOnlineAction("attackUnit", unit.owner);
+    render();
+    return true;
+  }
+  if (!skipActCost && !payAttackCosts(player, unit, { useCharge })) return fail("アクトコストが不足しています。");
 
   triggerAttackAbilities(unit, defender);
   if (state.pendingChoice || state.pendingTarget) {
@@ -13244,9 +14372,27 @@ function resolvePayOnAttackEnhance(useEnhance) {
 
 function afterAttack(unit) {
   state.attackMode = false;
+  const noRest = unit.specialAttackNoRest;
+  const tempHp = unit.combatTempHpBonus || 0;
   unit.attackStrikeBonus = 0;
   unit.attackPierceBonus = 0;
   unit.attackArmorBonus = 0;
+  if (tempHp) {
+    unit.maxHp = Math.max(1, (unit.maxHp || 0) - tempHp);
+    unit.currentHp = Math.min(unit.currentHp ?? unit.maxHp, unit.maxHp);
+    delete unit.combatTempHpBonus;
+  }
+  if (noRest) {
+    delete unit.specialAttackNoRest;
+    delete unit.specialAttackNoCounter;
+    unit.attacksThisTurn = (unit.attacksThisTurn || 0) + 1;
+    return;
+  }
+  for (const row of state.board) {
+    for (const ally of row) {
+      if (ally) delete ally.nekoMasterOfferedThisAttack;
+    }
+  }
   unit.attacksThisTurn = (unit.attacksThisTurn || 0) + 1;
   const attackLimit = keywordValue(unit, "multiStrike", 1);
   if (unit.attacksThisTurn >= attackLimit) unit.rested = true;
@@ -13410,6 +14556,7 @@ function calculateAttackDamage(attacker, defender, { useCharge = false } = {}) {
 }
 
 function canCounterAttack(defender, attacker) {
+  if (attacker?.specialAttackNoCounter) return false;
   if (defender.rested) return false;
   if (hasKeyword(attacker, "arc")) return false;
   if (!canCounterFlyingAttacker(defender, attacker)) return false;
@@ -15651,6 +16798,22 @@ function handleCellClick(row, col) {
       return;
     }
   }
+  if (state.pendingChoice?.type === "charmCounterPlacement") {
+    if (canControlChoicePlayer(state.pendingChoice.playerId)) toggleCharmCounterPlacementTarget(row, col);
+    return;
+  }
+  if (state.pendingChoice?.type === "multiUnitTarget") {
+    if (canControlChoicePlayer(state.pendingChoice.playerId)) toggleMultiUnitTarget(row, col);
+    return;
+  }
+  if (state.pendingChoice?.type === "removeFieldCounter") {
+    if (canControlChoicePlayer(state.pendingChoice.playerId)) resolveRemoveFieldCounter(row, col);
+    return;
+  }
+  if (state.pendingChoice?.type === "verzariaDivine" && state.pendingChoice.step === "pickExileTarget") {
+    if (canControlChoicePlayer(state.pendingChoice.playerId)) resolveVerzariaDivineExileTarget(row, col);
+    return;
+  }
   if (state.pendingTarget) {
     if (!requireActivePlayerControl()) return;
     resolvePendingTarget(row, col);
@@ -16358,6 +17521,15 @@ function drawChoiceOverlay() {
   else if (pending.type === "tsunataiRiteHand") drawTsunataiRitePanel(pending);
   else if (pending.type === "sheriffRemoveKeywords") drawSheriffRemoveKeywordsPanel(pending);
   else if (pending.type === "identityInvestigation") drawIdentityInvestigationPanel(pending);
+  else if (pending.type === "charmCounterPlacement") drawCharmCounterPlacementPanel(pending);
+  else if (pending.type === "charmDestroyShield") drawCharmDestroyShieldPanel(pending);
+  else if (pending.type === "verzariaDivine") drawVerzariaDivinePanel(pending);
+  else if (pending.type === "highSuccubusForcedAttack") drawHighSuccubusForcedAttackPanel(pending);
+  else if (pending.type === "multiUnitTarget") drawMultiUnitTargetPanel(pending);
+  else if (pending.type === "optionalPayTurnEnd") drawOptionalPayTurnEndPanel(pending);
+  else if (pending.type === "removeFieldCounter") drawRemoveFieldCounterPanel(pending);
+  else if (pending.type === "ashitaStackPick") drawAshitaStackPickPanel(pending);
+  else if (pending.type === "nekoMasterIntercept") drawNekoMasterInterceptPanel(pending);
   else if (pending.type === "imposterTact") drawImposterTactPanel(pending);
   else if (pending.type === "otherworldKin") drawOtherworldKinPanel(pending);
   else if (pending.type === "uniqueRiteDump") drawUniqueRiteDumpPanel(pending);
@@ -16847,6 +18019,183 @@ function drawIdentityInvestigationPanel(pending) {
         onClick: isController ? () => resolveIdentityInvestigationRemoveKeywords(i) : null,
       });
     });
+  }
+}
+
+function drawCharmCounterPlacementPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  const px = W / 2 - 220;
+  const py = 20;
+  roundRect(px, py, 440, 36, 6, "rgba(8,16,40,0.92)", "#c060ff", 1.5);
+  ctx.fillStyle = "#e0c0ff";
+  ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(`${pending.cardName}: 魅了①×${pending.charmAmount}（${(pending.selected || []).length}/${pending.maxTargets}）`, W / 2, py + 24);
+  ctx.textAlign = "left";
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const unit = state.board[row]?.[col];
+      if (!isValidCharmPlacementTarget(unit, pending)) continue;
+      const visualRow = boardRowToVisualRow(row);
+      const cx2 = layout.board.x + col * layout.cell.w;
+      const cy2 = layout.board.y + visualRow * layout.cell.h;
+      const selected = (pending.selected || []).includes(charmPlacementUnitKey(unit));
+      ctx.save();
+      ctx.shadowColor = selected ? "#f0a0ff" : "#9060c0";
+      ctx.shadowBlur = 8;
+      roundRect(cx2 + 2, cy2 + 2, layout.cell.w - 4, layout.cell.h - 4, 4, selected ? "rgba(160,80,200,0.28)" : "rgba(100,40,140,0.15)", selected ? "#f0a0ff" : "#9060c0", 3);
+      ctx.restore();
+      if (isController) addHit(cx2, cy2, layout.cell.w, layout.cell.h, () => toggleCharmCounterPlacementTarget(row, col));
+    }
+  }
+  if (isController) {
+    drawButton(W / 2 - 55, H - 56, 110, 34, "確定", resolveCharmCounterPlacementConfirm, null, { accent: "p1" });
+  }
+}
+
+function drawCharmDestroyShieldPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  const x = 360, y = 240, w = 720, h = 180;
+  drawChoicePanelBase(x, y, w, h, "rgba(100,40,140,0.85)", "#c060ff");
+  ctx.fillStyle = "#f0d0ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`破壊効果：魅了カウンター${pending.needed}個で無効化`, x + 28, y + 40);
+  if (isController) {
+    drawButton(x + 40, y + 90, 280, 38, `魅了${pending.needed}個消費して無効化`, () => resolveCharmDestroyShield(true), null, { accent: "p1" });
+    drawButton(x + 400, y + 90, 280, 38, "無効化しない", () => resolveCharmDestroyShield(false), null, { accent: "dim" });
+  }
+}
+
+function drawVerzariaDivinePanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  if (pending.step === "chooseMode") {
+    const x = 340, y = 220, w = 760, h = 220;
+    drawChoicePanelBase(x, y, w, h, "rgba(80,40,120,0.85)", "#a060e0");
+    ctx.fillStyle = "#ecd0ff";
+    ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`「${pending.cardName}」 [神格]条件`, x + 28, y + 40);
+    drawButton(
+      x + 28, y + 70, w - 56, 38,
+      "魅了カウンター12個を取り除く",
+      isController && pending.canRemove12 ? () => resolveVerzariaDivineMode("remove12") : null,
+      null,
+      pending.canRemove12 ? { accent: "p1" } : { accent: "dim" },
+    );
+    drawButton(
+      x + 28, y + 120, w - 56, 38,
+      "魔⑤を支払い、相手ユニットを効果なし除外",
+      isController && pending.canPayExile ? () => resolveVerzariaDivineMode("payExile") : null,
+      null,
+      pending.canPayExile ? { accent: "p1" } : { accent: "dim" },
+    );
+    return;
+  }
+  const px = W / 2 - 220;
+  const py = 20;
+  roundRect(px, py, 440, 36, 6, "rgba(8,16,40,0.92)", "#a060e0", 1.5);
+  ctx.fillStyle = "#ecd0ff";
+  ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(`${pending.cardName}: 除外する相手ユニットをクリック`, W / 2, py + 24);
+  ctx.textAlign = "left";
+}
+
+function drawHighSuccubusForcedAttackPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  const x = 360, y = 220, w = 720, h = 260;
+  drawChoicePanelBase(x, y, w, h, "rgba(100,40,140,0.75)", "#c060ff");
+  ctx.fillStyle = "#f0d0ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 強制攻撃先を選択`, x + 28, y + 36);
+  (pending.targets || []).forEach((unit, i) => {
+    drawSelectableChoiceCard(x + 28 + i * 154, y + 56, 140, 196, unit, {
+      label: unit.name,
+      onClick: isController ? () => resolveHighSuccubusForcedAttackTarget(i) : null,
+    });
+  });
+}
+
+function drawMultiUnitTargetPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  const px = W / 2 - 220;
+  const py = 20;
+  roundRect(px, py, 440, 36, 6, "rgba(8,16,40,0.92)", "#7090d0", 1.5);
+  ctx.fillStyle = "#d0e0ff";
+  ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(`${pending.cardName}: 対象選択（${(pending.selected || []).length}/${pending.maxTargets}）`, W / 2, py + 24);
+  ctx.textAlign = "left";
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const unit = state.board[row]?.[col];
+      if (!isValidMultiUnitTarget(unit, pending)) continue;
+      const visualRow = boardRowToVisualRow(row);
+      const cx2 = layout.board.x + col * layout.cell.w;
+      const cy2 = layout.board.y + visualRow * layout.cell.h;
+      const selected = (pending.selected || []).includes(charmPlacementUnitKey(unit));
+      roundRect(cx2 + 2, cy2 + 2, layout.cell.w - 4, layout.cell.h - 4, 4, selected ? "rgba(80,120,200,0.28)" : "rgba(40,80,160,0.15)", selected ? "#90b0ff" : "#5070b0", 3);
+      if (isController) addHit(cx2, cy2, layout.cell.w, layout.cell.h, () => toggleMultiUnitTarget(row, col));
+    }
+  }
+  if (isController) drawButton(W / 2 - 55, H - 56, 110, 34, "確定", resolveMultiUnitTargetConfirm, null, { accent: "p1" });
+}
+
+function drawOptionalPayTurnEndPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  const x = 360, y = 240, w = 720, h = 160;
+  drawChoicePanelBase(x, y, w, h, "rgba(60,80,120,0.85)", "#7090d0");
+  ctx.fillStyle = "#d0e0ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: ターン終了時効果`, x + 28, y + 40);
+  if (isController) {
+    drawButton(x + 40, y + 88, 280, 38, "支払って発動", () => resolveOptionalPayTurnEnd(true), null, { accent: "p1" });
+    drawButton(x + 400, y + 88, 280, 38, "発動しない", () => resolveOptionalPayTurnEnd(false), null, { accent: "dim" });
+  }
+}
+
+function drawRemoveFieldCounterPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  const px = W / 2 - 220;
+  const py = 20;
+  roundRect(px, py, 440, 36, 6, "rgba(8,16,40,0.92)", "#7090d0", 1.5);
+  ctx.fillStyle = "#d0e0ff";
+  ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(`${pending.cardName}: カウンターを1つ取り除くユニットをクリック`, W / 2, py + 24);
+  ctx.textAlign = "left";
+  for (const entry of pending.eligible || []) {
+    const unit = state.board[entry.row]?.[entry.col];
+    if (!unit) continue;
+    const visualRow = boardRowToVisualRow(entry.row);
+    const cx2 = layout.board.x + entry.col * layout.cell.w;
+    const cy2 = layout.board.y + visualRow * layout.cell.h;
+    roundRect(cx2 + 2, cy2 + 2, layout.cell.w - 4, layout.cell.h - 4, 4, "rgba(80,120,200,0.20)", "#7090d0", 2);
+    if (isController) addHit(cx2, cy2, layout.cell.w, layout.cell.h, () => resolveRemoveFieldCounter(entry.row, entry.col));
+  }
+}
+
+function drawAshitaStackPickPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  const x = 360, y = 200, w = 720, h = 280;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,80,140,0.85)", "#5090e0");
+  ctx.fillStyle = "#d0e8ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 使用する下敷きタクト`, x + 28, y + 36);
+  (pending.stack || []).forEach((tact, i) => {
+    drawButton(x + 28, y + 70 + i * 44, w - 56, 36, tact.name, isController ? () => resolveAshitaStackPick(i) : null, null, { accent: "p1" });
+  });
+}
+
+function drawNekoMasterInterceptPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  const x = 360, y = 240, w = 720, h = 160;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,100,160,0.85)", "#5090e0");
+  ctx.fillStyle = "#d0e8ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」で被ダメージを0にしますか？`, x + 28, y + 40);
+  if (isController) {
+    drawButton(x + 40, y + 88, 280, 38, "使用する", () => resolveNekoMasterIntercept(true), null, { accent: "p1" });
+    drawButton(x + 400, y + 88, 280, 38, "使用しない", () => resolveNekoMasterIntercept(false), null, { accent: "dim" });
   }
 }
 
@@ -19298,6 +20647,26 @@ function abilityText(card) {
         identityGhostRevivePrivateFromDump: "破壊時：墓地から【正体不明】私を出す",
         returnSelfToDeckTop: "ターン終了時：デッキの一番上に戻る",
         succubusPlaceCharmCounter: "魔①・レスト：相手ユニットに魅了カウンター①",
+        placeCharmCounters: "魅了カウンターを載せる",
+        placeCharmOnDamageTarget: "与ダメージ時：魅了カウンターを載せる",
+        verzariaConsumeZeroAtk: "魅了でATK0の相手を除外しATK修正",
+        unknownWormSummonRest: "出撃時：[航空]なし相手2体をレスト",
+        unknownWormTurnEndShield: "ターン終了時魔③：次相手ターン効果免疫",
+        dailyToyRemoveCounter: "カウンター1除去（味方ならタクト回収）",
+        dailyToyReturnToHand: "電③・レスト：コスト4以下を手札へ",
+        lowNinBatSummonStrike: "出撃時：反撃なし攻撃",
+        lowNinBatHigherAtkBuff: "高ATK相手へ+2/±5",
+        ashitaStackDumpTactsOnSummon: "出撃時：墓地タクトを下に重ねる",
+        ashitaUseStackedTact: "下敷きタクトを使用",
+        ashitaStackDiscardBounce: "下タクト2枚捨て：ユニットを手札へ",
+        charmControlSteal: "魅了=プレイコストで支配を得る",
+        highSuccubusForcedAttack: "魅了⑤で隣接へ強制攻撃",
+        warMaidenCharmAttackBuff: "魅了対象への攻撃時ATK修正",
+        warMaidenDamageAtkBuff: "被ダメージ分ATK修正",
+        verzariaDivineOffer: "[神格]条件：魅了12除去か魔⑤除外",
+        dimensionEscapeTactPlay: "味方が攻撃対象時：除外＋攻撃者レスト",
+        exileSelfOnDestroyCoreDamage: "破壊時：除外＋コアダメージ",
+        exileUnitSilently: "効果発動なしで除外",
         succubusHealFromPureHumanDamage: "[純人間]への与ダメージ分HP回復",
         exileSelfOnDestroy: "破壊時：除外",
         restTargetNoUnrest: "相手ユニットをレスト（次ターン解除不可）",
@@ -19680,6 +21049,19 @@ const testing = {
   resolveIdentityInvestigationMode,
   resolveIdentityInvestigationDump,
   resolveIdentityInvestigationRemoveKeywords,
+  toggleCharmCounterPlacementTarget,
+  resolveCharmCounterPlacementConfirm,
+  toggleMultiUnitTarget,
+  resolveMultiUnitTargetConfirm,
+  resolveOptionalPayTurnEnd,
+  resolveRemoveFieldCounter,
+  resolveAshitaStackPick,
+  resolveNekoMasterIntercept,
+  resolveCharmDestroyShield,
+  resolveVerzariaDivineMode,
+  resolveVerzariaDivineExileTarget,
+  resolveHighSuccubusForcedAttackTarget,
+  countCharmCountersOnField,
   selectHandCard: selectHandCardForTest,
   selectStructDeckCard: selectStructDeckCardForTest,
   useSelectedHandCard,

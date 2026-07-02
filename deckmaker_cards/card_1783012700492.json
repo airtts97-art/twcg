@@ -1,0 +1,23 @@
+{
+  "id": "card_1783012700492",
+  "name": "Low刃-伐10(ロウニン-バットウ)",
+  "type": "ユニット",
+  "world": "[電脳世界]仮称：エデン",
+  "attack": 4,
+  "defense": 5,
+  "description": "[帯電][警戒]\n出撃時：相手のユニット1体に攻撃する。このユニットはこの攻撃によってレストせず、反撃されない。\nこれよりATKの高いユニットへの攻撃または反撃時：戦闘終了時まで+2/±5の補正を得る",
+  "flavorText": "「切り取り・貼り付け」の力を持つ武人\n自身と敵を戦に[paste]し、【cut】の一撃を決める。",
+  "tags": ["プログラム", "電子", "歩兵"],
+  "costs": {
+    "play": { "human": 0, "gold": 0, "magic": 0, "nature": 0, "fuel": 2, "mineral": 0, "electric": 4 },
+    "act": { "human": 0, "gold": 0, "magic": 0, "nature": 0, "fuel": 0, "mineral": 0, "electric": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "limit": 4,
+  "roles": [],
+  "tactSubType": null,
+  "rarity": "通常",
+  "imageUrl": "assets/cards/card_1783012700492.jpeg"
+}

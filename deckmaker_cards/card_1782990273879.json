@@ -1,0 +1,20 @@
+{
+  "id": "card_1782990273879",
+  "name": "サキュバスウォーメイデン",
+  "type": "ユニット",
+  "world": "ニュートラル",
+  "description": "[貫通①]　[航空①]　[衝撃]　[警戒]\n魅了カウンターが載っている相手ユニットに対し与攻撃時：魅了カウンターの数だけこのユニットのATKを修正を得る\n[純人間]タグを持つ相手にダメージを与えた時：\nその値の分だけHPを回復する\n被ダメージ時：受けたダメージの分だけATKの修正を得る\n被撃破時：このカードは除外される",
+  "costs": {
+    "play": { "human": 3, "gold": 0, "magic": 2, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "act": { "human": 1, "gold": 0, "magic": 1, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "tags": ["悪魔", "夢魔", "魔法", "神秘"],
+  "roles": [],
+  "rarity": "通常",
+  "limit": 4,
+  "flavorText": "",
+  "imageUrl": "assets/cards/card_1782990273879.jpeg"
+}

@@ -1,0 +1,23 @@
+{
+  "id": "card_1783013402820",
+  "name": "De(イ)lete-te+(・TOY)(デイリー・トイ)",
+  "type": "ユニット",
+  "world": "[電脳世界]仮称：エデン",
+  "attack": 3,
+  "defense": 6,
+  "description": "[装甲③][制圧②][衝撃]\n出撃時または被ダメージ時：場にある任意のカウンターを1つ取り除く。この効果で自分のカード効果によるカウンターを取り除いた時、自分の墓地からタクトカードを1枚手札に加える。\n電③を支払い、レストする：場のコスト総量が4以下のユニットを1体手札に戻す。",
+  "flavorText": "「おい！またあのゴミ箱暴れてるぞ！」\n――low刃-伐10\n「待ってー！止まりたまえよー！」\n――《-}{定-》SP矢",
+  "tags": ["プログラム", "電子"],
+  "costs": {
+    "play": { "human": 0, "gold": 3, "magic": 0, "nature": 0, "fuel": 0, "mineral": 0, "electric": 5 },
+    "act": { "human": 0, "gold": 0, "magic": 0, "nature": 0, "fuel": 0, "mineral": 0, "electric": 3 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "limit": 4,
+  "roles": [],
+  "tactSubType": null,
+  "rarity": "通常",
+  "imageUrl": "assets/cards/card_1783013402820.jpeg"
+}

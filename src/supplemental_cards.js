@@ -1277,4 +1277,316 @@ export default [
     roles: [],
     rarity: "通常",
   },
+  {
+    id: "card_1782990273879",
+    name: "サキュバスウォーメイデン",
+    type: "ユニット",
+    world: "ニュートラル",
+    attack: 3,
+    defense: 8,
+    description:
+      "[貫通①]　[航空①]　[衝撃]　[警戒]\n"
+      + "魅了カウンターが載っている相手ユニットに対し与攻撃時：魅了カウンターの数だけこのユニットのATKを修正を得る\n"
+      + "[純人間]タグを持つ相手にダメージを与えた時：\nその値の分だけHPを回復する\n"
+      + "被ダメージ時：受けたダメージの分だけATKの修正を得る\n"
+      + "被撃破時：このカードは除外される",
+    flavorText: "ヴェルザリアの系譜でありハイ・サキュバスと同格のこのサキュバスは\n性欲よりも闘争欲が強い肉体派が多い",
+    tags: ["悪魔", "夢魔", "魔法", "神秘"],
+    costs: {
+      play: { human: 3, magic: 2, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: { human: 1, magic: 1, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782990273879.jpeg",
+  },
+  {
+    id: "card_1782990420906",
+    name: "ハイ・サキュバス",
+    type: "ユニット",
+    world: "ニュートラル",
+    attack: 2,
+    defense: 6,
+    description:
+      "[機動]　[貫通①]　[航空③]　[警戒]\n"
+      + "出撃時：任意のユニット１体に、魅了カウンターを①個載せる\n"
+      + "魔①を支払い、レストする：任意のユニット２体に、魅了カウンターを①個載せる\n"
+      + "カウンターが⑤個載っているユニットに対し、カウンターを取り除いて隣接する相手ユニットに対して攻撃させる\n"
+      + "この時対象ユニットがレストしていた場合、レスト状態を解除する\n"
+      + "[純人間]タグを持つ相手にダメージを与えた時：\nその値の分だけHPを回復する\n"
+      + "被撃破時：このカードは除外される",
+    flavorText: "甘い囁きに抗えた者はいる。\nだが、彼女の身体に触れて抗えた者はいない。",
+    tags: ["悪魔", "夢魔", "魔法", "神秘"],
+    costs: {
+      play: { human: 2, magic: 2, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: { human: 0, magic: 1, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782990420906.jpeg",
+  },
+  {
+    id: "card_1782991288361",
+    name: "アーク・サキュバス",
+    type: "ユニット",
+    world: "ニュートラル",
+    attack: 4,
+    defense: 7,
+    description:
+      "[機動]　[貫通①]　[航空⑤]　[対空⑤]　[警戒]\n"
+      + "出撃時：任意のユニット１体に、魅了カウンターを②個載せる\n"
+      + "魔①を支払い、レストする：任意のユニット１体に、魅了カウンターを②個載せる\n"
+      + "魅了カウンターがプレイコストと同数載っているユニットに対し、カウンターを取り除き対象ユニットのコントロールを得る\n"
+      + "コントロールを奪われたユニットはレスト状態が解除される\n"
+      + "[純人間]タグを持つ相手にダメージを与えた時：\nその値の分だけHPを回復する\n"
+      + "被撃破時：このカードは除外される",
+    flavorText: "彼女が奪うのは一夜の夢ではない。屈した者の、心も身体も全てだ。",
+    tags: ["悪魔", "夢魔", "魔法", "神秘"],
+    costs: {
+      play: { human: 4, magic: 4, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: { human: 0, magic: 2, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "伝説",
+    imageUrl: "assets/cards/card_1782991288361.jpeg",
+  },
+  {
+    id: "card_1782991941200",
+    name: "《黒曜の女司教》ヴェルザリア",
+    type: "ユニット",
+    world: "ニュートラル",
+    attack: 6,
+    defense: 10,
+    description:
+      "[夢魔]タグのユニットが場にない場合、このユニットを場に出すことは出来ない\n"
+      + "[装甲④]　[貫通①]　[衝撃]　[警戒]\n"
+      + "出撃時：任意の相手ユニット２体に、魅了カウンターを②個載せる\n"
+      + "魅了カウンターの効果によりATKが０になっているユニットに対し、\n"
+      + "対象ユニットを除外し、載っていたカウンターの数だけこのユニットのATKに修正を得る\n"
+      + "このカードのタグは相手のサーチ、指定対象に含まれない\n"
+      + "与ダメージ時：相手ユニットに魅了カウンターを②個載せる。\n"
+      + "[純人間]タグを持つ相手にダメージを与えた時：\nその値の分だけHPを回復する\n"
+      + "被撃破時：このカードは除外される",
+    flavorText:
+      "「無能な神に毎晩祈りを捧げる位なら、我々にその身を預け、\n"
+      + "床の上で極上の快楽に浸りたいとは思いませんか？」\n"
+      + "祈りとは願いではない。跪く者が、自ら差し出す魂の形である。",
+    tags: ["悪魔", "夢魔", "魔法", "神秘"],
+    costs: {
+      play: { human: 5, magic: 5, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: { human: 1, magic: 2, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "伝説",
+    imageUrl: "assets/cards/card_1782991941200.jpeg",
+  },
+  {
+    id: "card_1782992896163",
+    name: "《神喰らいの夢魔》ヴェルザリア",
+    type: "ユニット",
+    world: "ニュートラル",
+    attack: 8,
+    defense: 16,
+    description:
+      "「《黒曜の女司教》ヴェルザリア」が場にある時のみ出撃できる。その際対象カードを除外し付与されていた修正を全てこのカードに引き継ぎ、プレイコストを支払って第一列に配置できる。\n"
+      + "[装甲⑤]　[貫通②]　[衝撃]　[巨撃]　[警戒]\n"
+      + "出撃時：任意の相手ユニット４体に、魅了カウンターを②個載せる。\n"
+      + "与ダメージ時：相手ユニットに魅了カウンターを③個載せる。\n"
+      + "[神格]タグのユニットがフィールドに存在、又は出撃した時、フィールド上の魅了カウンターを１２個取り除くか、魔⑤を支払い、対象ユニットの効果を発動させずに除外する。\n"
+      + "このユニットに対する破壊効果は、場の魅了カウンター8個を取り除く事で無効化出来る。\n"
+      + "[純人間]タグを持つ相手にダメージを与えた時：その値だけHPを回復する。\n"
+      + "被撃破時：このカードは除外され、コントロール側のコアに１０ダメージを受ける。",
+    flavorText:
+      "彼女は人間には極上の快楽と共に苦痛のない死を与える。\n"
+      + "しかし、神には彼らが人間に強いてきた理不尽な苦しみを、\n"
+      + "凄惨な破壊や冒涜と共に与える。",
+    tags: ["悪魔", "夢魔", "魔法", "神秘"],
+    costs: {
+      play: { human: 10, magic: 10, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: { human: 3, magic: 5, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "神話",
+    imageUrl: "assets/cards/card_1782992896163.jpeg",
+  },
+  {
+    id: "card_1782997215577",
+    name: "ディメンションエスケープ",
+    type: "タクト",
+    world: "ヘヤクヨン皇帝制民主主義連邦共和帝国",
+    description: "この味方のユニットが攻撃対象に選ばれたとき\n選ばれたユニットを除外し、攻撃してきたユニットをレストする。",
+    flavorText: "空間を適切に扱えば離脱も容易　あとは場を荒らすだけだ",
+    tags: ["ヘヤクヨン", "速攻"],
+    costs: {
+      play: { human: 0, magic: 1, electric: 1, gold: 0, nature: 0, fuel: 0, mineral: 0 },
+      act: {},
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: ["防衛"],
+    tactSubType: "速攻",
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782997215577.jpeg",
+  },
+  {
+    id: "card_1783011918209",
+    name: "【正体不明】蚕(アンノウン・ワーム)",
+    type: "ユニット",
+    world: "正体不明",
+    attack: 2,
+    defense: 5,
+    description:
+      "(このユニットの世界はニュートラルとしても扱う)\n"
+      + "[不動][不攻][奇襲]\n"
+      + "出撃時：相手の[航空]を持たないユニットを２体まで選択する。そのユニットはレスとされ、次のターンの終わりまでレストできない。\n"
+      + "ターン終了時魔③を消費する：このユニットは「次の相手のターンの間、効果で選択されない」を得る。",
+    flavorText: "欲のままに全てを喰らい尽くす無知の暴徒",
+    tags: [],
+    costs: {
+      play: { magic: 4, human: 0, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: { magic: 1, human: 0, gold: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1783011918209.jpeg",
+  },
+  {
+    id: "card_1783012268813",
+    name: "ネコ[舞-Star.(ネコマスター)",
+    type: "ユニット",
+    world: "[電脳世界]仮称：エデン",
+    attack: 3,
+    defense: 1,
+    description:
+      "[帯電]\n"
+      + "このカードはユニットとして場に存在しない時、以下の効果を持つ速攻タクトとして扱う。\n"
+      + "・自分のプログラムを持つユニットの被攻撃時にのみ発動できる。そのダメージを0にする。",
+    flavorText: "「オイオイ、ソンナモンカ？僕ノダンスヲ見テミロヨ！」\n――ネコ[舞-Star.",
+    tags: ["プログラム", "電子", "神秘"],
+    costs: {
+      play: { electric: 2, human: 0, gold: 0, magic: 0, nature: 0, fuel: 0, mineral: 0 },
+      act: { electric: 1, human: 0, gold: 0, magic: 0, nature: 0, fuel: 0, mineral: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1783012268813.jpeg",
+  },
+  {
+    id: "card_1783012700492",
+    name: "Low刃-伐10(ロウニン-バットウ)",
+    type: "ユニット",
+    world: "[電脳世界]仮称：エデン",
+    attack: 4,
+    defense: 5,
+    description:
+      "[帯電][警戒]\n"
+      + "出撃時：相手のユニット1体に攻撃する。このユニットはこの攻撃によってレストせず、反撃されない。\n"
+      + "これよりATKの高いユニットへの攻撃または反撃時：戦闘終了時まで+2/±5の補正を得る",
+    flavorText: "「切り取り・貼り付け」の力を持つ武人\n自身と敵を戦に[paste]し、【cut】の一撃を決める。",
+    tags: ["プログラム", "電子", "歩兵"],
+    costs: {
+      play: { electric: 4, fuel: 2, human: 0, gold: 0, magic: 0, nature: 0, mineral: 0 },
+      act: { electric: 1, human: 0, gold: 0, magic: 0, nature: 0, fuel: 0, mineral: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1783012700492.jpeg",
+  },
+  {
+    id: "card_1783013402820",
+    name: "De(イ)lete-te+(・TOY)(デイリー・トイ)",
+    type: "ユニット",
+    world: "[電脳世界]仮称：エデン",
+    attack: 3,
+    defense: 6,
+    description:
+      "[装甲③][制圧②][衝撃]\n"
+      + "出撃時または被ダメージ時：場にある任意のカウンターを1つ取り除く。この効果で自分のカード効果によるカウンターを取り除いた時、自分の墓地からタクトカードを1枚手札に加える。\n"
+      + "電③を支払い、レストする：場のコスト総量が4以下のユニットを1体手札に戻す。",
+    flavorText: "「おい！またあのゴミ箱暴れてるぞ！」\n――low刃-伐10\n「待ってー！止まりたまえよー！」\n――《-}{定-》SP矢",
+    tags: ["プログラム", "電子"],
+    costs: {
+      play: { electric: 5, gold: 3, human: 0, magic: 0, nature: 0, fuel: 0, mineral: 0 },
+      act: { electric: 3, human: 0, gold: 0, magic: 0, nature: 0, fuel: 0, mineral: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1783013402820.jpeg",
+  },
+  {
+    id: "card_1783013688397",
+    name: "<Cyber>未来(Q)明\"意思\"：アシタ/no/PiPoPa(電脳未来究明意思：アシタノピポパ)",
+    type: "ユニット",
+    world: "[電脳世界]仮称：エデン",
+    attack: 4,
+    defense: 4,
+    description:
+      "[機動][航空X][帯電][曲射②]\n"
+      + "(X=このユニットの下に重ねているタクトの枚数)\n"
+      + "このユニットを出撃させる時、自分の墓地のタクトの数だけ、電のプレイコストを減らしても良い。\n"
+      + "出撃時：自分の墓地のタクトカードを全てこのカードの下に重ねる。\n"
+      + "自分はこのカードの下にあるタクトを使用しても良い。使用した場合、そのタクトを墓地に捨てる。\n"
+      + "このカードの舌にあるカードを2枚捨てる：ユニットを1体持ち主の手札に戻す。",
+    flavorText: "基祖No.1：電脳世界■■■■■■■ノ管理の為に生み出された2体のプログラムのうちの1体。",
+    tags: ["プログラム", "電子", "基祖"],
+    costs: {
+      play: { electric: 13, human: 0, gold: 0, magic: 0, nature: 0, fuel: 0, mineral: 0 },
+      act: { electric: 3, human: 0, gold: 0, magic: 0, nature: 0, fuel: 0, mineral: 0 },
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 0 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "神話",
+    imageUrl: "assets/cards/card_1783013688397.jpeg",
+  },
 ];

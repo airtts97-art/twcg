@@ -1,0 +1,20 @@
+{
+  "id": "card_1782991288361",
+  "name": "アーク・サキュバス",
+  "type": "ユニット",
+  "world": "ニュートラル",
+  "description": "[機動]　[貫通①]　[航空⑤]　[対空⑤]　[警戒]\n出撃時：任意のユニット１体に、魅了カウンターを②個載せる\n魔①を支払い、レストする：任意のユニット１体に、魅了カウンターを②個載せる\n魅了カウンターがプレイコストと同数載っているユニットに対し、カウンターを取り除き対象ユニットのコントロールを得る\nコントロールを奪われたユニットはレスト状態が解除される\n[純人間]タグを持つ相手にダメージを与えた時：\nその値の分だけHPを回復する\n被撃破時：このカードは除外される",
+  "costs": {
+    "play": { "human": 4, "gold": 0, "magic": 4, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "act": { "human": 0, "gold": 0, "magic": 2, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "tags": ["悪魔", "夢魔", "魔法", "神秘"],
+  "roles": [],
+  "rarity": "通常",
+  "limit": 4,
+  "flavorText": "",
+  "imageUrl": "assets/cards/card_1782991288361.jpeg"
+}

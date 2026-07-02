@@ -2066,7 +2066,7 @@ const results = await page.evaluate(() => {
       mobile: (succubusCard?.keywords || []).some((k) => k.id === "mobile"),
       flying: (succubusCard?.keywords || []).some((k) => k.id === "flying"),
       alert: (succubusCard?.keywords || []).some((k) => k.id === "alert"),
-      charmActivate: (succubusCard?.abilities || []).some((a) => a.effect === "succubusPlaceCharmCounter"),
+      charmActivate: (succubusCard?.abilities || []).some((a) => a.effect === "placeCharmCounters"),
       pureHumanHeal: (succubusCard?.abilities || []).some((a) => a.effect === "succubusHealFromPureHumanDamage"),
       exileOnDestroy: (succubusCard?.abilities || []).some((a) => a.effect === "exileSelfOnDestroy"),
     },

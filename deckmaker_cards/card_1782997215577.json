@@ -1,0 +1,20 @@
+{
+  "id": "card_1782997215577",
+  "name": "ディメンションエスケープ",
+  "type": "タクト",
+  "world": "ヘヤクヨン皇帝制民主主義連邦共和帝国",
+  "description": "この味方のユニットが攻撃対象に選ばれたとき\n選ばれたユニットを除外し、攻撃してきたユニットをレストする。",
+  "costs": {
+    "play": { "human": 0, "gold": 0, "magic": 1, "nature": 0, "fuel": 0, "mineral": 0, "electric": 1 },
+    "act": { "human": 0, "gold": 0, "magic": 0, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "tags": ["ヘヤクヨン", "速攻"],
+  "roles": [],
+  "rarity": "通常",
+  "limit": 4,
+  "flavorText": "",
+  "imageUrl": "assets/cards/card_1782997215577.jpeg"
+}

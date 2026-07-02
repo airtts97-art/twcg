@@ -1,0 +1,23 @@
+{
+  "id": "card_1783012268813",
+  "name": "ネコ[舞-Star.(ネコマスター)",
+  "type": "ユニット",
+  "world": "[電脳世界]仮称：エデン",
+  "attack": 3,
+  "defense": 1,
+  "description": "[帯電]\nこのカードはユニットとして場に存在しない時、以下の効果を持つ速攻タクトとして扱う。\n・自分のプログラムを持つユニットの被攻撃時にのみ発動できる。そのダメージを0にする。",
+  "flavorText": "「オイオイ、ソンナモンカ？僕ノダンスヲ見テミロヨ！」\n――ネコ[舞-Star.",
+  "tags": ["プログラム", "電子", "神秘"],
+  "costs": {
+    "play": { "human": 0, "gold": 0, "magic": 0, "nature": 0, "fuel": 0, "mineral": 0, "electric": 2 },
+    "act": { "human": 0, "gold": 0, "magic": 0, "nature": 0, "fuel": 0, "mineral": 0, "electric": 1 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "limit": 4,
+  "roles": [],
+  "tactSubType": null,
+  "rarity": "通常",
+  "imageUrl": "assets/cards/card_1783012268813.jpeg"
+}

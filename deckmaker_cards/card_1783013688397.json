@@ -1,0 +1,23 @@
+{
+  "id": "card_1783013688397",
+  "name": "<Cyber>未来(Q)明\"意思\"：アシタ/no/PiPoPa(電脳未来究明意思：アシタノピポパ)",
+  "type": "ユニット",
+  "world": "[電脳世界]仮称：エデン",
+  "attack": 4,
+  "defense": 4,
+  "description": "[機動][航空X][帯電][曲射②]\n(X=このユニットの下に重ねているタクトの枚数)\nこのユニットを出撃させる時、自分の墓地のタクトの数だけ、電のプレイコストを減らしても良い。\n出撃時：自分の墓地のタクトカードを全てこのカードの下に重ねる。\n自分はこのカードの下にあるタクトを使用しても良い。使用した場合、そのタクトを墓地に捨てる。\nこのカードの舌にあるカードを2枚捨てる：ユニットを1体持ち主の手札に戻す。",
+  "flavorText": "基祖No.1：電脳世界■■■■■■■ノ管理の為に生み出された2体のプログラムのうちの1体。",
+  "tags": ["プログラム", "電子", "基祖"],
+  "costs": {
+    "play": { "human": 0, "gold": 0, "magic": 0, "nature": 0, "fuel": 0, "mineral": 0, "electric": 13 },
+    "act": { "human": 0, "gold": 0, "magic": 0, "nature": 0, "fuel": 0, "mineral": 0, "electric": 3 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "limit": 4,
+  "roles": [],
+  "tactSubType": null,
+  "rarity": "神話",
+  "imageUrl": "assets/cards/card_1783013688397.jpeg"
+}

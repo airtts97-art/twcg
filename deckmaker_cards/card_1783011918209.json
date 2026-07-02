@@ -1,0 +1,23 @@
+{
+  "id": "card_1783011918209",
+  "name": "【正体不明】蚕(アンノウン・ワーム)",
+  "type": "ユニット",
+  "world": "正体不明",
+  "attack": 2,
+  "defense": 5,
+  "description": "(このユニットの世界はニュートラルとしても扱う)\n[不動][不攻][奇襲]\n出撃時：相手の[航空]を持たないユニットを２体まで選択する。そのユニットはレスとされ、次のターンの終わりまでレストできない。\nターン終了時魔③を消費する：このユニットは「次の相手のターンの間、効果で選択されない」を得る。",
+  "flavorText": "欲のままに全てを喰らい尽くす無知の暴徒",
+  "tags": [],
+  "costs": {
+    "play": { "human": 0, "gold": 0, "magic": 4, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "act": { "human": 0, "gold": 0, "magic": 1, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "limit": 4,
+  "roles": [],
+  "tactSubType": null,
+  "rarity": "通常",
+  "imageUrl": "assets/cards/card_1783011918209.jpeg"
+}

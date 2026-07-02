@@ -1,0 +1,20 @@
+{
+  "id": "card_1782990420906",
+  "name": "ハイ・サキュバス",
+  "type": "ユニット",
+  "world": "ニュートラル",
+  "description": "[機動]　[貫通①]　[航空③]　[警戒]\n出撃時：任意のユニット１体に、魅了カウンターを①個載せる\n魔①を支払い、レストする：任意のユニット２体に、魅了カウンターを①個載せる\nカウンターが⑤個載っているユニットに対し、カウンターを取り除いて隣接する相手ユニットに対して攻撃させる\nこの時対象ユニットがレストしていた場合、レスト状態を解除する\n[純人間]タグを持つ相手にダメージを与えた時：\nその値の分だけHPを回復する\n被撃破時：このカードは除外される",
+  "costs": {
+    "play": { "human": 2, "gold": 0, "magic": 2, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "act": { "human": 0, "gold": 0, "magic": 1, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "tags": ["悪魔", "夢魔", "魔法", "神秘"],
+  "roles": [],
+  "rarity": "通常",
+  "limit": 4,
+  "flavorText": "",
+  "imageUrl": "assets/cards/card_1782990420906.jpeg"
+}

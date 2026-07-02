@@ -1,0 +1,20 @@
+{
+  "id": "card_1782991941200",
+  "name": "《黒曜の女司教》ヴェルザリア",
+  "type": "ユニット",
+  "world": "ニュートラル",
+  "description": "[夢魔]タグのユニットが場にない場合、このユニットを場に出すことは出来ない\n[装甲④]　[貫通①]　[衝撃]　[警戒]\n出撃時：任意の相手ユニット２体に、魅了カウンターを②個載せる\n魅了カウンターの効果によりATKが０になっているユニットに対し、\n対象ユニットを除外し、載っていたカウンターの数だけこのユニットのATKに修正を得る\nこのカードのタグは相手のサーチ、指定対象に含まれない\n与ダメージ時：相手ユニットに魅了カウンターを②個載せる。\n[純人間]タグを持つ相手にダメージを与えた時：\nその値の分だけHPを回復する\n被撃破時：このカードは除外される",
+  "costs": {
+    "play": { "human": 5, "gold": 0, "magic": 5, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "act": { "human": 1, "gold": 0, "magic": 2, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 0 },
+  "tags": ["悪魔", "夢魔", "魔法", "神秘"],
+  "roles": [],
+  "rarity": "通常",
+  "limit": 4,
+  "flavorText": "",
+  "imageUrl": "assets/cards/card_1782991941200.jpeg"
+}
