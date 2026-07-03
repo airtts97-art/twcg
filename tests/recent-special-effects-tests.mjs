@@ -328,6 +328,48 @@ const checks = await page.evaluate(() => {
     && api.state.players.p1.dump.some((card) => card.id === "card_1783012268813")
     && nekoAttacker.rested;
 
+  reset();
+  const multiFour = api.testing.placeUnit("card_1782180616372", "p1", 2, 5, { rested: false });
+  const multiTargetA = api.testing.placeUnit("militia", "p2", 1, 5, { rested: true, hp: 20 });
+  const multiTargetB = api.testing.placeUnit("militia", "p2", 1, 6, { rested: true, hp: 20 });
+  api.testing.selectUnit(2, 5);
+  api.testing.attack({ kind: "unit", row: 1, col: 5 });
+  const firstMultiAttackContinues = !multiFour.rested
+    && multiFour.attacksThisTurn === 1
+    && api.state.attackMode
+    && multiTargetA.currentHp < 20;
+  api.testing.attack({ kind: "unit", row: 1, col: 6 });
+  const secondTargetChosenWhileFirstSurvives = !multiFour.rested
+    && multiFour.attacksThisTurn === 2
+    && api.state.attackMode
+    && multiTargetA.currentHp > 0
+    && multiTargetB.currentHp < 20;
+  api.testing.attack({ kind: "unit", row: 1, col: 5 });
+  api.testing.attack({ kind: "unit", row: 1, col: 6 });
+  const fourthAttackStillContinues = !multiFour.rested
+    && multiFour.attacksThisTurn === 4
+    && api.state.attackMode;
+  api.testing.attack({ kind: "unit", row: 1, col: 5 });
+  results.multiStrikeRetargetsUntilLimit = firstMultiAttackContinues
+    && secondTargetChosenWhileFirstSurvives
+    && fourthAttackStillContinues
+    && multiFour.rested
+    && multiFour.attacksThisTurn === 5
+    && !api.state.attackMode;
+
+  reset();
+  const bareMulti = api.testing.placeUnit("militia", "p1", 2, 5, { rested: false });
+  bareMulti.keywords.push({ id: "multiStrike" });
+  api.testing.placeUnit("militia", "p2", 1, 5, { rested: true, hp: 20 });
+  api.testing.selectUnit(2, 5);
+  api.testing.attack({ kind: "unit", row: 1, col: 5 });
+  const bareFirstContinues = !bareMulti.rested && bareMulti.attacksThisTurn === 1 && api.state.attackMode;
+  api.testing.attack({ kind: "unit", row: 1, col: 5 });
+  results.bareMultiStrikeMeansOneExtraAttack = bareFirstContinues
+    && bareMulti.rested
+    && bareMulti.attacksThisTurn === 2
+    && !api.state.attackMode;
+
   return results;
 });
 

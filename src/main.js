@@ -4602,8 +4602,8 @@ function parseDeckmakerKeywords(card) {
       if (seen.has(key)) continue;
       seen.add(key);
       let value = parseDeckmakerKeywordValue(match[0]);
-      // 連撃N = 1回 + N回の追加攻撃（合計 N+1 回）
-      if (id === "multiStrike" && value != null) value += 1;
+      // 連撃N = 1回 + N回の追加攻撃（合計 N+1 回）。数値なしの連撃は追加1回。
+      if (id === "multiStrike") value = value == null ? 2 : value + 1;
       keywords.push(value ? { id, value } : { id });
     }
   }
@@ -14727,6 +14727,23 @@ function resolvePayOnAttackEnhance(useEnhance) {
   return true;
 }
 
+function attackLimitForUnit(unit) {
+  if (!hasKeyword(unit, "multiStrike")) return 1;
+  // Older imported cards can still carry a value-less [連撃]. Treat it as one additional attack.
+  return Math.max(2, keywordValue(unit, "multiStrike", 2));
+}
+
+function hasAnyAttackTargetForUnit(unit) {
+  if (!unit || unit.currentHp <= 0 || unit.rested) return false;
+  for (const row of state.board) {
+    for (const defender of row) {
+      if (!defender || defender.currentHp <= 0 || defender.owner === unit.owner) continue;
+      if (canAttackUnit(unit, defender).ok) return true;
+    }
+  }
+  return canTargetCore(unit, opponentOf(unit.owner));
+}
+
 function afterAttack(unit) {
   state.attackMode = false;
   const noRest = unit.specialAttackNoRest;
@@ -14751,8 +14768,21 @@ function afterAttack(unit) {
     }
   }
   unit.attacksThisTurn = (unit.attacksThisTurn || 0) + 1;
-  const attackLimit = keywordValue(unit, "multiStrike", 1);
-  if (unit.attacksThisTurn >= attackLimit) unit.rested = true;
+  const attackLimit = attackLimitForUnit(unit);
+  if (unit.attacksThisTurn >= attackLimit) {
+    unit.rested = true;
+    if (attackLimit > 1) state.message = `「${unit.name}」の連撃完了（${attackLimit}回）`;
+    return;
+  }
+  if (unit.currentHp <= 0) return;
+  const remaining = attackLimit - unit.attacksThisTurn;
+  state.selected = { kind: "unit", row: unit.row, col: unit.col };
+  if (hasAnyAttackTargetForUnit(unit)) {
+    state.attackMode = true;
+    state.message = `「${unit.name}」連撃: 次の攻撃対象を選択（残り${remaining}回）`;
+  } else {
+    state.message = `「${unit.name}」連撃: 攻撃可能な対象なし（残り${remaining}回）`;
+  }
 }
 
 function canAttackUnit(attacker, defender) {
@@ -14782,7 +14812,7 @@ function isGuardedFrom(attacker, defender) {
   if (hasKeyword(defender, "guard")) return false; // 守護ユニット自身は守護で守られない
   for (const delta of [-1, 1]) {
     const guardian = state.board[defender.row]?.[defender.col + delta];
-    if (!guardian || guardian.owner !== defender.owner || !hasKeyword(guardian, "guard")) continue;
+    if (!guardian || guardian.currentHp <= 0 || guardian.owner !== defender.owner || !hasKeyword(guardian, "guard")) continue;
     // 守護ユニットが航空を持ち、攻撃者がそこへ攻撃できない場合はガード無効
     if (hasKeyword(guardian, "flying") && !canReachFlyingTarget(attacker, guardian)) continue;
     return true;
@@ -15172,7 +15202,7 @@ function coreGuardAdjacentCols(row) {
 }
 
 function isUnitGuardingCore(guardian, defenderPlayerId) {
-  if (!guardian || guardian.owner !== defenderPlayerId || !hasKeyword(guardian, "guard")) return false;
+  if (!guardian || guardian.currentHp <= 0 || guardian.owner !== defenderPlayerId || !hasKeyword(guardian, "guard")) return false;
   const summonRow = PLAYERS[defenderPlayerId].summonRow;
   if (guardian.row !== summonRow) return false;
   return coreGuardAdjacentCols(summonRow).includes(guardian.col);
@@ -17678,12 +17708,21 @@ function drawBoardActionButtons() {
   }
 
   const hasActivate = availableActivateAbilities(unit).length > 0;
+  const attackLimit = attackLimitForUnit(unit);
+  const attacksRemaining = Math.max(0, attackLimit - (unit.attacksThisTurn || 0));
 
   const advBtns = [
     dirBtn("↖", fwdRow, unit.col - 1, "前進", "moveUnit", canMoveFwd),
     dirBtn("↑前進", fwdRow, unit.col, "前進", "moveUnit", canMoveFwd),
     dirBtn("↗", fwdRow, unit.col + 1, "前進", "moveUnit", canMoveFwd),
-    { label: "攻撃", fn: () => { state.attackMode = true; state.message = "敵ユニットか敵コアを選択"; }, accent: "p1" },
+    {
+      label: attackLimit > 1 ? `攻撃 残${attacksRemaining}` : "攻撃",
+      fn: !unit.rested && attacksRemaining > 0
+        ? () => { state.attackMode = true; state.message = "敵ユニットか敵コアを選択"; }
+        : null,
+      accent: "p1",
+      dim: unit.rested || attacksRemaining <= 0,
+    },
   ];
 
   const latBtns = [
@@ -17711,7 +17750,7 @@ function drawBoardActionButtons() {
     const bw = Math.floor((panelW - 6 - (btns.length - 1) * gap) / btns.length);
     let bx = panelX + 3;
     for (const btn of btns) {
-      const opts = btn.accent ? { accent: btn.accent } : btn.dim ? { accent: "dim" } : {};
+      const opts = btn.dim ? { accent: "dim" } : btn.accent ? { accent: btn.accent } : {};
       if (btn.label) drawButton(bx, rowY, bw, btnH, btn.label, btn.fn, null, opts);
       bx += bw + gap;
     }
@@ -21261,6 +21300,8 @@ function gameSummary() {
               keywords: keywordLabels(unit),
               image: cardImageSource(unit),
               attacksThisTurn: unit.attacksThisTurn || 0,
+              attackLimit: attackLimitForUnit(unit),
+              attacksRemaining: Math.max(0, attackLimitForUnit(unit) - (unit.attacksThisTurn || 0)),
             }
           : null,
       ),
