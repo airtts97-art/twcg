@@ -1044,21 +1044,25 @@ const abilityEffects = {
     const opponent = opponentOf(playerId);
     const fuelCost = ability.fuelCost || 1;
     const amount = ability.amount || 1;
-    if ((game.players[playerId].resources.fuel || 0) < fuelCost) {
-      log(game, `${game.players[playerId].name}: 燃料が不足しているため「${card.name}」を使えない`);
+    const player = game.players[playerId];
+    if ((player.resources.fuel || 0) < fuelCost) {
+      log(game, `${player.name}: 燃料が不足しているため「${card.name}」を使えない`);
       return;
     }
     if (!game.players[opponent].structs.length) {
-      log(game, `${game.players[playerId].name}: 相手のストラクトがないため「${card.name}」を使えない`);
+      log(game, `${player.name}: 相手のストラクトがないため「${card.name}」を使えない`);
       return;
     }
     if (!getDestroyableEnemyStructEntries(game, opponent, card).length) {
-      log(game, `${game.players[playerId].name}: 効果で破壊できる相手ストラクトがない`);
+      log(game, `${player.name}: 効果で破壊できる相手ストラクトがない`);
       return;
     }
     if (!game.pendingStructPhase) return;
+    // 燃料コストは効果の発動時に一度だけ支払う（対象1体ごとには支払わない）
+    addResources(player, "fuel", -fuelCost);
+    log(game, `${player.name}: 「${card.name}」燃${fuelCost}支払い`);
     game.pendingStructPhase.pendingEnemyStructChoice = {
-      fuelCost,
+      fuelCost: 0,
       amount,
       remaining: amount,
       cardName: card.name,
@@ -3842,6 +3846,8 @@ let onlineReconnectAttempt = 0;
 let onlineHeartbeatTimer = null;
 let onlineLastMessageAt = 0;
 let onlineManualClose = false;
+let onlineRoomRecreateAttempted = false;
+let onlineGuestJoinRetries = 0;
 let applyingRemoteState = false;
 let nextOnlineOpId = 1;
 let queuedOnlineAction = null;
@@ -7699,6 +7705,8 @@ function persistOnlineSession() {
 }
 
 function configureOnlineSession({ roomCode, role, playerName, deck, intent = "rejoin", acknowledged = false, userId = onlineUserId() }) {
+  onlineRoomRecreateAttempted = false;
+  onlineGuestJoinRetries = 0;
   onlineDesiredSession = {
     roomCode: String(roomCode || "").trim().toUpperCase(),
     role,
@@ -7745,7 +7753,8 @@ function clearOnlineSession() {
 
 function createRoomMatch() {
   if (!prepareSelectedDeckForMatch()) return;
-  const roomCode = makeRoomCode();
+  const typedCode = normalizeRoomCodeClient(app.match.roomCode);
+  const roomCode = typedCode || makeRoomCode();
   const hostDeck = normalizeDeckData(currentDeckPayload());
   const selectedDeckId = app.match.selectedDeckId || null;
   app.match = {
@@ -7811,6 +7820,10 @@ function joinRoomMatch() {
 
 function makeRoomCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function normalizeRoomCodeClient(roomCode) {
+  return String(roomCode || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
 }
 
 async function copyRoomCode() {
@@ -8011,6 +8024,8 @@ window.addEventListener("offline", () => {
 
 function handleOnlineMessage(message) {
   if (message.type === "room") {
+    onlineRoomRecreateAttempted = false;
+    onlineGuestJoinRetries = 0;
     app.match.status = "online";
     app.match.mode = message.role === "host" ? "????????" : "????????";
     app.match.roomCode = message.roomCode;
@@ -8117,7 +8132,38 @@ function handleOnlineMessage(message) {
     return;
   }
   if (message.type === "error") {
-    app.match.message = message.message || "????????????????";
+    app.match.message = message.message || "エラーが発生しました。";
+    const roomNotFound = /ルームが見つかりません/.test(message.message || "");
+    if (roomNotFound && onlineDesiredSession?.roomCode) {
+      if (onlineDesiredSession.role === "host" && !onlineRoomRecreateAttempted) {
+        // サーバー再起動などでルームが消えた場合、元ホストは同じルームコードで
+        // ルームを再作成し、ホスト権限を取り戻す。
+        onlineRoomRecreateAttempted = true;
+        app.match.message = "ルームが見つからないため、同じコードで再作成しています。";
+        sendOnline({
+          type: "create",
+          roomCode: onlineDesiredSession.roomCode,
+          userId: onlineDesiredSession.userId,
+          playerName: onlineDesiredSession.playerName,
+          deck: onlineDesiredSession.deck,
+        }, { scheduleReconnect: false });
+      } else if (onlineDesiredSession.role === "guest" && onlineGuestJoinRetries < 5) {
+        // ホストが同じコードでルームを再作成している可能性があるため、少し待って再試行する。
+        onlineGuestJoinRetries += 1;
+        app.match.message = "ホストの再接続を待っています…";
+        setTimeout(() => {
+          if (onlineDesiredSession?.roomCode === message.roomCode || !message.roomCode) {
+            sendOnline({
+              type: "join",
+              roomCode: onlineDesiredSession.roomCode,
+              userId: onlineDesiredSession.userId,
+              playerName: onlineDesiredSession.playerName,
+              deck: onlineDesiredSession.deck,
+            }, { scheduleReconnect: false });
+          }
+        }, 1500);
+      }
+    }
   }
 }
 
