@@ -2163,6 +2163,11 @@ const abilityEffects = {
     card.exileInsteadOfDump = true;
     log(game, `${game.players[playerId].name}: 「${card.name}」は破壊時に除外される`);
   },
+  voluntarySelfDestruct({ game, playerId, card }) {
+    if (!card || card.row == null || card.col == null) return;
+    log(game, `${game.players[playerId].name}: 「${card.name}」— [自爆]を起動`);
+    destroyUnitByEffect(game, card, { source: card });
+  },
   otherworldKinTactPlay({ game, playerId, card }) {
     beginOtherworldKinChoice(game, playerId, card);
     if (game.pendingChoice?.type === "otherworldKin") return "pending";
@@ -9096,8 +9101,14 @@ function findTransformHostUnit(playerId, transformFromId, game = state) {
 function isValidCharmPlacementTarget(unit, pending) {
   if (!unit) return false;
   const scope = pending.targetScope || "enemyUnit";
-  if (scope === "enemyUnit") return unit.owner !== pending.playerId;
-  if (scope === "friendlyUnit") return unit.owner === pending.playerId;
+  if (scope === "enemyUnit" && unit.owner === pending.playerId) return false;
+  if (scope === "friendlyUnit" && unit.owner !== pending.playerId) return false;
+  if (scope === "enemyUnit" || scope === "anyUnit") {
+    if (isUnitEffectTargetImmune(unit, pending.playerId)) return false;
+    if (isAmbushHidden(unit)) return false;
+    const sourceCard = pending.queueItem?.card;
+    if (sourceCard && !canAffectUnitByEffect(state, unit, sourceCard)) return false;
+  }
   return true;
 }
 
@@ -9932,11 +9943,16 @@ function tactSourceIncludesMagicPlayCost(sourceCard) {
 }
 
 function availableActivateAbilities(unit) {
-  return (unit.abilities || []).filter((ability) => {
+  const abilities = (unit.abilities || []).filter((ability) => {
     if (ability.trigger !== "onActivate") return false;
     if (ability.exclusiveGroup && unit.exclusiveActivateUsed === ability.exclusiveGroup) return false;
     return true;
   });
+  // [自爆]持ちは、破壊された時だけでなく任意のタイミングで自ら起爆できる。
+  if (hasKeyword(unit, "selfDestruct") && !abilities.some((a) => a.effect === "voluntarySelfDestruct")) {
+    abilities.push({ trigger: "onActivate", effect: "voluntarySelfDestruct", noRest: true, synthetic: true });
+  }
+  return abilities;
 }
 
 function attackableCellsForUnit(unit, game = state) {
@@ -11076,6 +11092,27 @@ function resolveReviveFromDump(index) {
   if (pending.step === "chooseCell") return false;
   const entry = pending.eligible[index];
   if (!entry?.card) return false;
+  const player = state.players[pending.playerId];
+  // battleZoneOnly が優先する前線マスに加え、そこが満杯でも詰まないよう
+  // 通常の出撃マスもフォールバックとして選べるようにする。
+  let validRows = null;
+  if (pending.battleZoneOnly) {
+    const battleRow = player.summonRow + player.forward;
+    validRows = [...new Set([battleRow, player.summonRow])].filter((row) => row >= 0 && row < ROWS);
+  }
+  const rowsToCheck = validRows || summonPlacementRowsForPlayer(state, pending.playerId, { allowRaid: false });
+  const hasOpenCell = rowsToCheck.some((row) => Array.from({ length: COLS }, (_, col) => col).some((col) => !state.board[row]?.[col]));
+  if (!hasOpenCell) {
+    log(state, `${player.name}: 出すマスがないため「${entry.card.name}」を蘇生できません`);
+    const qi = pending.queueItem;
+    state.pendingChoice = null;
+    state.selected = null;
+    if (qi) completeAbilitySource(state, qi);
+    processEffectQueue(state);
+    syncOnlineAction("resolveChoice", pending.playerId);
+    render();
+    return true;
+  }
   beginSummonPlacementChoice(state, pending.playerId, {
     kind: "unit",
     cardId: entry.card.id,
@@ -11084,9 +11121,7 @@ function resolveReviveFromDump(index) {
   }, {
     grantTag: pending.grantTag,
     queueItem: pending.queueItem,
-    validRows: pending.battleZoneOnly
-      ? [state.players[pending.playerId].summonRow + state.players[pending.playerId].forward]
-      : null,
+    validRows,
     message: `「${entry.card.name}」を蘇生するマスをクリックしてください`,
   });
   render();
@@ -12559,6 +12594,13 @@ function isValidAbilityTarget(item, target) {
     if (target.owner !== item.playerId || !isNeutralUnit(target)) return false;
     return true;
   }
+  // 効果保護・潜伏・一時的対象免除は、効果固有の追加条件より先にチェックする
+  // （個別 effect の early return がこれらの共通チェックを迂回しないようにする）。
+  if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
+    if (isUnitEffectTargetImmune(target, item.playerId, state)) return false;
+    if (isAmbushHidden(target, state)) return false;
+    if (!canAffectUnitByEffect(state, target, item.card)) return false;
+  }
   if (item.ability.effect === "charmControlSteal") {
     return (target.charmCounters || 0) === unitPlayCostTotal(target);
   }
@@ -12573,19 +12615,11 @@ function isValidAbilityTarget(item, target) {
   }
   if (item.ability.effect === "ashitaStackDiscardBounce" && (item.card.tactStack || []).length < 2) return false;
   if (item.ability.effect === "ashitaUseStackedTact" && !(item.card.tactStack || []).length) return false;
-  if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
-    if (isUnitEffectTargetImmune(target, item.playerId, state)) return false;
-  }
   if (!["enemyUnit", "friendlyUnit", "anyUnit", "friendlyNeutralUnit"].includes(item.ability.target)) return false;
   if (item.ability.requiresAttackableTarget && !canAttackUnit(item.card, target).ok) return false;
   if (item.ability.requiresPaidResourceInTargetActCost) {
     const paidResource = item.ability.paidResource;
     if (!paidResource || (normalizeResourceObject(target.actCost || {})[paidResource] || 0) <= 0) return false;
-  }
-  // 効果保護チェック（敵ユニットを対象にする場合）
-  if (item.ability.target === "enemyUnit" || item.ability.target === "anyUnit") {
-    if (isAmbushHidden(target, state)) return false;
-    if (!canAffectUnitByEffect(state, target, item.card)) return false;
   }
   return true;
 }
@@ -21548,6 +21582,7 @@ function abilityText(card) {
         placeCharmCounters: "魅了カウンターを載せる",
         placeCharmOnDamageTarget: "与ダメージ時：魅了カウンターを載せる",
         verzariaConsumeZeroAtk: "魅了でATK0の相手を除外しATK修正",
+        voluntarySelfDestruct: "起動：[自爆]して周囲にダメージ",
         unknownWormSummonRest: "出撃時：[航空]なし相手2体をレスト",
         unknownWormTurnEndShield: "ターン終了時魔③：次相手ターン効果免疫",
         dailyToyRemoveCounter: "カウンター1除去（味方ならタクト回収）",
