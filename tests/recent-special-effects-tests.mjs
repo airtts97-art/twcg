@@ -151,6 +151,36 @@ const checks = await page.evaluate(() => {
     && forcedDefender.currentHp < defenderHpBefore;
 
   reset();
+  const distantHigh = api.testing.placeUnit("card_1782990420906", "p1", 3, 9, { rested: false });
+  const charmedAttacker = api.testing.placeUnit("militia", "p2", 1, 5, { rested: true });
+  const adjacentToCharmedA = api.testing.placeUnit("militia", "p1", 2, 5, { rested: false });
+  const adjacentToCharmedB = api.testing.placeUnit("militia", "p1", 1, 4, { rested: false });
+  const adjacentOnlyToHigh = api.testing.placeUnit("militia", "p1", 2, 9, { rested: false });
+  charmedAttacker.charmCounters = 5;
+  api.abilityEffects.highSuccubusForcedAttack({
+    game: api.state,
+    playerId: "p1",
+    card: distantHigh,
+    target: charmedAttacker,
+  });
+  const pendingForcedAttack = api.state.pendingChoice;
+  const forcedTargetIds = [...(pendingForcedAttack?.targetInstanceIds || [])];
+  const candidatesUseCharmedAdjacency = pendingForcedAttack?.attackerInstanceId === charmedAttacker.instanceId
+    && forcedTargetIds.includes(adjacentToCharmedA.instanceId)
+    && forcedTargetIds.includes(adjacentToCharmedB.instanceId)
+    && !forcedTargetIds.includes(adjacentOnlyToHigh.instanceId);
+  // Simulate the JSON round trip used by online state synchronization.
+  api.state.pendingChoice = JSON.parse(JSON.stringify(pendingForcedAttack));
+  const chosenForcedTargetIndex = forcedTargetIds.indexOf(adjacentToCharmedB.instanceId);
+  const chosenHpBefore = adjacentToCharmedB.currentHp;
+  const decoyHpBefore = adjacentOnlyToHigh.currentHp;
+  api.testing.resolveHighSuccubusForcedAttackTarget(chosenForcedTargetIndex);
+  results.highSuccubusUsesCharmedUnitAdjacency = candidatesUseCharmedAdjacency
+    && adjacentToCharmedB.currentHp < chosenHpBefore
+    && adjacentOnlyToHigh.currentHp === decoyHpBefore
+    && charmedAttacker.charmCounters === 0;
+
+  reset();
   const toy = api.testing.placeUnit("card_1783013402820", "p1", 2, 5, { rested: false });
   const toyTarget = api.testing.placeUnit("militia", "p1", 2, 4, { rested: false, counters: 1 });
   api.state.players.p1.dump.push(structuredClone(precisionStrike));

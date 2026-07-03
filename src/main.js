@@ -1901,11 +1901,7 @@ const abilityEffects = {
   },
   highSuccubusForcedAttack({ game, playerId, card, target }) {
     if (!target || (target.charmCounters || 0) < 5) return;
-    const adjacentEnemies = [];
-    for (const [row, col] of adjacentCells(target.row, target.col)) {
-      const unit = game.board[row]?.[col];
-      if (unit && unit.owner !== target.owner) adjacentEnemies.push(unit);
-    }
+    const adjacentEnemies = highSuccubusAdjacentAttackTargets(game, target);
     if (!adjacentEnemies.length) {
       log(game, `${game.players[playerId].name}: 「${card.name}」— 隣接する攻撃対象がいない`);
       return;
@@ -1924,12 +1920,13 @@ const abilityEffects = {
       type: "highSuccubusForcedAttack",
       playerId,
       cardName: card.name,
-      attacker: target,
-      targets: adjacentEnemies,
+      attackerInstanceId: target.instanceId,
+      attackerName: target.name,
+      targetInstanceIds: adjacentEnemies.map((unit) => unit.instanceId),
       queueItem: { playerId, card, ability: { effect: "highSuccubusForcedAttack" }, source: { zone: "board" } },
     };
     game.selected = { kind: "choice", choice: "highSuccubusForcedAttack" };
-    game.message = `${card.name}: 強制攻撃する隣接ユニットを選んでください`;
+    game.message = `${card.name}: 「${target.name}」に隣接する攻撃先を選んでください`;
     return "pending";
   },
   warMaidenDamageAtkBuff({ game, playerId, card, source }) {
@@ -11550,12 +11547,26 @@ function resolveVerzariaDivineExileTarget(row, col) {
   return true;
 }
 
+function highSuccubusAdjacentAttackTargets(game, attacker) {
+  if (!attacker || attacker.currentHp <= 0) return [];
+  const targets = [];
+  for (const [row, col] of adjacentCells(attacker.row, attacker.col)) {
+    const unit = game.board[row]?.[col];
+    if (unit && unit.currentHp > 0 && unit.owner !== attacker.owner) targets.push(unit);
+  }
+  return targets;
+}
+
 function resolveHighSuccubusForcedAttackTarget(index) {
   const pending = state.pendingChoice;
   if (pending?.type !== "highSuccubusForcedAttack") return false;
-  const attacker = pending.attacker;
-  const defender = pending.targets?.[index];
-  if (!attacker || !defender) return false;
+  const attacker = findUnitByInstanceId(state, pending.attackerInstanceId);
+  const defender = findUnitByInstanceId(state, pending.targetInstanceIds?.[index]);
+  if (!attacker || !defender || !highSuccubusAdjacentAttackTargets(state, attacker).includes(defender)) {
+    state.message = "魅了カウンターを消費したユニットに隣接する攻撃先ではありません。";
+    render();
+    return false;
+  }
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
@@ -12194,7 +12205,7 @@ function isValidAbilityTarget(item, target) {
     return (target.charmCounters || 0) === unitPlayCostTotal(target);
   }
   if (item.ability.effect === "highSuccubusForcedAttack") {
-    return (target.charmCounters || 0) >= 5;
+    return (target.charmCounters || 0) >= 5 && highSuccubusAdjacentAttackTargets(state, target).length > 0;
   }
   if (item.ability.effect === "verzariaConsumeZeroAtk") {
     return target.owner !== item.playerId && (target.charmCounters || 0) > 0 && effectiveAttackPower(target) <= 0;
@@ -18517,13 +18528,18 @@ function drawVerzariaDivinePanel(pending) {
 
 function drawHighSuccubusForcedAttackPanel(pending) {
   const isController = canControlChoicePlayer(pending.playerId);
-  const x = 360, y = 220, w = 720, h = 260;
+  const x = 360, y = 210, w = 720, h = 276;
   drawChoicePanelBase(x, y, w, h, "rgba(100,40,140,0.75)", "#c060ff");
   ctx.fillStyle = "#f0d0ff";
   ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`${pending.cardName}: 強制攻撃先を選択`, x + 28, y + 36);
-  (pending.targets || []).forEach((unit, i) => {
-    drawSelectableChoiceCard(x + 28 + i * 154, y + 56, 140, 196, unit, {
+  ctx.fillStyle = "rgba(225,195,245,0.86)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`魅了⑤を消費した「${pending.attackerName || "対象ユニット"}」の上下左右から選択`, x + 28, y + 56, w - 56);
+  (pending.targetInstanceIds || []).forEach((instanceId, i) => {
+    const unit = findUnitByInstanceId(state, instanceId);
+    if (!unit) return;
+    drawSelectableChoiceCard(x + 28 + i * 154, y + 66, 140, 196, unit, {
       label: unit.name,
       onClick: isController ? () => resolveHighSuccubusForcedAttackTarget(i) : null,
     });
@@ -21085,7 +21101,7 @@ function abilityText(card) {
         ashitaUseStackedTact: "下敷きタクトを使用",
         ashitaStackDiscardBounce: "下タクト2枚捨て：ユニットを手札へ",
         charmControlSteal: "魅了=プレイコストで支配を得る",
-        highSuccubusForcedAttack: "魅了⑤で隣接へ強制攻撃",
+        highSuccubusForcedAttack: "魅了⑤対象の隣接へ強制攻撃",
         warMaidenCharmAttackBuff: "魅了対象への攻撃時ATK修正",
         warMaidenDamageAtkBuff: "被ダメージ分ATK修正",
         verzariaDivineOffer: "[神格]条件：魅了12除去か魔⑤除外",
