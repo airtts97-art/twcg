@@ -1726,29 +1726,24 @@ const abilityEffects = {
       }
     }
   },
-  identityKaijuSummonFromDump({ game, playerId, card, ability }) {
+  identityKaijuSummonFromDump({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
     const maxCost = ability.maxCost || 3;
     const limit = ability.amount || 2;
     const eligible = player.dump.filter(
       (c) => c.type === "unit" && isNeutralCard(c) && totalCostAmount(c.cost || {}) <= maxCost,
     );
-    let placed = 0;
-    for (const dumpCard of eligible) {
-      if (placed >= limit) break;
-      const dumpIdx = player.dump.indexOf(dumpCard);
-      if (dumpIdx < 0) continue;
-      const col = findFirstEmptyColInRow(game, player.summonRow);
-      if (col < 0) break;
-      player.dump.splice(dumpIdx, 1);
-      notifyDumpChanged(game, playerId);
-      const unit = makeUnit(dumpCard.id, playerId, player.summonRow, col, { fromDump: true });
-      commitUnitToBoard(game, unit, player.summonRow, col);
-      log(game, `${player.name}: 「${card.name}」— 墓地から「${dumpCard.name}」を出した`);
-      triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
-      placed += 1;
+    if (!eligible.length) {
+      log(game, `${player.name}: 「${card.name}」— 対象となる墓地ユニットがない`);
+      return;
     }
-    if (!placed) log(game, `${player.name}: 「${card.name}」— 対象となる墓地ユニットがない`);
+    const unitQueue = eligible.slice(0, limit).map((dumpCard) => {
+      const dumpIdx = player.dump.indexOf(dumpCard);
+      return player.dump.splice(dumpIdx, 1)[0];
+    });
+    notifyDumpChanged(game, playerId);
+    continueUnitDeployQueue(playerId, unitQueue, { playerId, card, ability, source: source || { zone: "board" } }, { fromDump: true });
+    return "pending";
   },
   stripNeutralUnitAbilities({ game, playerId, target }) {
     if (!target || target.owner !== playerId || !isNeutralUnit(target)) return;
@@ -2302,26 +2297,28 @@ const abilityEffects = {
     game.players[playerId].mainDeck.push(stripRuntime(card));
     log(game, `${game.players[playerId].name}: ${card.name} returns to deck bottom`);
   },
-  reviveTagUnitsUpToCost({ game, playerId, ability }) {
+  reviveTagUnitsUpToCost({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
     const tag = ability.tag;
     let remaining = ability.maxTotalCost || 4;
-    let count = 0;
+    const unitQueue = [];
     for (let i = 0; i < player.dump.length; i++) {
       const c = player.dump[i];
       const cost = totalCostAmount(c.cost || {});
       if (c.type !== "unit" || !(c.tags || []).includes(tag) || cost > remaining) continue;
-      const col = findFirstEmptyColInRow(game, player.summonRow);
-      if (col < 0) break;
       player.dump.splice(i, 1);
       i--;
       remaining -= cost;
-      const unit = makeUnit(c.id, playerId, player.summonRow, col, { rested: false, fromDump: true });
-      commitUnitToBoard(game, unit, player.summonRow, col);
-      triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
-      count++;
+      unitQueue.push(c);
     }
-    log(game, `${player.name}: 墓地から[${tag}] ${count}体を出した`);
+    if (!unitQueue.length) {
+      log(game, `${player.name}: 墓地から[${tag}]を出せなかった`);
+      return;
+    }
+    notifyDumpChanged(game, playerId);
+    log(game, `${player.name}: 墓地から[${tag}] ${unitQueue.length}体を出す`);
+    continueUnitDeployQueue(playerId, unitQueue, { playerId, card, ability, source: source || { zone: "board" } }, { fromDump: true });
+    return "pending";
   },
   damageRestedTarget({ game, target, ability, card }) {
     if (!target || !target.rested) return;
@@ -2966,36 +2963,32 @@ const abilityEffects = {
     addResources(player, ability.resource, ability.amount || 1);
     log(game, `${player.name}: 「${card.name}」人${humanCost}支払い → ${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`);
   },
-  deployNamedFromDecks({ game, playerId, card, ability }) {
+  deployNamedFromDecks({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
     const max = ability.maxTotal || 3;
-    let placed = 0;
-    // メインデッキから指定ユニット名を自動配置
-    for (let i = 0; i < player.mainDeck.length && placed < max; i++) {
-      if (player.mainDeck[i].name !== ability.unitName) continue;
-      const emptyCol = findFirstEmptyColInRow(game, player.summonRow);
-      if (emptyCol < 0) break;
-      const unitCard = player.mainDeck.splice(i, 1)[0];
-      const unit = makeUnit(unitCard.id, playerId, player.summonRow, emptyCol, { rested: false });
-      commitUnitToBoard(game, unit, player.summonRow, emptyCol);
-      log(game, `${player.name}: 「${card.name}」効果 — 「${unitCard.name}」出撃`);
-      placed++;
-      i--;
+    const candidates = [];
+    player.mainDeck.forEach((c) => {
+      if (c.name === ability.unitName) candidates.push({ key: `unit-${candidates.length}`, kind: "unit", card: c });
+    });
+    player.structDeck.forEach((c) => {
+      if (c.name === ability.structName) candidates.push({ key: `struct-${candidates.length}`, kind: "struct", card: c });
+    });
+    if (!candidates.length) {
+      log(game, `${player.name}: 「${card.name}」— 対象カードが見つからない`);
+      return;
     }
-    // ストラクトデッキから指定施設名を建設
-    for (let i = 0; i < player.structDeck.length && placed < max; i++) {
-      if (player.structDeck[i].name !== ability.structName) continue;
-      if (structZoneIsFull(player)) {
-        log(game, `${player.name}: ストラクト上限のため「${player.structDeck[i].name}」を建設できません`);
-        break;
-      }
-      const sc = player.structDeck.splice(i, 1)[0];
-      installStructInZone(game, playerId, sc, { triggerOnPlay: true, logVerb: "建設" });
-      log(game, `${player.name}: 「${card.name}」効果 — 「${sc.name}」を建設`);
-      placed++;
-      i--;
-    }
-    if (placed === 0) log(game, `${player.name}: 「${card.name}」— 対象カードが見つからない`);
+    game.pendingChoice = {
+      type: "deployNamedSelection",
+      playerId,
+      cardName: card.name,
+      max,
+      candidates,
+      selected: [],
+      queueItem: { playerId, card, ability, source: source || { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "deployNamedSelection" };
+    game.message = `${card.name}: 出撃/建設するカードを合計${max}枚まで選んでください（${ability.unitName}/${ability.structName}を好きな組み合わせで）。`;
+    return "pending";
   },
   grantTactPeopleDiscount({ game, playerId, card, ability }) {
     if (!game.globalEffects) game.globalEffects = [];
@@ -3080,20 +3073,17 @@ const abilityEffects = {
     delete card.skipNextOwnerUnrest;
     log(game, `${game.players[playerId].name}: ${card.name} unrests`);
   },
-  summonTagFromDumpAndRest({ game, playerId, card, ability }) {
+  summonTagFromDumpAndRest({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
     const tag = ability.tag;
     const idx = player.dump.findIndex((c) => c.type === "unit" && (c.tags || []).includes(tag));
     if (idx < 0) return;
-    const col = findFirstEmptyColInRow(game, player.summonRow);
-    if (col < 0) return;
     const [unitCard] = player.dump.splice(idx, 1);
     notifyDumpChanged(game, playerId);
-    const unit = makeUnit(unitCard.id, playerId, player.summonRow, col, { rested: false, fromDump: true });
-    commitUnitToBoard(game, unit, player.summonRow, col);
     card.rested = true;
-    triggerAbilities(game, playerId, unit, "onSummon", { fromDump: true });
-    log(game, `${player.name}: ${card.name} summons ${unit.name} from dump`);
+    log(game, `${player.name}: ${card.name} summons ${unitCard.name} from dump`);
+    continueUnitDeployQueue(playerId, [unitCard], { playerId, card, ability, source: source || { zone: "board" } }, { fromDump: true });
+    return "pending";
   },
   summonHandUnitToOpponent({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
@@ -12182,6 +12172,76 @@ function destroyChoiceItems(pending) {
   return destroyed;
 }
 
+function toggleDeployNamedSelection(key) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "deployNamedSelection") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const selected = new Set(pending.selected || []);
+  if (selected.has(key)) selected.delete(key);
+  else if (selected.size < (pending.max || 1)) selected.add(key);
+  pending.selected = [...selected];
+  render();
+  return true;
+}
+
+function continueUnitDeployQueue(playerId, unitQueue, queueItem, options = {}) {
+  const player = state.players[playerId];
+  const unitCard = unitQueue.shift();
+  if (!unitCard) {
+    if (queueItem) completeAbilitySource(state, queueItem);
+    processEffectQueue(state);
+    render();
+    return;
+  }
+  const rows = summonPlacementRowsForPlayer(state, playerId, { allowRaid: false });
+  const hasOpenCell = rows.some((row) => Array.from({ length: COLS }, (_, col) => col).some((col) => !state.board[row]?.[col]));
+  if (!hasOpenCell) {
+    log(state, `${player.name}: 出すマスがないため「${unitCard.name}」を出せません`);
+    return continueUnitDeployQueue(playerId, unitQueue, queueItem, options);
+  }
+  beginSummonPlacementChoice(state, playerId, { cardId: unitCard.id, fromDump: Boolean(options.fromDump) }, {
+    validRows: rows,
+    message: `「${unitCard.name}」を出撃させるマスをクリック`,
+    onComplete: () => continueUnitDeployQueue(playerId, unitQueue, queueItem, options),
+  });
+  render();
+}
+
+function resolveDeployNamedSelection() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "deployNamedSelection") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const selectedSet = new Set(pending.selected || []);
+  const chosen = (pending.candidates || []).filter((c) => selectedSet.has(c.key));
+  const cardName = pending.cardName;
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  const unitQueue = [];
+  for (const candidate of chosen) {
+    if (candidate.kind === "struct") {
+      const idx = player.structDeck.indexOf(candidate.card);
+      if (idx < 0) continue;
+      if (structZoneIsFull(player)) {
+        log(state, `${player.name}: ストラクト上限のため「${candidate.card.name}」を建設できません`);
+        continue;
+      }
+      const [sc] = player.structDeck.splice(idx, 1);
+      installStructInZone(state, pending.playerId, sc, { triggerOnPlay: true, logVerb: "建設" });
+      log(state, `${player.name}: 「${cardName}」効果 — 「${sc.name}」を建設`);
+    } else {
+      const idx = player.mainDeck.indexOf(candidate.card);
+      if (idx < 0) continue;
+      const [unitCard] = player.mainDeck.splice(idx, 1);
+      unitQueue.push(unitCard);
+    }
+  }
+  syncOnlineAction("resolveChoice", pending.playerId);
+  continueUnitDeployQueue(pending.playerId, unitQueue, qi);
+  return true;
+}
+
 function toggleDestroyChoice(key) {
   const pending = state.pendingChoice;
   if (pending?.type !== "selectDestroyCards") return false;
@@ -17763,6 +17823,7 @@ const DECK_SELECTION_CHOICE_TYPES = new Set([
   "searchDeckPick",
   "revealPick",
   "soulPay",
+  "deployNamedSelection",
 ]);
 
 function isHandSelectionPendingChoice(pending = state.pendingChoice) {
@@ -18276,6 +18337,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "lifeCounterPayment") drawLifeCounterPaymentPanel(pending);
   else if (pending.type === "drawPlusPayResource") drawDrawPlusPayResourcePanel(pending);
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
+  else if (pending.type === "deployNamedSelection") drawDeployNamedSelectionPanel(pending);
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
   else if (pending.type === "payForBuff") drawPayForBuffPanel(pending);
   else if (pending.type === "revealTagsForResources") drawRevealTagsForResourcesPanel(pending);
@@ -20252,6 +20314,35 @@ function drawSelectDestroyCardsPanel(pending) {
   }
 }
 
+function drawDeployNamedSelectionPanel(pending) {
+  const x = 330, y = 162, w = 780, h = 420;
+  drawChoicePanelBase(x, y, w, h, "rgba(60,130,70,0.75)", "#60d080");
+  const selected = new Set(pending.selected || []);
+  ctx.fillStyle = "#c8ffd8";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 出撃/建設するカードを選択`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(210,255,220,0.82)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`合計${pending.max}枚まで、好きな組み合わせで選択できます。現在: ${selected.size}/${pending.max}`, x + 28, y + 64, w - 56);
+  const isController = canControlChoicePlayer(pending.playerId);
+  const cardW = 74;
+  const cardH = Math.round(cardW / CARD_ASPECT);
+  (pending.candidates || []).slice(0, 16).forEach((item, i) => {
+    const cx = x + 28 + (i % 8) * (cardW + 18);
+    const cy = y + 92 + Math.floor(i / 8) * (cardH + 30);
+    const active = selected.has(item.key);
+    const atMax = !active && selected.size >= (pending.max || 1);
+    drawSelectableChoiceCard(cx, cy, cardW, cardH, item.card, {
+      selected: active,
+      label: active ? "選択中" : item.kind === "struct" ? "施設" : "ユニット",
+      onClick: isController && !atMax ? () => toggleDeployNamedSelection(item.key) : (isController && active ? () => toggleDeployNamedSelection(item.key) : null),
+    });
+  });
+  if (isController) {
+    drawButton(x + w - 150, y + h - 56, 122, 36, "確定", resolveDeployNamedSelection, null, { accent: "p1" });
+  }
+}
+
 function drawKaijuAwakenPanel(pending) {
   const x = 300, y = 142, w = 840, h = 520;
   drawChoicePanelBase(x, y, w, h, "rgba(120,50,160,0.78)", "#b040ff");
@@ -21822,6 +21913,8 @@ const testing = {
   resolveSadGirlHandUnitGive,
   resolveTsunataiRiteChoice,
   toggleDestroyChoice,
+  toggleDeployNamedSelection,
+  resolveDeployNamedSelection,
   resolveDestroyChoice,
   toggleKaijuAwakenChoice,
   resolveKaijuAwakenChoice,
