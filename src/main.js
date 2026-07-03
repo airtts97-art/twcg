@@ -686,6 +686,9 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
     allowRaid = false,
     validRows = null,
     onComplete = null,
+    allowSkip = false,
+    onSkip = null,
+    skipLabel = "配置しない",
   } = options;
   game.pendingChoice = {
     type: "summonPlacement",
@@ -696,6 +699,9 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
     validRows: validRows || summonPlacementRowsForPlayer(game, playerId, { allowRaid }),
     queueItem,
     onComplete,
+    allowSkip,
+    onSkip,
+    skipLabel,
   };
   game.selected = { kind: "choice", choice: "summonPlacement" };
   game.message = message;
@@ -1130,6 +1136,27 @@ const abilityEffects = {
       game,
       `${game.players[playerId].name}: 「${card.name}」隣接味方に効果保護${aura.protectValue || 1}・効果貫通${aura.penetrateValue || 1}（アウラ）`,
     );
+  },
+  // このカードが除外ゾーンへ行った時、任意で[奇襲]を与えて出撃可能なマスへ再展開する
+  offerSelfRedeployFromExileWithRaid({ game, playerId, card }) {
+    const validRows = summonPlacementRowsForPlayer(game, playerId, { allowRaid: true });
+    const hasOpenCell = validRows.some((row) => Array.from({ length: COLS }, (_, col) => col).some((col) => !game.board[row]?.[col]));
+    if (!hasOpenCell) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」を出撃させるマスがないため除外されたまま`);
+      return;
+    }
+    const exileZone = game.players[playerId].exileZone;
+    return beginSummonPlacementChoice(game, playerId, { cardId: card.id }, {
+      allowRaid: true,
+      allowSkip: true,
+      skipLabel: "出撃しない",
+      message: `「${card.name}」を[奇襲]で出撃させるマスをクリック（しない場合はキャンセル）`,
+      onComplete: (g, unit) => {
+        applyGrantedKeyword(unit, "raid");
+        const idx = exileZone.indexOf(card);
+        if (idx >= 0) exileZone.splice(idx, 1);
+      },
+    });
   },
   grantSmokeScreenToFlanking({ game, playerId, card, ability }) {
     const amount = ability.amount || 2;
@@ -5812,6 +5839,11 @@ function parseDeckmakerAbilities(card, localType) {
       fuelCost: 1,
       amount: 2,
     });
+  }
+
+  // 現地世界空間作用大隊: 除外ゾーンへ行った時、[奇襲]を得て任意のマスへ出撃してもよい
+  if (card.id === "card_1782995481933" && !abilities.some((a) => a.effect === "offerSelfRedeployFromExileWithRaid")) {
+    abilities.push({ trigger: "onExile", effect: "offerSelfRedeployFromExileWithRaid" });
   }
 
   if (card.id === "card_1782545233380") {
@@ -11005,6 +11037,21 @@ function resolveSummonPlacement(row, col) {
   return true;
 }
 
+function resolveSummonPlacementSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "summonPlacement" || !pending.allowSkip) return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (pending.onSkip) pending.onSkip(state);
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function resolveReviveFromDump(index) {
   const pending = state.pendingChoice;
   if (pending?.type !== "reviveFromDump") return false;
@@ -12162,8 +12209,9 @@ function resolveKaijuAwakenChoice() {
     return false;
   }
   state.board[unit.row][unit.col] = null;
-  triggerAbilities(state, unit.owner, unit, "onExile");
-  player.exileZone.push(stripRuntime(unit));
+  const exiledUnitCard = stripRuntime(unit);
+  player.exileZone.push(exiledUnitCard);
+  triggerAbilities(state, unit.owner, exiledUnitCard, "onExile");
   returnStructCardToDeck(player, player.structs.splice(pending.selectedStructIndex, 1)[0], state, "覚醒コスト");
   const [exiledHandCard] = player.hand.splice(pending.selectedHandIndex, 1);
   player.exileZone.push(exiledHandCard);
@@ -13713,10 +13761,14 @@ function otherworldKinPureHumanCandidates(game, playerId) {
 
 function exileBoardUnitToZone(game, unit) {
   if (!unit) return;
+  const ownerId = unit.owner;
   game.board[unit.row][unit.col] = null;
-  triggerAbilities(game, unit.owner, unit, "onExile");
-  game.players[unit.owner].exileZone.push(stripRuntime(unit));
+  const exiledCard = stripRuntime(unit);
+  game.players[ownerId].exileZone.push(exiledCard);
   log(game, `「${unit.name}」を除外`);
+  // onExile triggers reference the card already sitting in the exile zone, so a
+  // self-redeploy effect can splice the same object back out without duplicating it.
+  triggerAbilities(game, ownerId, exiledCard, "onExile");
 }
 
 function beginOtherworldKinChoice(game, playerId, card) {
@@ -18091,6 +18143,9 @@ function drawSummonPlacementHint(pending) {
   ctx.textAlign = "center";
   ctx.fillText(pending.message || state.message || "配置するマスをクリック", W / 2, layout.board.y - 12);
   ctx.textAlign = "left";
+  if (pending.allowSkip && canControlChoicePlayer(pending.playerId)) {
+    drawButton(W / 2 - 70, layout.board.y - 44, 140, 30, pending.skipLabel || "配置しない", resolveSummonPlacementSkip, null, { accent: "dim" });
+  }
 }
 
 function drawChoiceOverlay() {
@@ -21364,6 +21419,7 @@ function abilityText(card) {
         crownKnightFrontStrike: "正面3マスに15ダメージ",
         crownKnightFortify: "効果保護①・装甲④を得る",
         goltenaBombardMark: "攻撃可能マスを照準（次の相手ターン終了時に5ダメージ）",
+        offerSelfRedeployFromExileWithRaid: "除外時：[奇襲]を得て任意のマスに出撃してもよい",
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })
@@ -21716,6 +21772,7 @@ const testing = {
   resolveSearchDeckPick,
   resolveReviveFromDump,
   resolveSummonPlacement,
+  resolveSummonPlacementSkip,
   resolveSoulPayChoice,
   cancelSoulPayChoice,
   resolveStructZoneReplace,
