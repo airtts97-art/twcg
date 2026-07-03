@@ -254,6 +254,9 @@ const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
 const FIREBASE_CARDS_CACHE_KEY = "twcg.firebaseCards.v1";
 const FIREBASE_CARDS_BACKOFF_KEY = "twcg.firebaseFetchBackoff.v1";
 const FIREBASE_CARDS_429_BACKOFF_MS = 20 * 60 * 1000;
+const VELSBURG_CORE_ID = "card_1782994564912";
+const EVIL_CHURCH_ID = "card_1782995682140";
+const EXILE_MAGIC_PER_TURN_CAP = 3;
 let firebaseCardsLoadPromise = null;
 const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1753611167885", // クリスタヴィアゴーレム
@@ -379,6 +382,8 @@ const FORCE_BUNDLED_CARD_IDS = new Set([
   "card_1782990273879",  // サキュバスウォーメイデン
   "card_1782997215577",  // ディメンションエスケープ
   "card_1782990420906",  // ハイ・サキュバス
+  VELSBURG_CORE_ID,       // 魔城ヴェルスブルグ
+  EVIL_CHURCH_ID,         // 邪悪な教会
   "card_1783011918209",  // 正体不明・蚕
   "card_1783013688397",  // アシタノピポパ
   "card_1783013402820",  // デイリー・トイ
@@ -842,6 +847,13 @@ const abilityEffects = {
     }
     addResources(game.players[playerId], ability.resource, ability.amount);
     log(game, `${game.players[playerId].name}: ${RESOURCE_LABELS[ability.resource]} +${ability.amount}`);
+  },
+  velsburgTurnStartConversion({ game, playerId, card }) {
+    const player = game.players[playerId];
+    if ((player.resources.people || 0) < 2) return;
+    if (!pay(player, { people: 2 })) return;
+    addResources(player, "magic", 1);
+    log(game, `${player.name}: 「${card.name}」— 人2を消費し魔+1`);
   },
   payOptionalOnSummonSearch({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
@@ -3918,6 +3930,7 @@ function applyCoreDefaults(core) {
   const fallback = cardCatalog?.cores?.[DEFAULT_CORE_ID] || {};
   const hasResourceValue = (resources) => Object.values(resources || {}).some((amount) => Number(amount));
   const isNobelburg = core.id === "card_1755670973607" || core.name === "\u738b\u57ce\u30ce\u30fc\u30d9\u30eb\u30b0";
+  const hasExplicitNoIncome = isNobelburg || core.id === VELSBURG_CORE_ID;
   core.hp = Number(core.hp) || Number(fallback.hp) || 20;
   core.initialHand = Number(core.initialHand) || Number(fallback.initialHand) || 4;
   core.draw = Number(core.draw ?? core.drawCount ?? core.drawPerTurn) || Number(fallback.draw) || 1;
@@ -3927,7 +3940,7 @@ function applyCoreDefaults(core) {
   core.deckMax = Number(core.deckMax) || Number(fallback.deckMax) || 60;
   core.startResources = normalizeResourceObject(hasResourceValue(core.startResources) ? core.startResources : fallback.startResources || {});
   if (isNobelburg) core.startResources = normalizeResourceObject({ funds: 8 });
-  if (isNobelburg) {
+  if (hasExplicitNoIncome) {
     core.income = {};
   } else if (hasResourceValue(core.income)) {
     core.income = normalizeResourceObject(core.income);
@@ -6052,6 +6065,7 @@ function parseDeckmakerAbilities(card, localType) {
       trigger: "onActivate",
       effect: "verzariaConsumeZeroAtk",
       target: "enemyUnit",
+      noRest: true,
     });
     abilities.push({
       trigger: "onDamageDealt",
@@ -6141,6 +6155,7 @@ function parseDeckmakerAbilities(card, localType) {
       trigger: "onActivate",
       effect: "highSuccubusForcedAttack",
       target: "anyUnit",
+      noRest: true,
     });
     abilities.push({ trigger: "onDamageDealt", effect: "succubusHealFromPureHumanDamage" });
     abilities.push({ trigger: "onDestroy", effect: "exileSelfOnDestroy" });
@@ -6491,6 +6506,14 @@ function fromDeckmakerCard(card) {
     keywords: parseDeckmakerKeywords(card),
     abilities: parseDeckmakerAbilities(card, localType),
   };
+  if (card.id === EVIL_CHURCH_ID && !base.abilities.some((ability) => ability.effect === "structPayProduce")) {
+    base.abilities.push({
+      trigger: "onStructurePhase",
+      effect: "structPayProduce",
+      cost: { people: 4 },
+      produces: { magic: 2 },
+    });
+  }
   const deckLimit = Number(card.limit);
   const bundledDeckLimit = bundledDeckLimitFor(base.id);
   if (bundledDeckLimit != null) base.limit = bundledDeckLimit;
@@ -6660,6 +6683,10 @@ function fromDeckmakerCard(card) {
           "「北東軍最高司令官」ユニットがデッキに含まれていない場合、このカードは使用できない。",
         ];
       }
+    }
+    if (card.id === VELSBURG_CORE_ID) {
+      base.abilities = base.abilities.filter((ability) => ability.effect !== "velsburgTurnStartConversion");
+      base.abilities.push({ trigger: "onTurnStart", effect: "velsburgTurnStartConversion" });
     }
   }
   if (localType === "tact") {
@@ -8524,6 +8551,43 @@ function addCharmCounters(unit, amount, game, sourceLabel = "") {
   }
 }
 
+function exileMagicTurnKey(game) {
+  return `${game.turn || 1}:${game.activePlayer || "none"}`;
+}
+
+function grantExileMagicFromSource(game, playerId, source, exiledCard, sourceZone) {
+  if (!source) return false;
+  const turnKey = exileMagicTurnKey(game);
+  if (source.exileMagicTurnKey !== turnKey) {
+    source.exileMagicTurnKey = turnKey;
+    source.exileMagicGainedThisTurn = 0;
+  }
+  if ((source.exileMagicGainedThisTurn || 0) >= EXILE_MAGIC_PER_TURN_CAP) return false;
+  source.exileMagicGainedThisTurn = (source.exileMagicGainedThisTurn || 0) + 1;
+  addResources(game.players[playerId], "magic", 1);
+  const zoneLabel = sourceZone === "hand" ? "手札" : "墓地";
+  log(
+    game,
+    `${game.players[playerId].name}: 「${source.name}」— ${zoneLabel}の「${exiledCard?.name || "カード"}」除外で魔+1（${source.exileMagicGainedThisTurn}/${EXILE_MAGIC_PER_TURN_CAP}）`,
+  );
+  return true;
+}
+
+function notifyHandOrDumpCardExiled(game, playerId, sourceZone, exiledCard) {
+  if (!game?.players?.[playerId] || !["hand", "dump"].includes(sourceZone)) return 0;
+  const player = game.players[playerId];
+  const sources = [];
+  if (player.core?.id === VELSBURG_CORE_ID) sources.push(player.core);
+  for (const struct of player.structs || []) {
+    if (struct?.id === EVIL_CHURCH_ID) sources.push(struct);
+  }
+  let gained = 0;
+  for (const source of sources) {
+    if (grantExileMagicFromSource(game, playerId, source, exiledCard, sourceZone)) gained += 1;
+  }
+  return gained;
+}
+
 function countCharmCountersOnField(game, options = {}) {
   let total = 0;
   for (const row of game.board) {
@@ -9050,13 +9114,16 @@ function availableSoulPayDumpCount(player, card) {
   return dump.length;
 }
 
-function exileDumpCardsForSoulPay(player, count, card) {
+function exileDumpCardsForSoulPay(player, count, card, game = state) {
   const unitsOnly = soulPayRequiresUnitCards(card);
   const exiled = [];
   for (let i = 0; i < player.dump.length && exiled.length < count; ) {
     const dumpCard = player.dump[i];
     if (!unitsOnly || isUnitCard(dumpCard)) {
-      exiled.push(player.dump.splice(i, 1)[0]);
+      const [removed] = player.dump.splice(i, 1);
+      player.exileZone.push(removed);
+      exiled.push(removed);
+      notifyHandOrDumpCardExiled(game, player.id, "dump", removed);
     } else {
       i++;
     }
@@ -9149,7 +9216,8 @@ function applyConditionalBuff(unit, key, active, { atk = 0, hp = 0 } = {}) {
 
 function unitDisplayStats(card) {
   if (!card || card.type !== "unit") return null;
-  const atk = card.atk ?? 0;
+  const isBoardUnit = card.owner && card.row != null && card.col != null;
+  const atk = isBoardUnit ? effectiveAttackPower(card) : (card.atk ?? 0);
   const maxHp = card.maxHp ?? card.hp ?? 0;
   const currentHp = card.currentHp ?? card.hp ?? maxHp;
   const hasRuntimeHp = card.currentHp != null || card.maxHp != null;
@@ -9535,7 +9603,7 @@ function payForCard(player, cost = {}, card = null, { soulPayAmount = 0 } = {}) 
   if (availableSoulPayDumpCount(player, card) < requestedSoul) return false;
   const payable = { ...effectiveCost, magic: (effectiveCost.magic || 0) - requestedSoul };
   if (!pay(player, payable)) return false;
-  const exiled = exileDumpCardsForSoulPay(player, requestedSoul, card);
+  const exiled = exileDumpCardsForSoulPay(player, requestedSoul, card, state);
   if (exiled.length < requestedSoul) return false;
   if (copperReduction) copperReduction.rested = true;
   notifyDumpChanged(state, player.id);
@@ -9880,10 +9948,11 @@ function resolvePendingTarget(row, col) {
     : state.board[row]?.[col];
   if (effect) effect({ game: state, playerId: pending.playerId, card: pending.card, ability: pending.ability, target });
   state.pendingTarget = null;
-  state.selected = null;
+  if (!state.pendingChoice) state.selected = null;
   completeAbilitySource(state, pending);
   processEffectQueue(state);
   syncOnlineAction("resolveTarget", pending.playerId);
+  render();
   return true;
 }
 
@@ -9947,6 +10016,7 @@ function resolveMysticCaptureChoice({ exile = false } = {}) {
         notifyDumpChanged(state, pending.playerId);
       }
       player.exileZone.push(card);
+      notifyHandOrDumpCardExiled(state, pending.playerId, "dump", card);
       triggerAbilities(state, pending.playerId, card, "onSummon", { zone: "exile" });
     }
   }
@@ -10576,6 +10646,7 @@ function beginFieldExperimentSummon(pending, handIndex) {
   }
   const [exiled] = player.hand.splice(actualIndex, 1);
   player.exileZone.push(exiled);
+  notifyHandOrDumpCardExiled(state, pending.playerId, "hand", exiled);
   log(
     state,
     `${player.name}: 「${pending.cardName}」— 手札の「${exiled.name}」を電${electricCost}支払いで除外`,
@@ -11598,7 +11669,9 @@ function resolveKaijuAwakenChoice() {
   triggerAbilities(state, unit.owner, unit, "onExile");
   player.exileZone.push(stripRuntime(unit));
   returnStructCardToDeck(player, player.structs.splice(pending.selectedStructIndex, 1)[0], state, "覚醒コスト");
-  player.exileZone.push(player.hand.splice(pending.selectedHandIndex, 1)[0]);
+  const [exiledHandCard] = player.hand.splice(pending.selectedHandIndex, 1);
+  player.exileZone.push(exiledHandCard);
+  notifyHandOrDumpCardExiled(state, pending.playerId, "hand", exiledHandCard);
   removeKeywords(kaiju, ["immobile", "noAttack"]);
   kaiju.noRetreatUntilOpponentTurnEnd = opponentOf(pending.playerId);
   if (!state.globalEffects) state.globalEffects = [];
@@ -13378,6 +13451,7 @@ function beginUniqueRiteDumpActivate(playerId, absIdx) {
     render();
     return;
   }
+  notifyHandOrDumpCardExiled(state, playerId, "dump", exiled);
   log(state, `${player.name}: 墓地の「${exiled.name}」を除外し人①を支払う`);
   zoneViewerState = null;
   state.pendingChoice = {
@@ -13948,7 +14022,7 @@ function continueCoreAttackAfterOnAttack(unit, defenderId) {
   const player = state.players[unit.owner];
   const defender = state.players[defenderId];
   const coreArmor = defender.core.armor || 0;
-  const coreDmg = Math.max(0, (unit.atk || 0) + (unit.attackStrikeBonus || 0) - coreArmor);
+  const coreDmg = Math.max(0, effectiveAttackPower(unit) - coreArmor);
   defender.core.hp -= coreDmg;
   if (coreDmg > 0) {
     unit.dealtDamageThisTurn = true;
@@ -20037,10 +20111,10 @@ function drawCardRevealOverlay() {
   ctx.fillText(card.name, x + 224, y + 92, w - 240);
 
   const typeLabel = { unit: "ユニット", tact: "指令", wild: "Wild", grand: "Grand", struct: "施設" }[card.type] || card.type;
-  const stats =
-    card.type === "unit"
-      ? ` / ATK ${card.atk ?? "-"} / HP ${card.currentHp && card.maxHp ? `${card.currentHp}/${card.maxHp}` : card.hp ?? "-"}`
-      : "";
+  const unitStats = unitDisplayStats(card);
+  const stats = unitStats
+    ? ` / ATK ${unitStats.atk} / HP ${unitStats.hasRuntimeHp ? `${unitStats.currentHp}/${unitStats.maxHp}` : unitStats.maxHp}`
+    : "";
   ctx.fillStyle = revTheme.text;
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`${typeLabel} / ${card.faction || "ニュートラル"} / コスト ${formatCost(card.cost)}${stats}`, x + 224, y + 118, w - 240);
@@ -20615,6 +20689,7 @@ function abilityText(card) {
         structPayProduce: `${Object.entries(ability.cost || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("")}支払い → ${Object.entries(ability.produces || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}+${a}`).join("/")}`,
         tactPayRestDraw: `${Object.entries(ability.cost || {}).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("")}支払い → ドロー${ability.draw || 1}`,
         gainResource: `${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
+        velsburgTurnStartConversion: "ターン開始時：人2を消費して魔+1",
         buffFriendlyUnitsHp: `味方ユニットのHP+${ability.amount}`,
         buffFriendlyUnitsAtk: `味方ユニットのATK+${ability.amount}`,
         tacticalBombardmentPlay: "永続タクトとして配置",
@@ -20868,7 +20943,7 @@ function gameSummary() {
               faction: unit.faction || null,
               tags: tagLabels(unit),
               variant: unit.variant || null,
-              atk: unit.atk,
+              atk: effectiveAttackPower(unit),
               hp: unit.currentHp,
               maxHp: unit.maxHp,
               rested: unit.rested,
@@ -21062,6 +21137,9 @@ const testing = {
   resolveVerzariaDivineExileTarget,
   resolveHighSuccubusForcedAttackTarget,
   countCharmCountersOnField,
+  notifyHandOrDumpCardExiled: (playerId, sourceZone, card) =>
+    notifyHandOrDumpCardExiled(state, playerId, sourceZone, card),
+  startTurn: (playerId, options = {}) => startTurn(state, playerId, options),
   selectHandCard: selectHandCardForTest,
   selectStructDeckCard: selectStructDeckCardForTest,
   useSelectedHandCard,

@@ -1589,4 +1589,55 @@ export default [
     rarity: "神話",
     imageUrl: "assets/cards/card_1783013688397.jpeg",
   },
+  {
+    id: "card_1782994564912",
+    name: "魔城ヴェルスブルグ",
+    type: "コア",
+    world: "ニュートラル",
+    description:
+      "【初期手札】５ 【ドロー枚数】1 【手札制限】７\n"
+      + "【特殊要件】\n"
+      + "自分の手札・墓地のカードの除外時：１枚につき魔①を得る(毎ターン３枚まで)\n"
+      + "ターン開始時人を２以上保有している時：人②を消費し、魔①を得る",
+    flavorText:
+      "元は人類種が建てた城だとか、魔王の姿が玉座に無いとかそんな問題はどうでも良い。\n"
+      + "真に問題なのは、この城に住み着く者達の全てが、人類種を餌だとしか考えていない事だ。",
+    tags: ["ダンジョン", "悪魔"],
+    costs: { play: {}, act: {}, choice: [], choiceAct: [] },
+    generates: {},
+    initialResources: { human: 2, nature: 0, magic: 0, electric: 0, gold: 4, mineral: 0, fuel: 0 },
+    life: 17,
+    initialHand: 5,
+    drawPerTurn: 1,
+    handLimit: 7,
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "通常",
+    imageUrl: "assets/cards/card_1782994564912.jpeg",
+  },
+  {
+    id: "card_1782995682140",
+    name: "邪悪な教会",
+    type: "ストラクト",
+    world: "ニュートラル",
+    description: "自分の手札・墓地のカードの除外時：　魔①を得る(毎ターン３枚まで)\n人④を支払い、レストする：魔②を得る",
+    flavorText:
+      "「神という存在は信仰に応えないどころか無慈悲な天罰を我々に与える。\n"
+      + "そんな身勝手な存在に無駄な祈りを捧げるよりも、対価さえ支払えば願いを叶えてくれる\n"
+      + "“彼女ら”を崇拝する方が、信仰に値するとは思わないかね？」",
+    tags: ["儀式", "信仰", "魔法", "伝説"],
+    costs: {
+      play: { human: 2, gold: 2, magic: 0, nature: 0, fuel: 0, mineral: 0, electric: 0 },
+      act: {},
+      choice: [],
+      choiceAct: [],
+    },
+    generates: { human: 0, nature: 0, gold: 0, mineral: 0, electric: 0, fuel: 0, magic: 2 },
+    limit: 4,
+    roles: [],
+    tactSubType: null,
+    rarity: "伝説",
+    imageUrl: "assets/cards/card_1782995682140.jpeg",
+  },
 ];

@@ -1,0 +1,21 @@
+{
+  "id": "card_1782995682140",
+  "name": "邪悪な教会",
+  "type": "ストラクト",
+  "world": "ニュートラル",
+  "description": "自分の手札・墓地のカードの除外時：　魔①を得る(毎ターン３枚まで)\n人④を支払い、レストする：魔②を得る",
+  "flavorText": "「神という存在は信仰に応えないどころか無慈悲な天罰を我々に与える。\nそんな身勝手な存在に無駄な祈りを捧げるよりも、対価さえ支払えば願いを叶えてくれる\n“彼女ら”を崇拝する方が、信仰に値するとは思わないかね？」",
+  "tags": ["儀式", "信仰", "魔法", "伝説"],
+  "costs": {
+    "play": { "human": 2, "gold": 2, "magic": 0, "nature": 0, "fuel": 0, "mineral": 0, "electric": 0 },
+    "act": {},
+    "choice": [],
+    "choiceAct": []
+  },
+  "generates": { "human": 0, "nature": 0, "gold": 0, "mineral": 0, "electric": 0, "fuel": 0, "magic": 2 },
+  "limit": 4,
+  "roles": [],
+  "tactSubType": null,
+  "rarity": "伝説",
+  "imageUrl": "assets/cards/card_1782995682140.jpeg"
+}

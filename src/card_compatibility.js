@@ -36,6 +36,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "dailyToyRemoveCounter", "dailyToyReturnToHand",
   "lowNinBatSummonStrike", "lowNinBatSummonStrikeResolve", "lowNinBatHigherAtkBuff",
   "ashitaStackDumpTactsOnSummon", "ashitaUseStackedTact", "ashitaStackDiscardBounce",
+  "velsburgTurnStartConversion",
   "imposterTactPlay", "imposterDestroyNeutral",
   "otherworldKinTactPlay",
   "northeastGloryTactPlay",
