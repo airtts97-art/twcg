@@ -91,11 +91,11 @@ try {
 
   const hostDeck = { core: "frontierCore", main: ["lightInfantry"], struct: ["town"] };
   const guestDeck = { core: "arcaneReactorCore", main: ["knowledgeFairy"], struct: ["magicWell"] };
-  host.socket.send(JSON.stringify({ type: "create", roomCode: "AB12CD", playerName: "Host", deck: hostDeck }));
+  host.socket.send(JSON.stringify({ type: "create", roomCode: "AB12CD", userId: "user-host", playerName: "Host", deck: hostDeck }));
   const hostRoom = await waitForMessage(host, (message) => message.type === "room", "host room");
   assert(hostRoom.role === "host", "host should receive host role");
 
-  guest.socket.send(JSON.stringify({ type: "join", roomCode: "AB12CD", playerName: "Guest", deck: guestDeck }));
+  guest.socket.send(JSON.stringify({ type: "join", roomCode: "AB12CD", userId: "user-guest", playerName: "Guest", deck: guestDeck }));
   const guestRoom = await waitForMessage(guest, (message) => message.type === "room", "guest room");
   assert(guestRoom.role === "guest", "guest should receive guest role");
 
@@ -139,12 +139,54 @@ try {
   assert(hostState.state.turn === 2, "host should receive guest state updates");
 
   host.socket.close();
+  const disconnectedPresence = await waitForMessage(
+    guest,
+    (message) => message.type === "presence" && message.players.some((player) => player.role === "host" && player.connected === false),
+    "host disconnected presence",
+  );
+  assert(disconnectedPresence.players.find((player) => player.role === "guest")?.connected === true, "guest should remain connected");
+
+  const rejoinedHost = await openClient();
+  rejoinedHost.socket.send(JSON.stringify({
+    type: "join",
+    roomCode: "AB12CD",
+    userId: "user-host",
+    playerName: "Host Rejoined",
+    deck: hostDeck,
+  }));
+  const rejoinedHostRoom = await waitForMessage(rejoinedHost, (message) => message.type === "room", "host rejoin room");
+  assert(rejoinedHostRoom.role === "host", "same host user should reclaim the host role even through join");
+  assert(rejoinedHostRoom.rejoined === true, "host reclaim should be marked as rejoined");
+  assert(rejoinedHostRoom.state.turn === 2, "rejoined host should receive latest room state");
+
   guest.socket.close();
+  const rejoinedGuest = await openClient();
+  rejoinedGuest.socket.send(JSON.stringify({
+    type: "rejoin",
+    roomCode: "AB12CD",
+    userId: "user-guest",
+    playerName: "Guest Rejoined",
+    deck: guestDeck,
+  }));
+  const rejoinedGuestRoom = await waitForMessage(rejoinedGuest, (message) => message.type === "room", "guest rejoin room");
+  assert(rejoinedGuestRoom.role === "guest", "same guest user should reclaim the guest role");
+  assert(rejoinedGuestRoom.state.turn === 2, "rejoined guest should receive latest room state");
+
+  const idempotentState = { ...changedState, turn: 4, message: "idempotent" };
+  rejoinedHost.socket.send(JSON.stringify({ type: "state", roomCode: "AB12CD", state: idempotentState, opId: "stable-op-1" }));
+  const firstOp = await waitForMessage(rejoinedHost, (message) => message.opId === "stable-op-1" && !message.deduplicated, "first operation");
+  rejoinedHost.socket.send(JSON.stringify({ type: "state", roomCode: "AB12CD", state: { ...idempotentState, turn: 99 }, opId: "stable-op-1" }));
+  const duplicateOp = await waitForMessage(rejoinedHost, (message) => message.opId === "stable-op-1" && message.deduplicated, "deduplicated operation");
+  assert(duplicateOp.version === firstOp.version, "duplicate operation should keep the original version");
+  assert(duplicateOp.state.turn === 4, "duplicate operation should not overwrite authoritative state");
+
+  rejoinedHost.socket.close();
+  rejoinedGuest.socket.close();
   console.log(
     JSON.stringify(
       {
         ok: true,
-        cases: ["config", "config-script", "auth-disabled", "deck-save-load", "create", "join", "presence-deck", "start", "start-echo", "start-deck", "large-start", "state"],
+        cases: ["config", "config-script", "auth-disabled", "deck-save-load", "create", "join", "presence-deck", "start", "start-echo", "start-deck", "large-start", "state", "host-rejoin", "guest-rejoin", "operation-deduplication"],
       },
       null,
       2,

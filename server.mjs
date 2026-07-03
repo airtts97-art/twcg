@@ -11,6 +11,7 @@ const port = Number(process.env.PORT || getArg("--port") || 5174);
 const googleClientId = Object.hasOwn(process.env, "GOOGLE_CLIENT_ID") ? process.env.GOOGLE_CLIENT_ID : localEnv.GOOGLE_CLIENT_ID || "";
 const deckStorePath = resolve(process.env.DECK_STORE_PATH || join(root, "data", "decks.json"));
 const rooms = new Map();
+const roomReconnectGraceMs = Math.max(60_000, Number(process.env.ROOM_RECONNECT_GRACE_MS) || 15 * 60_000);
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -281,6 +282,7 @@ server.on("upgrade", (req, socket) => {
     socket,
     roomCode: null,
     role: "guest",
+    userId: null,
     name: "Player",
     frameBuffer: Buffer.alloc(0),
   };
@@ -377,29 +379,57 @@ function dbg(label, extra = {}) {
 }
 
 function handleMessage(client, message) {
+  if (message.type === "ping") {
+    send(client, { type: "pong", sentAt: message.sentAt || null, serverTime: Date.now() });
+    return;
+  }
+
   if (message.type === "create") {
     const roomCode = normalizeRoomCode(message.roomCode);
     if (!roomCode) return send(client, { type: "error", message: "ルームコードが不正です。" });
-    if (rooms.has(roomCode)) return send(client, { type: "error", message: "同じルームコードが既に存在します。" });
-    const room = { roomCode, clients: new Set(), lastState: null, stateVersion: 0, actionQueue: [], processingQueue: false };
-    rooms.set(roomCode, room);
-    joinRoom(client, room, "host", message.playerName, message.deck);
+    const userId = normalizedMessageUserId(message, client);
+    let room = rooms.get(roomCode);
+    let rejoined = false;
+    if (room) {
+      const seat = seatForUser(room, userId);
+      if (!seat) return send(client, { type: "error", message: "同じルームコードが既に存在します。" });
+      attachClientToSeat(client, room, seat, message.playerName, message.deck);
+      rejoined = true;
+    } else {
+      room = createRoom(roomCode);
+      rooms.set(roomCode, room);
+      const seat = assignSeat(room, "host", userId, message.playerName, message.deck);
+      attachClientToSeat(client, room, seat, message.playerName, message.deck);
+    }
     dbg("create", { room: roomCode, client: client.id.slice(0, 8) });
-    sendRoomInfo(client, room, "ルームを作成しました。");
+    sendRoomInfo(
+      client,
+      room,
+      rejoined ? `${client.role === "host" ? "ホスト" : "ゲスト"}席に再入室しました。` : "ルームを作成しました。",
+      rejoined,
+    );
     broadcastPresence(room);
     return;
   }
 
-  if (message.type === "join") {
+  if (message.type === "join" || message.type === "rejoin") {
     const roomCode = normalizeRoomCode(message.roomCode);
     const room = rooms.get(roomCode);
     if (!room) return send(client, { type: "error", message: "指定されたルームが見つかりません。" });
-    if (room.clients.size >= 2 && !room.clients.has(client)) return send(client, { type: "error", message: "このルームは満員です。" });
-    joinRoom(client, room, "guest", message.playerName, message.deck);
-    dbg("join", { room: roomCode, client: client.id.slice(0, 8) });
-    sendRoomInfo(client, room, "ルームへ参加しました。");
+    const userId = normalizedMessageUserId(message, client);
+    let seat = seatForUser(room, userId);
+    const rejoined = Boolean(seat);
+    if (!seat && message.type === "rejoin") {
+      return send(client, { type: "error", message: "このユーザーの席はルームにありません。" });
+    }
+    if (!seat) {
+      if (room.seats.guest) return send(client, { type: "error", message: "このルームは満員です。" });
+      seat = assignSeat(room, "guest", userId, message.playerName, message.deck);
+    }
+    attachClientToSeat(client, room, seat, message.playerName, message.deck);
+    dbg(rejoined ? "rejoin" : "join", { room: roomCode, role: seat.role, client: client.id.slice(0, 8) });
+    sendRoomInfo(client, room, rejoined ? `${seat.role === "host" ? "ホスト" : "ゲスト"}席に再入室しました。` : "ルームへ参加しました。", rejoined);
     broadcastPresence(room);
-    if (room.lastState) send(client, { type: "start", roomCode, state: room.lastState, players: playersFor(room), version: room.stateVersion });
     return;
   }
 
@@ -430,6 +460,19 @@ function handleMessage(client, message) {
 }
 
 function enqueueRoomState(room, client, message) {
+  if (message.opId && room.seenOpIds.has(message.opId)) {
+    send(client, {
+      type: message.type,
+      roomCode: room.roomCode,
+      reason: message.reason || "deduplicated",
+      state: room.lastState,
+      version: room.seenOpIds.get(message.opId),
+      opId: message.opId,
+      players: playersFor(room),
+      deduplicated: true,
+    });
+    return;
+  }
   room.actionQueue.push({
     type: message.type,
     reason: message.reason || "sync",
@@ -450,6 +493,7 @@ function processRoomQueue(room) {
         const item = room.actionQueue.shift();
         room.lastState = item.state;
         room.stateVersion = (room.stateVersion || 0) + 1;
+        if (item.opId) rememberRoomOpId(room, item.opId, room.stateVersion);
         dbg("bcast", { type: item.type, room: room.roomCode, ver: room.stateVersion, reason: item.reason, opId: item.opId || "-", from: item.clientRole });
         broadcast(
           room,
@@ -474,12 +518,67 @@ function processRoomQueue(room) {
 }
 
 
-function joinRoom(client, room, role, playerName, deck) {
+function createRoom(roomCode) {
+  return {
+    roomCode,
+    clients: new Set(),
+    seats: { host: null, guest: null },
+    lastState: null,
+    stateVersion: 0,
+    actionQueue: [],
+    processingQueue: false,
+    seenOpIds: new Map(),
+    cleanupTimer: null,
+  };
+}
+
+function normalizeUserId(value) {
+  return String(value || "").trim().replace(/[^a-zA-Z0-9:@._-]/g, "").slice(0, 160);
+}
+
+function normalizedMessageUserId(message, client) {
+  return normalizeUserId(message.userId) || `connection:${client.id}`;
+}
+
+function seatForUser(room, userId) {
+  return Object.values(room.seats || {}).find((seat) => seat?.userId === userId) || null;
+}
+
+function assignSeat(room, role, userId, playerName, deck) {
+  const seat = {
+    userId,
+    role,
+    name: playerName || (role === "host" ? "Host" : "Guest"),
+    deck: deck || null,
+    client: null,
+    connected: false,
+  };
+  room.seats[role] = seat;
+  return seat;
+}
+
+function attachClientToSeat(client, room, seat, playerName, deck) {
   removeClient(client);
+  if (room.cleanupTimer) {
+    clearTimeout(room.cleanupTimer);
+    room.cleanupTimer = null;
+  }
+  const replaced = seat.client;
+  if (replaced && replaced !== client) {
+    room.clients.delete(replaced);
+    replaced.roomCode = null;
+    send(replaced, { type: "replaced", message: "同じユーザーが再接続したため、この接続を終了します。" });
+    replaced.socket.end();
+  }
   client.roomCode = room.roomCode;
-  client.role = role;
-  client.name = playerName || (role === "host" ? "Host" : "Guest");
-  if (deck) client.deck = deck;
+  client.role = seat.role;
+  client.userId = seat.userId;
+  client.name = playerName || seat.name;
+  client.deck = deck || seat.deck || null;
+  seat.name = client.name;
+  seat.deck = client.deck;
+  seat.client = client;
+  seat.connected = true;
   room.clients.add(client);
 }
 
@@ -488,8 +587,18 @@ function removeClient(client) {
   const room = rooms.get(client.roomCode);
   if (!room) return;
   room.clients.delete(client);
+  const seat = room.seats?.[client.role];
+  if (seat?.client === client) {
+    seat.client = null;
+    seat.connected = false;
+  }
   broadcastPresence(room);
-  if (room.clients.size === 0) rooms.delete(room.roomCode);
+  if (room.clients.size === 0 && !room.cleanupTimer) {
+    room.cleanupTimer = setTimeout(() => {
+      if (room.clients.size === 0 && rooms.get(room.roomCode) === room) rooms.delete(room.roomCode);
+    }, roomReconnectGraceMs);
+    room.cleanupTimer.unref?.();
+  }
   client.roomCode = null;
 }
 
@@ -502,18 +611,23 @@ function normalizeRoomCode(roomCode) {
 }
 
 function playersFor(room) {
-  return [...room.clients].map((client) => ({ id: client.id, role: client.role, name: client.name, deck: client.deck || null }));
+  return [room.seats?.host, room.seats?.guest]
+    .filter(Boolean)
+    .map((seat) => ({ id: seat.userId, userId: seat.userId, role: seat.role, name: seat.name, deck: seat.deck || null, connected: Boolean(seat.connected) }));
 }
 
-function sendRoomInfo(client, room, message) {
+function sendRoomInfo(client, room, message, rejoined = false) {
   send(client, {
     type: "room",
     roomCode: room.roomCode,
     role: client.role,
+    userId: client.userId,
     players: playersFor(room),
     message,
+    rejoined,
     state: room.lastState,
     version: room.stateVersion || 0,
+    ackedOpIds: [...room.seenOpIds.keys()].slice(-50),
   });
 }
 
@@ -547,6 +661,13 @@ function send(client, payload) {
     header[1] = 127;
     header.writeBigUInt64BE(BigInt(data.length), 2);
     client.socket.write(Buffer.concat([header, data]));
+  }
+}
+
+function rememberRoomOpId(room, opId, version) {
+  room.seenOpIds.set(opId, version);
+  while (room.seenOpIds.size > 200) {
+    room.seenOpIds.delete(room.seenOpIds.keys().next().value);
   }
 }
 

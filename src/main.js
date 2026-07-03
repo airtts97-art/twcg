@@ -251,6 +251,8 @@ function tactAtZoneCell(playerId, row, col) {
 const SAVED_DECK_KEY = "twcg.savedDeck.v1";
 const SAVED_DECK_LIBRARY_KEY = "twcg.savedDeckLibrary.v1";
 const CUSTOM_CARD_STORE_KEY = "twcg.customCards.v1";
+const ONLINE_SESSION_KEY = "twcg.onlineSession.v1";
+const ONLINE_GUEST_ID_KEY = "twcg.onlineGuestId.v1";
 const FIREBASE_CARDS_CACHE_KEY = "twcg.firebaseCards.v1";
 const FIREBASE_CARDS_BACKOFF_KEY = "twcg.firebaseFetchBackoff.v1";
 const FIREBASE_CARDS_429_BACKOFF_MS = 20 * 60 * 1000;
@@ -3837,6 +3839,12 @@ let appHoveredCard = null;
 const cardImageCache = new Map();
 let onlineSocket = null;
 let onlineOpenCallbacks = [];
+let onlineDesiredSession = null;
+let onlineReconnectTimer = null;
+let onlineReconnectAttempt = 0;
+let onlineHeartbeatTimer = null;
+let onlineLastMessageAt = 0;
+let onlineManualClose = false;
 let applyingRemoteState = false;
 let nextOnlineOpId = 1;
 let queuedOnlineAction = null;
@@ -6798,6 +6806,8 @@ function createAppState() {
       roomCode: "",
       role: "host",
       connection: "offline",
+      reconnectAttempt: 0,
+      userId: null,
       message: "オンライン対戦は未接続です。",
       players: [],
       selectedDeckId: null,
@@ -7558,6 +7568,7 @@ async function handleGoogleCredential(response) {
     // ログイン完了後、Googleボタンコンテナを削除
     removeGoogleSignInButton();
     await syncDecksFromServer();
+    resumeOnlineSessionIfAvailable();
   } catch {
     app.auth = { ...app.auth, message: "Googleログイン検証に失敗しました。" };
   }
@@ -7588,15 +7599,20 @@ function signInWithGoogleDemo() {
   app.auth = { provider: "google", signedIn: true, name: "Google Player", email: "player@example.com", demo: true };
   app.screen = "home";
   syncDecksFromServer();
+  resumeOnlineSessionIfAvailable();
 }
 
 function signInAsGuest() {
   app.auth = { provider: "guest", signedIn: true, name: "Guest Player", email: null };
   app.screen = "home";
   syncDecksFromServer();
+  resumeOnlineSessionIfAvailable();
 }
 
 function signOut() {
+  clearOnlineSession();
+  onlineManualClose = true;
+  onlineSocket?.close();
   app.auth = { provider: null, signedIn: false, name: "未ログイン", email: null };
   app.screen = "login";
 }
@@ -7623,6 +7639,9 @@ function resetMatchGame(p2Deck) {
 }
 
 function startLocalMatch() {
+  clearOnlineSession();
+  onlineManualClose = true;
+  onlineSocket?.close();
   const core = cardCatalog.cores[app.deck.core] || cardCatalog.cores[DEFAULT_CORE_ID];
   const requirementIssues = coreDeckRequirementIssues(core, app.deck.main);
   if (requirementIssues.length) {
@@ -7634,6 +7653,97 @@ function startLocalMatch() {
   resetMatchGame();
   app.match = { status: "local", mode: "ローカル対戦", roomCode: "", role: "host", connection: "offline", message: "同じブラウザ内で対戦中です。", players: [], selectedDeckId };
   app.screen = "game";
+}
+
+function persistentGuestUserId() {
+  try {
+    let id = localStorage.getItem(ONLINE_GUEST_ID_KEY);
+    if (!id) {
+      const random = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      id = `guest:${random}`;
+      localStorage.setItem(ONLINE_GUEST_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return `guest:${Date.now().toString(36)}`;
+  }
+}
+
+function onlineUserId() {
+  if (app.auth?.sub) return `google:${app.auth.sub}`;
+  if (app.auth?.email) return `email:${String(app.auth.email).trim().toLowerCase()}`;
+  if (app.auth?.provider === "guest") return persistentGuestUserId();
+  return persistentGuestUserId();
+}
+
+function readOnlineSession() {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(ONLINE_SESSION_KEY) || "null");
+    if (!value?.roomCode || !value?.userId) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function persistOnlineSession() {
+  if (!app.match.roomCode || !app.match.userId || !["host", "guest"].includes(app.match.role)) return;
+  try {
+    sessionStorage.setItem(ONLINE_SESSION_KEY, JSON.stringify({
+      roomCode: app.match.roomCode,
+      userId: app.match.userId,
+      role: app.match.role,
+      playerName: app.auth?.name || app.match.players?.find((player) => player.role === app.match.role)?.name || "Player",
+      deck: normalizeDeckData(app.match.role === "host" ? app.match.hostDeck : app.match.guestDeck) || normalizeDeckData(currentDeckPayload()),
+    }));
+  } catch {
+    // Session persistence is best-effort; the live socket can still reconnect.
+  }
+}
+
+function configureOnlineSession({ roomCode, role, playerName, deck, intent = "rejoin", acknowledged = false, userId = onlineUserId() }) {
+  onlineDesiredSession = {
+    roomCode: String(roomCode || "").trim().toUpperCase(),
+    role,
+    playerName: playerName || app.auth?.name || "Player",
+    deck: normalizeDeckData(deck) || normalizeDeckData(currentDeckPayload()),
+    intent,
+    acknowledged,
+    userId,
+  };
+  app.match.userId = userId;
+  return onlineDesiredSession;
+}
+
+function resumeOnlineSessionIfAvailable() {
+  const saved = readOnlineSession();
+  if (!saved || saved.userId !== onlineUserId()) return false;
+  configureOnlineSession({ ...saved, intent: "rejoin", acknowledged: true });
+  app.match = {
+    ...app.match,
+    status: "connecting",
+    mode: "オンライン対戦",
+    roomCode: saved.roomCode,
+    role: saved.role,
+    userId: saved.userId,
+    connection: "reconnecting",
+    message: "前回の席へ再接続しています。",
+  };
+  if (saved.role === "host") app.match.hostDeck = normalizeDeckData(saved.deck);
+  else app.match.guestDeck = normalizeDeckData(saved.deck);
+  app.screen = "matchLobby";
+  connectOnline();
+  return true;
+}
+
+function clearOnlineSession() {
+  onlineDesiredSession = null;
+  onlineOpenCallbacks = [];
+  onlineReconnectAttempt = 0;
+  if (onlineReconnectTimer) clearTimeout(onlineReconnectTimer);
+  onlineReconnectTimer = null;
+  stopOnlineHeartbeat();
+  try { sessionStorage.removeItem(ONLINE_SESSION_KEY); } catch {}
 }
 
 function createRoomMatch() {
@@ -7653,12 +7763,14 @@ function createRoomMatch() {
     hostDeck,
   };
   app.screen = "matchLobby";
+  const session = configureOnlineSession({ roomCode, role: "host", playerName: app.auth.name, deck: hostDeck || app.deck, intent: "create" });
   connectOnline(() =>
     sendOnline({
       type: "create",
       roomCode,
       playerName: app.auth.name,
       deck: hostDeck || app.deck,
+      userId: session.userId,
     }),
   );
 }
@@ -7688,12 +7800,14 @@ function joinRoomMatch() {
     guestDeck,
   };
   app.screen = "matchLobby";
+  const session = configureOnlineSession({ roomCode: requestedCode, role: "guest", playerName: app.auth.name, deck: guestDeck || app.deck, intent: "join" });
   connectOnline(() =>
     sendOnline({
       type: "join",
       roomCode: requestedCode,
       playerName: app.auth.name,
       deck: guestDeck || app.deck,
+      userId: session.userId,
     }),
   );
 }
@@ -7745,6 +7859,53 @@ function copyTextLegacy(text) {
   return copied;
 }
 
+function stopOnlineHeartbeat() {
+  if (onlineHeartbeatTimer) clearInterval(onlineHeartbeatTimer);
+  onlineHeartbeatTimer = null;
+}
+
+function startOnlineHeartbeat() {
+  stopOnlineHeartbeat();
+  onlineLastMessageAt = Date.now();
+  onlineHeartbeatTimer = setInterval(() => {
+    if (onlineSocket?.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - onlineLastMessageAt > 20_000) {
+      app.match.message = "通信が途絶したため再接続します。";
+      onlineSocket.close();
+      return;
+    }
+    sendOnline({ type: "ping", sentAt: Date.now() }, { scheduleReconnect: false });
+  }, 5_000);
+}
+
+function sendDesiredSessionHandshake() {
+  const session = onlineDesiredSession;
+  if (!session?.roomCode || !session.userId) return false;
+  const type = session.acknowledged ? "rejoin" : session.intent;
+  return sendOnline({
+    type,
+    roomCode: session.roomCode,
+    userId: session.userId,
+    playerName: session.playerName,
+    deck: session.deck,
+  }, { scheduleReconnect: false });
+}
+
+function scheduleOnlineReconnect() {
+  if (onlineManualClose || !onlineDesiredSession?.roomCode || onlineReconnectTimer) return false;
+  const delays = [300, 750, 1_500, 3_000, 5_000, 8_000];
+  const delay = delays[Math.min(onlineReconnectAttempt, delays.length - 1)];
+  onlineReconnectAttempt += 1;
+  app.match.reconnectAttempt = onlineReconnectAttempt;
+  app.match.connection = "reconnecting";
+  app.match.message = `再接続中… (${onlineReconnectAttempt}回目)`;
+  onlineReconnectTimer = setTimeout(() => {
+    onlineReconnectTimer = null;
+    connectOnline();
+  }, delay);
+  return true;
+}
+
 function connectOnline(onOpen) {
   if (!window.WebSocket) {
     app.match.connection = "unsupported";
@@ -7758,16 +7919,24 @@ function connectOnline(onOpen) {
   if (onOpen) onlineOpenCallbacks.push(onOpen);
   if (onlineSocket?.readyState === WebSocket.CONNECTING) return;
 
-  onlineSocket = new WebSocket(ONLINE_WS_URL);
-  onlineSocket.addEventListener("open", () => {
+  onlineManualClose = false;
+  const socket = new WebSocket(ONLINE_WS_URL);
+  onlineSocket = socket;
+  socket.addEventListener("open", () => {
+    if (onlineSocket !== socket) return;
+    onlineReconnectAttempt = 0;
+    app.match.reconnectAttempt = 0;
     app.match.connection = "connected";
     app.match.message = "オンラインサーバーに接続しました。";
+    startOnlineHeartbeat();
     const callbacks = onlineOpenCallbacks;
     onlineOpenCallbacks = [];
-    callbacks.forEach((callback) => callback());
+    if (callbacks.length) callbacks.forEach((callback) => callback());
+    else sendDesiredSessionHandshake();
     render();
   });
-  onlineSocket.addEventListener("message", (event) => {
+  socket.addEventListener("message", (event) => {
+    onlineLastMessageAt = Date.now();
     try {
       handleOnlineMessage(JSON.parse(event.data));
     } catch {
@@ -7775,25 +7944,28 @@ function connectOnline(onOpen) {
     }
     render();
   });
-  onlineSocket.addEventListener("close", () => {
+  socket.addEventListener("close", () => {
+    if (onlineSocket !== socket) return;
+    stopOnlineHeartbeat();
     if (app.match.status === "online" || app.match.status === "connecting") {
-      app.match.connection = "disconnected";
-      app.match.message = "オンラインサーバーから切断されました。";
+      app.match.connection = onlineManualClose ? "disconnected" : "reconnecting";
+      app.match.message = onlineManualClose ? "オンラインサーバーから切断されました。" : "接続が切れました。自動再接続します。";
     }
     onlineSocket = null;
-    onlineOpenCallbacks = [];
+    scheduleOnlineReconnect();
     render();
   });
-  onlineSocket.addEventListener("error", () => {
-    app.match.connection = "error";
-    app.match.message = `オンラインサーバーに接続できません。${ONLINE_WS_URL} を確認してください。`;
+  socket.addEventListener("error", () => {
+    app.match.connection = onlineDesiredSession ? "reconnecting" : "error";
+    app.match.message = onlineDesiredSession ? "接続に失敗しました。再試行します。" : `オンラインサーバーに接続できません。${ONLINE_WS_URL} を確認してください。`;
     render();
   });
 }
 
-function sendOnline(payload) {
+function sendOnline(payload, options = {}) {
   if (onlineSocket?.readyState !== WebSocket.OPEN) {
-    app.match.message = "オンラインサーバーへ未接続です。";
+    app.match.message = "オンラインサーバーへ未接続です。再接続します。";
+    if (options.scheduleReconnect !== false) scheduleOnlineReconnect();
     return false;
   }
   const str = JSON.stringify(payload);
@@ -7805,13 +7977,13 @@ function sendOnline(payload) {
   return true;
 }
 
-function sendOnlineStateSnapshot(reason = "action", opId = null) {
+function sendOnlineStateSnapshot(reason = "action", opId = null, snapshot = null) {
   return sendOnline({
     type: "state",
     roomCode: app.match.roomCode,
     reason,
     opId,
-    state: serializeGameState(),
+    state: snapshot || serializeGameState(),
   });
 }
 
@@ -7825,20 +7997,57 @@ setInterval(() => {
   requestOnlineStateSync("poll");
 }, 2500);
 
+window.addEventListener("online", () => {
+  if (onlineDesiredSession && onlineSocket?.readyState !== WebSocket.OPEN) {
+    if (onlineReconnectTimer) clearTimeout(onlineReconnectTimer);
+    onlineReconnectTimer = null;
+    connectOnline();
+  }
+});
+
+window.addEventListener("offline", () => {
+  if (!onlineDesiredSession) return;
+  app.match.connection = "offline";
+  app.match.message = "ネットワークがオフラインです。復帰後に自動再接続します。";
+  render();
+});
+
 function handleOnlineMessage(message) {
   if (message.type === "room") {
     app.match.status = "online";
     app.match.mode = message.role === "host" ? "????????" : "????????";
     app.match.roomCode = message.roomCode;
     app.match.role = message.role;
+    app.match.userId = message.userId || onlineDesiredSession?.userId || app.match.userId;
     app.match.connection = "connected";
     app.match.players = message.players || [];
     syncMatchDecksFromPlayers(app.match.players);
     app.match.message = message.message || "???????????";
+    if (onlineDesiredSession) {
+      onlineDesiredSession.role = message.role;
+      onlineDesiredSession.acknowledged = true;
+    } else {
+      configureOnlineSession({
+        roomCode: message.roomCode,
+        role: message.role,
+        userId: app.match.userId,
+        playerName: app.auth?.name,
+        deck: message.role === "host" ? app.match.hostDeck : app.match.guestDeck,
+        acknowledged: true,
+      });
+    }
+    persistOnlineSession();
+    const queuedWasAcknowledged = Boolean(
+      queuedOnlineAction?.opId && (message.ackedOpIds || []).includes(queuedOnlineAction.opId),
+    );
+    if (queuedWasAcknowledged) {
+      queuedOnlineAction = null;
+      app.match.pendingOpId = null;
+    }
     if (message.state) {
       if (message.players) app.match.players = message.players;
       syncMatchDecksFromPlayers(app.match.players);
-      if (shouldApplyOnlineState(message.version)) {
+      if (shouldApplyOnlineState(message.version, Boolean(message.rejoined))) {
         applyRemoteGameState(message.state);
         markOnlineStateApplied(message.version);
         applyOnlinePlayerNames();
@@ -7847,12 +8056,29 @@ function handleOnlineMessage(message) {
       }
       render();
     }
+    if (queuedOnlineAction?.snapshot) {
+      sendOnlineStateSnapshot(queuedOnlineAction.reason, queuedOnlineAction.opId, queuedOnlineAction.snapshot);
+    } else if (message.rejoined && message.state) {
+      requestOnlineStateSync("rejoined");
+    }
+    return;
+  }
+  if (message.type === "pong") {
+    app.match.connection = "connected";
+    return;
+  }
+  if (message.type === "replaced") {
+    onlineManualClose = true;
+    app.match.connection = "replaced";
+    app.match.message = message.message || "別の端末から同じ席に再接続されました。";
     return;
   }
   if (message.type === "presence") {
     app.match.players = message.players || app.match.players;
     syncMatchDecksFromPlayers(app.match.players);
-    app.match.message = app.match.players.length >= 2 ? "????????????" : "????????????";
+    app.match.message = connectedOnlinePlayerCount() >= 2
+      ? "対戦相手が接続しています。"
+      : "対戦相手の再接続を待っています。";
     if (app.screen === "game") applyOnlinePlayerNames();
     render();
     return;
@@ -7920,10 +8146,14 @@ function syncMatchDecksFromPlayers(players = app.match.players) {
   if (guestDeck) app.match.guestDeck = guestDeck;
 }
 
+function connectedOnlinePlayerCount(players = app.match.players) {
+  return (players || []).filter((player) => player.connected !== false).length;
+}
+
 function startMatchFromLobby() {
   if (!prepareSelectedDeckForMatch()) return;
   if (app.match.status === "online" || app.match.status === "connecting") {
-    if ((app.match.players || []).length < 2) {
+    if (connectedOnlinePlayerCount() < 2) {
       app.match.message = "対戦相手が接続するまで開始できません。";
       return;
     }
@@ -7971,6 +8201,10 @@ function prepareSelectedDeckForMatch() {
 
 function startOnlineMatch() {
   syncMatchDecksFromPlayers();
+  if (connectedOnlinePlayerCount() < 2) {
+    app.match.message = "対戦相手の再接続を待ってください。";
+    return;
+  }
   const hostDeck = normalizeDeckData(app.match.hostDeck || currentDeckPayload());
   const guestDeck = normalizeDeckData(app.match.guestDeck);
 
@@ -8055,9 +8289,10 @@ function syncOnlineAction(reason, playerId = state.activePlayer) {
   if (app.match.status !== "online") { console.warn("[sync] blocked: status=", app.match.status, reason); return false; }
   if (controlledPlayerId() !== playerId) { console.warn("[sync] blocked: controlled=", controlledPlayerId(), "playerId=", playerId, reason); return false; }
   const opId = `${app.match.role || "local"}-${Date.now().toString(36)}-${nextOnlineOpId++}`;
-  queuedOnlineAction = { opId, reason, playerId };
+  const snapshot = serializeGameState();
+  queuedOnlineAction = { opId, reason, playerId, snapshot };
   app.match.pendingOpId = opId;
-  const sent = sendOnlineStateSnapshot(reason, opId);
+  const sent = sendOnlineStateSnapshot(reason, opId, snapshot);
   if (!sent) console.warn("[sync] sendOnline failed", reason, opId);
   else console.log("[sync] sent", reason, opId);
   return sent;
@@ -16155,11 +16390,14 @@ function drawMatchLobbyScreen() {
   });
   drawButton(634, 454, 100, 32, "コードコピー", copyRoomCode, null, { micro: true });
   ctx.fillText(`接続: ${app.match.connection || "offline"}`, 362, 496);
-  ctx.fillText(`参加者: ${(app.match.players || []).map((player) => player.name).join(" / ") || "なし"}`, 362, 516);
+  const participantNames = (app.match.players || [])
+    .map((player) => `${player.name}${player.connected === false ? "（再接続待ち）" : ""}`)
+    .join(" / ");
+  ctx.fillText(`参加者: ${participantNames || "なし"}`, 362, 516);
   drawButton(362, 552, 210, 50, "ローカル対戦", startLocalMatch, null, { accent: "p1" });
   drawButton(606, 552, 210, 50, "ルーム作成", createRoomMatch);
   drawButton(850, 552, 210, 50, "ルーム参加", joinRoomMatch);
-  const waitingForOpponent = app.match.status === "online" && (app.match.players || []).length < 2;
+  const waitingForOpponent = app.match.status === "online" && connectedOnlinePlayerCount() < 2;
   if (app.match.status === "online" || app.match.status === "connecting") {
     drawButton(850, 614, 210, 50, waitingForOpponent ? "相手待ち" : "オンライン開始", startMatchFromLobby, null, waitingForOpponent ? {} : { accent: "p1" });
   }
@@ -17367,18 +17605,21 @@ function drawResourceBar() {
 }
 
 function drawOnlinePendingOverlay() {
-  if (app.screen !== "game" || app.match.status !== "online" || !queuedOnlineAction) return;
+  const reconnecting = app.match.connection !== "connected";
+  if (app.screen !== "game" || app.match.status !== "online" || (!queuedOnlineAction && !reconnecting)) return;
   const x = W / 2 - 150;
   const y = 92;
-  const label = queuedOnlineAction.reason || "sync";
+  const label = reconnecting ? (app.match.message || "自動再接続中") : queuedOnlineAction.reason || "sync";
+  const glow = reconnecting ? "#ff9840" : "#4080ff";
+  const border = reconnecting ? "rgba(255,150,70,0.9)" : "rgba(70,130,255,0.85)";
   ctx.save();
-  ctx.shadowColor = "#4080ff";
+  ctx.shadowColor = glow;
   ctx.shadowBlur = 18;
-  roundRect(x, y, 300, 44, 8, "rgba(8,16,38,0.94)", "rgba(70,130,255,0.85)", 2);
+  roundRect(x, y, 300, 44, 8, "rgba(8,16,38,0.94)", border, 2);
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#d8e8ff";
   ctx.font = "700 14px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("SERVER PROCESSING", x + 18, y + 19);
+  ctx.fillText(reconnecting ? "RECONNECTING" : "SERVER PROCESSING", x + 18, y + 19);
   ctx.fillStyle = "rgba(150,185,255,0.82)";
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
   ctx.fillText(label, x + 18, y + 34, 264);
@@ -21241,7 +21482,14 @@ const testing = {
   createRoomMatch,
   joinRoomMatch,
   broadcastOnlineState,
+  syncOnlineAction,
   requestOnlineStateSync,
+  onlineUserId,
+  forceOnlineDisconnect: () => {
+    if (!onlineSocket) return false;
+    onlineSocket.close();
+    return true;
+  },
   addDeckCard,
   removeDeckCard,
   removeDeckCardById,

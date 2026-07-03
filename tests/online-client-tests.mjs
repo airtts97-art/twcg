@@ -44,7 +44,7 @@ async function waitForServer() {
 }
 
 async function waitForPage(page, predicate, label) {
-  for (let i = 0; i < 40; i += 1) {
+  for (let i = 0; i < 80; i += 1) {
     const value = await page.evaluate(predicate);
     if (value) return value;
     await wait(100);
@@ -189,6 +189,36 @@ try {
   const guestTurn = await waitForPage(guest, () => window.__twcg.state.turn === 7 && window.__twcg.state.turn, "guest turn sync");
   assert(guestTurn === 7, "guest should receive host state updates");
 
+  await host.evaluate(() => window.__twcg.testing.forceOnlineDisconnect());
+  const hostReconnected = await waitForPage(
+    host,
+    () => window.__twcg.app.match.connection === "connected"
+      && window.__twcg.app.match.role === "host"
+      && window.__twcg.state.turn === 7
+      && window.__twcg.app.match.players.find((player) => player.role === "host")?.connected === true,
+    "host automatic reconnect",
+  );
+  assert(hostReconnected === true, "host should automatically reclaim the host seat and latest state");
+
+  await guest.evaluate(() => {
+    window.__twcg.testing.forceOnlineDisconnect();
+    window.__twcg.state.turn = 8;
+    window.__twcg.testing.syncOnlineAction("offline-retry", "p2");
+  });
+  const retriedTurn = await waitForPage(
+    host,
+    () => window.__twcg.state.turn === 8 && window.__twcg.state.turn,
+    "disconnected action retry",
+  );
+  assert(retriedTurn === 8, "an unacknowledged action should be resent after reconnect");
+  await waitForPage(
+    guest,
+    () => window.__twcg.app.match.connection === "connected"
+      && window.__twcg.app.match.role === "guest"
+      && !window.__twcg.testing.summary().app.queuedOnlineAction,
+    "guest reconnect acknowledgement",
+  );
+
   const hostCurrentDeck = await browser.newPage();
   const guestCurrentDeck = await browser.newPage();
   await hostCurrentDeck.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
@@ -261,8 +291,28 @@ try {
   assert(matchedDecks.p1StructDeck.includes("town"), "p1 struct deck should use host current deck");
   assert(matchedDecks.p2StructDeck.includes("magicWell"), "p2 struct deck should use guest current deck");
 
+  const originalGuestUserId = await guest.evaluate(() => window.__twcg.testing.onlineUserId());
+  await guest.close();
+  const guestReentry = await browser.newPage();
+  await guestReentry.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
+  await guestReentry.evaluate(({ code, userId }) => {
+    localStorage.setItem("twcg.onlineGuestId.v1", userId);
+    window.__twcg.testing.signInAsGuest();
+    window.__twcg.app.match.roomCode = code;
+    window.__twcg.testing.joinRoomMatch();
+  }, { code: roomCode, userId: originalGuestUserId });
+  const guestReentered = await waitForPage(
+    guestReentry,
+    () => window.__twcg.app.match.status === "online"
+      && window.__twcg.app.match.role === "guest"
+      && window.__twcg.app.screen === "game"
+      && window.__twcg.state.turn === 8,
+    "same guest reentry",
+  );
+  assert(guestReentered === true, "same guest identity should reclaim the guest seat from a new page");
+
   await browser.close();
-  console.log(JSON.stringify({ ok: true, cases: ["client-deck-sync", "client-create", "client-copy-room-code", "client-join", "client-start", "client-perspective", "client-player-names", "client-opponent-pre-confirm-hidden", "client-opponent-card-reveal", "client-turn-ownership", "client-state", "client-current-deck-lobby-start", "client-guest-deck-start"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, cases: ["client-deck-sync", "client-create", "client-copy-room-code", "client-join", "client-start", "client-perspective", "client-player-names", "client-opponent-pre-confirm-hidden", "client-opponent-card-reveal", "client-turn-ownership", "client-state", "client-host-auto-reconnect", "client-offline-action-retry", "client-current-deck-lobby-start", "client-guest-deck-start", "client-same-user-reentry"] }, null, 2));
 } finally {
   server.kill();
 }
