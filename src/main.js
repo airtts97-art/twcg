@@ -7671,6 +7671,31 @@ function openMatchLobby() {
   app.screen = "matchLobby";
 }
 
+function leaveMatchToLobby() {
+  if (app.match.status === "online") {
+    leaveCurrentRoomBeforeCreate();
+  }
+  onlineManualClose = true;
+  onlineSocket?.close();
+  clearOnlineSession();
+  state.winner = null;
+  const selectedDeckId = app.match.selectedDeckId;
+  app.match = {
+    status: "offline",
+    mode: "未開始",
+    roomCode: "",
+    role: "host",
+    connection: "offline",
+    reconnectAttempt: 0,
+    userId: null,
+    message: "試合を終了し、ロビーに戻りました。",
+    players: [],
+    selectedDeckId,
+  };
+  app.screen = "matchLobby";
+  render();
+}
+
 function resetMatchGame(p2Deck) {
   const d2 = p2Deck || app.deck;
   Object.assign(state, createGame(
@@ -15963,10 +15988,11 @@ canvas.addEventListener("pointerleave", () => {
 });
 
 canvas.addEventListener("pointerdown", (event) => {
-  if (state.winner && app.screen === "game") return;
   const point = getPointer(event);
+  const gameOverLock = state.winner && app.screen === "game";
   for (let i = hitRegions.length - 1; i >= 0; i -= 1) {
     const region = hitRegions[i];
+    if (gameOverLock && !region.allowWhenGameOver) continue;
     if (point.x >= region.x && point.x <= region.x + region.w && point.y >= region.y && point.y <= region.y + region.h) {
       const beforeState = app.screen === "game" && app.match.status === "online" ? serializeGameState() : null;
       const beforeOpId = queuedOnlineAction?.opId || null;
@@ -16033,8 +16059,8 @@ function toggleFullscreen() {
   }
 }
 
-function addHit(x, y, w, h, onClick) {
-  hitRegions.push({ x, y, w, h, onClick });
+function addHit(x, y, w, h, onClick, options = {}) {
+  hitRegions.push({ x, y, w, h, onClick, allowWhenGameOver: Boolean(options.allowWhenGameOver) });
 }
 
 function addCardHover(x, y, w, h, card) {
@@ -16078,7 +16104,32 @@ function render() {
   drawCardRevealOverlay();
   drawZoneViewerOverlay();
   drawOnlinePendingOverlay();
+  drawGameOverOverlay();
   if (appHoveredCard) drawCardTooltip(appHoveredCard.card, appHoveredCard.mx, appHoveredCard.my);
+}
+
+function drawGameOverOverlay() {
+  if (!state.winner) return;
+  const viewer = viewerPlayerId();
+  const winnerName = state.players[state.winner]?.name || state.winner;
+  const won = state.winner === viewer;
+  ctx.fillStyle = "rgba(0, 0, 8, 0.72)";
+  ctx.fillRect(0, 0, W, H);
+  addHit(0, 0, W, H, () => {}, { allowWhenGameOver: true });
+  const w = 480;
+  const h = 220;
+  const x = W / 2 - w / 2;
+  const y = H / 2 - h / 2;
+  roundRect(x, y, w, h, 12, "rgba(8,12,28,0.97)", won ? "#40c080" : "#c04040", 2);
+  ctx.fillStyle = won ? "#80f0b0" : "#f08080";
+  ctx.font = "700 26px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(won ? "勝利！" : "敗北", x + w / 2, y + 62);
+  ctx.fillStyle = "#c0d0f0";
+  ctx.font = "600 15px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${winnerName} の勝利`, x + w / 2, y + 96);
+  ctx.textAlign = "left";
+  drawButton(x + w / 2 - 100, y + h - 68, 200, 44, "ロビーに戻る", leaveMatchToLobby, null, { accent: "p1", allowWhenGameOver: true });
 }
 
 function drawBackground() {
@@ -21479,7 +21530,7 @@ function drawButton(x, y, w, h, label, onClick, _fillUnused, opts = {}) {
   ctx.fillText(label, x + w / 2, y + h / 2);
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-  if (onClick) addHit(x, y, w, h, onClick);
+  if (onClick) addHit(x, y, w, h, onClick, { allowWhenGameOver: opts.allowWhenGameOver });
 }
 
 function roundRect(x, y, w, h, r, fill, stroke, lineWidth = 2) {
@@ -21846,6 +21897,7 @@ const testing = {
   signOut,
   openDeckBuilder,
   openMatchLobby,
+  leaveMatchToLobby,
   startLocalMatch,
   startMatchFromLobby,
   startOnlineMatch,
