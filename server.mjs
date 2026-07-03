@@ -384,6 +384,31 @@ function handleMessage(client, message) {
     return;
   }
 
+  if (message.type === "discardRoom") {
+    const roomCode = normalizeRoomCode(message.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room) {
+      send(client, { type: "roomDiscarded", roomCode, message: "旧ルームは既に廃棄されています。" });
+      return;
+    }
+    const userId = normalizedMessageUserId(message, client);
+    const attachedHost = client.roomCode === roomCode && client.role === "host" && client.userId === userId;
+    if (!attachedHost || room.seats?.host?.userId !== userId) {
+      send(client, { type: "error", roomCode, message: "ホストだけがルームを廃棄できます。" });
+      return;
+    }
+    discardRoom(room, "ホストがルームIDを再生成したため、旧ルームを廃棄しました。");
+    return;
+  }
+
+  if (message.type === "leaveRoom") {
+    const roomCode = normalizeRoomCode(message.roomCode);
+    const room = rooms.get(roomCode);
+    if (room) releaseClientSeat(client, room);
+    send(client, { type: "leftRoom", roomCode });
+    return;
+  }
+
   if (message.type === "create") {
     const roomCode = normalizeRoomCode(message.roomCode);
     if (!roomCode) return send(client, { type: "error", message: "ルームコードが不正です。" });
@@ -415,7 +440,7 @@ function handleMessage(client, message) {
   if (message.type === "join" || message.type === "rejoin") {
     const roomCode = normalizeRoomCode(message.roomCode);
     const room = rooms.get(roomCode);
-    if (!room) return send(client, { type: "error", message: "指定されたルームが見つかりません。" });
+    if (!room) return send(client, { type: "error", roomCode, message: "指定されたルームが見つかりません。" });
     const userId = normalizedMessageUserId(message, client);
     let seat = seatForUser(room, userId);
     const rejoined = Boolean(seat);
@@ -580,6 +605,30 @@ function attachClientToSeat(client, room, seat, playerName, deck) {
   seat.client = client;
   seat.connected = true;
   room.clients.add(client);
+}
+
+function discardRoom(room, message) {
+  if (!room) return;
+  if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
+  room.cleanupTimer = null;
+  rooms.delete(room.roomCode);
+  for (const roomClient of [...room.clients]) {
+    send(roomClient, { type: "roomDiscarded", roomCode: room.roomCode, message });
+    roomClient.roomCode = null;
+  }
+  room.clients.clear();
+  room.seats.host = null;
+  room.seats.guest = null;
+}
+
+function releaseClientSeat(client, room) {
+  if (!room) return;
+  room.clients.delete(client);
+  const seat = room.seats?.[client.role];
+  if (seat?.userId === client.userId) room.seats[client.role] = null;
+  client.roomCode = null;
+  broadcastPresence(room);
+  if (!room.clients.size && !room.seats.host && !room.seats.guest) rooms.delete(room.roomCode);
 }
 
 function removeClient(client) {

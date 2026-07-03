@@ -180,13 +180,29 @@ try {
   assert(duplicateOp.version === firstOp.version, "duplicate operation should keep the original version");
   assert(duplicateOp.state.turn === 4, "duplicate operation should not overwrite authoritative state");
 
+  rejoinedHost.socket.send(JSON.stringify({ type: "discardRoom", roomCode: "AB12CD", userId: "user-host" }));
+  const discardedForGuest = await waitForMessage(
+    rejoinedGuest,
+    (message) => message.type === "roomDiscarded" && message.roomCode === "AB12CD",
+    "discarded room notification",
+  );
+  assert(/廃棄/.test(discardedForGuest.message), "guest should be told that the old room was discarded");
+  const oldRoomProbe = await openClient();
+  oldRoomProbe.socket.send(JSON.stringify({ type: "join", roomCode: "AB12CD", userId: "probe-user", playerName: "Probe" }));
+  const oldRoomError = await waitForMessage(oldRoomProbe, (message) => message.type === "error", "discarded room lookup");
+  assert(/見つかりません/.test(oldRoomError.message), "discarded room code should no longer be joinable");
+  rejoinedHost.socket.send(JSON.stringify({ type: "create", roomCode: "ZX98YU", userId: "user-host", playerName: "Host Recreated", deck: hostDeck }));
+  const recreatedRoom = await waitForMessage(rejoinedHost, (message) => message.type === "room" && message.roomCode === "ZX98YU", "recreated room");
+  assert(recreatedRoom.role === "host", "regenerated room should keep its creator as host");
+
   rejoinedHost.socket.close();
   rejoinedGuest.socket.close();
+  oldRoomProbe.socket.close();
   console.log(
     JSON.stringify(
       {
         ok: true,
-        cases: ["config", "config-script", "auth-disabled", "deck-save-load", "create", "join", "presence-deck", "start", "start-echo", "start-deck", "large-start", "state", "host-rejoin", "guest-rejoin", "operation-deduplication"],
+        cases: ["config", "config-script", "auth-disabled", "deck-save-load", "create", "join", "presence-deck", "start", "start-echo", "start-deck", "large-start", "state", "host-rejoin", "guest-rejoin", "operation-deduplication", "room-discard", "room-regenerate"],
       },
       null,
       2,

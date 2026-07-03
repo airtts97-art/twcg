@@ -17,10 +17,14 @@ const { chromium } = require("playwright");
 
 const port = 5185;
 const tmpDir = await mkdtemp(path.join(os.tmpdir(), "twcg-decks-"));
-const server = spawn(process.execPath, ["server.mjs", "--port", String(port)], {
-  env: { ...process.env, GOOGLE_CLIENT_ID: "", DECK_STORE_PATH: path.join(tmpDir, "decks.json") },
-  stdio: ["ignore", "pipe", "pipe"],
-});
+function spawnServer() {
+  return spawn(process.execPath, ["server.mjs", "--port", String(port)], {
+    env: { ...process.env, GOOGLE_CLIENT_ID: "", DECK_STORE_PATH: path.join(tmpDir, "decks.json") },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+let server = spawnServer();
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -28,6 +32,13 @@ function assert(condition, message) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function stopServer(child) {
+  if (!child || child.exitCode != null) return;
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.kill();
+  await Promise.race([exited, wait(2000)]);
 }
 
 async function waitForServer() {
@@ -43,9 +54,9 @@ async function waitForServer() {
   throw new Error("online server did not start");
 }
 
-async function waitForPage(page, predicate, label) {
+async function waitForPage(page, predicate, label, arg) {
   for (let i = 0; i < 80; i += 1) {
-    const value = await page.evaluate(predicate);
+    const value = await page.evaluate(predicate, arg);
     if (value) return value;
     await wait(100);
   }
@@ -290,6 +301,8 @@ try {
   assert(matchedDecks.p2Hand.includes("knowledgeFairy"), "p2 opening hand should use guest current deck");
   assert(matchedDecks.p1StructDeck.includes("town"), "p1 struct deck should use host current deck");
   assert(matchedDecks.p2StructDeck.includes("magicWell"), "p2 struct deck should use guest current deck");
+  await hostCurrentDeck.close();
+  await guestCurrentDeck.close();
 
   const originalGuestUserId = await guest.evaluate(() => window.__twcg.testing.onlineUserId());
   await guest.close();
@@ -311,8 +324,68 @@ try {
   );
   assert(guestReentered === true, "same guest identity should reclaim the guest seat from a new page");
 
+  await host.evaluate(() => window.__twcg.testing.regenerateRoomMatch());
+  const regeneratedRoomCode = await waitForPage(
+    host,
+    (oldCode) => window.__twcg.app.match.status === "online"
+      && window.__twcg.app.match.role === "host"
+      && window.__twcg.app.match.roomCode !== oldCode
+      && window.__twcg.app.match.roomCode,
+    "host regenerated room",
+    roomCode,
+  );
+  assert(regeneratedRoomCode !== roomCode, "regenerating should replace the old room code");
+  await waitForPage(
+    guestReentry,
+    () => window.__twcg.app.match.status === "offline"
+      && !window.__twcg.app.match.roomCode
+      && /廃棄/.test(window.__twcg.app.match.message),
+    "guest old room discarded",
+  );
+
+  await guestReentry.evaluate((code) => {
+    window.__twcg.app.match.roomCode = code;
+    window.__twcg.testing.joinRoomMatch();
+  }, regeneratedRoomCode);
+  await waitForPage(
+    guestReentry,
+    () => window.__twcg.app.match.status === "online" && window.__twcg.app.match.role === "guest",
+    "guest joins regenerated room",
+  );
+
+  await stopServer(server);
+  await wait(300);
+  server = spawnServer();
+  await waitForServer();
+  await waitForPage(
+    host,
+    () => window.__twcg.app.match.status === "online"
+      && window.__twcg.app.match.connection === "connected"
+      && window.__twcg.app.match.role === "host",
+    "host recreates room after server restart",
+  );
+  await waitForPage(
+    guestReentry,
+    () => window.__twcg.app.match.status === "online"
+      && window.__twcg.app.match.connection === "connected"
+      && window.__twcg.app.match.role === "guest"
+      && window.__twcg.app.match.players.length === 2,
+    "guest rejoins after host recovery",
+  );
+
+  await host.reload({ waitUntil: "domcontentloaded" });
+  await host.waitForFunction(() => Boolean(window.__twcg));
+  await host.evaluate(() => window.__twcg.testing.signInWithGoogleDemo());
+  await waitForPage(
+    host,
+    () => window.__twcg.app.match.status === "online"
+      && window.__twcg.app.match.connection === "connected"
+      && window.__twcg.app.match.role === "host",
+    "host role after page reentry",
+  );
+
   await browser.close();
-  console.log(JSON.stringify({ ok: true, cases: ["client-deck-sync", "client-create", "client-copy-room-code", "client-join", "client-start", "client-perspective", "client-player-names", "client-opponent-pre-confirm-hidden", "client-opponent-card-reveal", "client-turn-ownership", "client-state", "client-host-auto-reconnect", "client-offline-action-retry", "client-current-deck-lobby-start", "client-guest-deck-start", "client-same-user-reentry"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, cases: ["client-deck-sync", "client-create", "client-copy-room-code", "client-join", "client-start", "client-perspective", "client-player-names", "client-opponent-pre-confirm-hidden", "client-opponent-card-reveal", "client-turn-ownership", "client-state", "client-host-auto-reconnect", "client-offline-action-retry", "client-current-deck-lobby-start", "client-guest-deck-start", "client-same-user-reentry", "client-room-regenerate-discard", "client-server-restart-role-recovery", "client-host-page-reentry"] }, null, 2));
 } finally {
-  server.kill();
+  await stopServer(server);
 }

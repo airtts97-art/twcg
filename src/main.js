@@ -3846,8 +3846,8 @@ let onlineReconnectAttempt = 0;
 let onlineHeartbeatTimer = null;
 let onlineLastMessageAt = 0;
 let onlineManualClose = false;
-let onlineRoomRecreateAttempted = false;
 let onlineGuestJoinRetries = 0;
+let onlineGuestJoinRetryTimer = null;
 let applyingRemoteState = false;
 let nextOnlineOpId = 1;
 let queuedOnlineAction = null;
@@ -7681,8 +7681,11 @@ function onlineUserId() {
 
 function readOnlineSession() {
   try {
-    const value = JSON.parse(sessionStorage.getItem(ONLINE_SESSION_KEY) || "null");
+    const raw = localStorage.getItem(ONLINE_SESSION_KEY) || sessionStorage.getItem(ONLINE_SESSION_KEY);
+    const value = JSON.parse(raw || "null");
     if (!value?.roomCode || !value?.userId) return null;
+    // Migrate older per-tab sessions so a closed/reopened tab can recover the original seat.
+    localStorage.setItem(ONLINE_SESSION_KEY, JSON.stringify(value));
     return value;
   } catch {
     return null;
@@ -7692,20 +7695,22 @@ function readOnlineSession() {
 function persistOnlineSession() {
   if (!app.match.roomCode || !app.match.userId || !["host", "guest"].includes(app.match.role)) return;
   try {
-    sessionStorage.setItem(ONLINE_SESSION_KEY, JSON.stringify({
+    const serialized = JSON.stringify({
       roomCode: app.match.roomCode,
       userId: app.match.userId,
       role: app.match.role,
       playerName: app.auth?.name || app.match.players?.find((player) => player.role === app.match.role)?.name || "Player",
       deck: normalizeDeckData(app.match.role === "host" ? app.match.hostDeck : app.match.guestDeck) || normalizeDeckData(currentDeckPayload()),
-    }));
+    });
+    localStorage.setItem(ONLINE_SESSION_KEY, serialized);
+    sessionStorage.setItem(ONLINE_SESSION_KEY, serialized);
   } catch {
     // Session persistence is best-effort; the live socket can still reconnect.
   }
 }
 
 function configureOnlineSession({ roomCode, role, playerName, deck, intent = "rejoin", acknowledged = false, userId = onlineUserId() }) {
-  onlineRoomRecreateAttempted = false;
+  clearGuestRoomJoinRetry();
   onlineGuestJoinRetries = 0;
   onlineDesiredSession = {
     roomCode: String(roomCode || "").trim().toUpperCase(),
@@ -7745,16 +7750,41 @@ function clearOnlineSession() {
   onlineDesiredSession = null;
   onlineOpenCallbacks = [];
   onlineReconnectAttempt = 0;
+  clearGuestRoomJoinRetry();
   if (onlineReconnectTimer) clearTimeout(onlineReconnectTimer);
   onlineReconnectTimer = null;
   stopOnlineHeartbeat();
   try { sessionStorage.removeItem(ONLINE_SESSION_KEY); } catch {}
+  try { localStorage.removeItem(ONLINE_SESSION_KEY); } catch {}
+}
+
+function knownOnlineSessionFor(roomCode, userId = onlineUserId()) {
+  const normalizedCode = normalizeRoomCodeClient(roomCode);
+  const candidates = [onlineDesiredSession, readOnlineSession()];
+  const matching = candidates.filter((session) =>
+    session?.roomCode === normalizedCode
+    && session.userId === userId
+    && ["host", "guest"].includes(session.role));
+  return matching.find((session) => session.role === "host") || matching[0] || null;
+}
+
+function leaveCurrentRoomBeforeCreate() {
+  const roomCode = normalizeRoomCodeClient(onlineDesiredSession?.roomCode || app.match.roomCode);
+  if (!roomCode || onlineSocket?.readyState !== WebSocket.OPEN) return false;
+  const role = onlineDesiredSession?.role || app.match.role;
+  return sendOnline({
+    type: role === "host" ? "discardRoom" : "leaveRoom",
+    roomCode,
+    userId: onlineDesiredSession?.userId || app.match.userId || onlineUserId(),
+  }, { scheduleReconnect: false });
 }
 
 function createRoomMatch() {
   if (!prepareSelectedDeckForMatch()) return;
-  const typedCode = normalizeRoomCodeClient(app.match.roomCode);
-  const roomCode = typedCode || makeRoomCode();
+  leaveCurrentRoomBeforeCreate();
+  try { sessionStorage.removeItem(ONLINE_SESSION_KEY); } catch {}
+  try { localStorage.removeItem(ONLINE_SESSION_KEY); } catch {}
+  const roomCode = makeRoomCode();
   const hostDeck = normalizeDeckData(currentDeckPayload());
   const selectedDeckId = app.match.selectedDeckId || null;
   app.match = {
@@ -7792,30 +7822,37 @@ function joinRoomMatch() {
     return;
   }
   if (!prepareSelectedDeckForMatch()) return;
+  const userId = onlineUserId();
+  const knownSession = knownOnlineSessionFor(requestedCode, userId);
+  const role = knownSession?.role || "guest";
   const guestDeck = normalizeDeckData(currentDeckPayload());
   const selectedDeckId = app.match.selectedDeckId || null;
   app.match = {
     status: "connecting",
     mode: "??????????",
     roomCode: requestedCode,
-    role: "guest",
+    role,
     connection: "connecting",
     message: "??????????????????",
     players: [],
     selectedDeckId,
-    guestDeck,
+    ...(role === "host" ? { hostDeck: normalizeDeckData(knownSession?.deck) || guestDeck } : { guestDeck }),
   };
   app.screen = "matchLobby";
-  const session = configureOnlineSession({ roomCode: requestedCode, role: "guest", playerName: app.auth.name, deck: guestDeck || app.deck, intent: "join" });
-  connectOnline(() =>
-    sendOnline({
-      type: "join",
-      roomCode: requestedCode,
-      playerName: app.auth.name,
-      deck: guestDeck || app.deck,
-      userId: session.userId,
-    }),
-  );
+  configureOnlineSession({
+    roomCode: requestedCode,
+    role,
+    playerName: app.auth.name,
+    deck: normalizeDeckData(knownSession?.deck) || guestDeck || app.deck,
+    intent: knownSession ? "rejoin" : "join",
+    acknowledged: Boolean(knownSession),
+    userId,
+  });
+  connectOnline(() => sendDesiredSessionHandshake());
+}
+
+function regenerateRoomMatch() {
+  return createRoomMatch();
 }
 
 function makeRoomCode() {
@@ -7874,6 +7911,11 @@ function stopOnlineHeartbeat() {
   onlineHeartbeatTimer = null;
 }
 
+function clearGuestRoomJoinRetry() {
+  if (onlineGuestJoinRetryTimer) clearTimeout(onlineGuestJoinRetryTimer);
+  onlineGuestJoinRetryTimer = null;
+}
+
 function startOnlineHeartbeat() {
   stopOnlineHeartbeat();
   onlineLastMessageAt = Date.now();
@@ -7891,7 +7933,11 @@ function startOnlineHeartbeat() {
 function sendDesiredSessionHandshake() {
   const session = onlineDesiredSession;
   if (!session?.roomCode || !session.userId) return false;
-  const type = session.acknowledged ? "rejoin" : session.intent;
+  // A known host uses create as an idempotent rejoin. If the in-memory room was
+  // lost during a server restart, the same handshake recreates it as host.
+  const type = session.acknowledged
+    ? (session.role === "host" ? "create" : "join")
+    : session.intent;
   return sendOnline({
     type,
     roomCode: session.roomCode,
@@ -7899,6 +7945,23 @@ function sendDesiredSessionHandshake() {
     playerName: session.playerName,
     deck: session.deck,
   }, { scheduleReconnect: false });
+}
+
+function scheduleGuestRoomJoinRetry() {
+  if (onlineGuestJoinRetryTimer || onlineDesiredSession?.role !== "guest" || !onlineDesiredSession.roomCode) return false;
+  const delays = [500, 1_000, 1_500, 2_500, 4_000, 6_000, 8_000];
+  const delay = delays[Math.min(onlineGuestJoinRetries, delays.length - 1)];
+  onlineGuestJoinRetries += 1;
+  app.match.connection = "reconnecting";
+  app.match.message = "ホストがルームを復旧するまで待機しています。";
+  const expectedRoomCode = onlineDesiredSession.roomCode;
+  onlineGuestJoinRetryTimer = setTimeout(() => {
+    onlineGuestJoinRetryTimer = null;
+    if (onlineDesiredSession?.role !== "guest" || onlineDesiredSession.roomCode !== expectedRoomCode) return;
+    if (onlineSocket?.readyState === WebSocket.OPEN) sendDesiredSessionHandshake();
+    else scheduleOnlineReconnect();
+  }, delay);
+  return true;
 }
 
 function scheduleOnlineReconnect() {
@@ -8024,7 +8087,7 @@ window.addEventListener("offline", () => {
 
 function handleOnlineMessage(message) {
   if (message.type === "room") {
-    onlineRoomRecreateAttempted = false;
+    clearGuestRoomJoinRetry();
     onlineGuestJoinRetries = 0;
     app.match.status = "online";
     app.match.mode = message.role === "host" ? "????????" : "????????";
@@ -8075,6 +8138,25 @@ function handleOnlineMessage(message) {
     }
     return;
   }
+  if (message.type === "roomDiscarded") {
+    if (normalizeRoomCodeClient(message.roomCode) !== normalizeRoomCodeClient(onlineDesiredSession?.roomCode || app.match.roomCode)) return;
+    clearOnlineSession();
+    onlineManualClose = true;
+    onlineSocket?.close();
+    app.match = {
+      ...app.match,
+      status: "offline",
+      mode: "未開始",
+      roomCode: "",
+      role: "guest",
+      connection: "disconnected",
+      players: [],
+      message: message.message || "ホストがルームを廃棄しました。",
+    };
+    app.screen = "matchLobby";
+    return;
+  }
+  if (message.type === "leftRoom") return;
   if (message.type === "pong") {
     app.match.connection = "connected";
     return;
@@ -8135,33 +8217,11 @@ function handleOnlineMessage(message) {
     app.match.message = message.message || "エラーが発生しました。";
     const roomNotFound = /ルームが見つかりません/.test(message.message || "");
     if (roomNotFound && onlineDesiredSession?.roomCode) {
-      if (onlineDesiredSession.role === "host" && !onlineRoomRecreateAttempted) {
-        // サーバー再起動などでルームが消えた場合、元ホストは同じルームコードで
-        // ルームを再作成し、ホスト権限を取り戻す。
-        onlineRoomRecreateAttempted = true;
-        app.match.message = "ルームが見つからないため、同じコードで再作成しています。";
-        sendOnline({
-          type: "create",
-          roomCode: onlineDesiredSession.roomCode,
-          userId: onlineDesiredSession.userId,
-          playerName: onlineDesiredSession.playerName,
-          deck: onlineDesiredSession.deck,
-        }, { scheduleReconnect: false });
-      } else if (onlineDesiredSession.role === "guest" && onlineGuestJoinRetries < 5) {
-        // ホストが同じコードでルームを再作成している可能性があるため、少し待って再試行する。
-        onlineGuestJoinRetries += 1;
-        app.match.message = "ホストの再接続を待っています…";
-        setTimeout(() => {
-          if (onlineDesiredSession?.roomCode === message.roomCode || !message.roomCode) {
-            sendOnline({
-              type: "join",
-              roomCode: onlineDesiredSession.roomCode,
-              userId: onlineDesiredSession.userId,
-              playerName: onlineDesiredSession.playerName,
-              deck: onlineDesiredSession.deck,
-            }, { scheduleReconnect: false });
-          }
-        }, 1500);
+      if (onlineDesiredSession.role === "host") {
+        app.match.message = "ルームをホストとして復旧しています。";
+        sendDesiredSessionHandshake();
+      } else {
+        scheduleGuestRoomJoinRetry();
       }
     }
   }
@@ -16476,6 +16536,7 @@ function drawMatchLobbyScreen() {
     setTimeout(() => roomCodeInput.focus(), 0);
   });
   drawButton(634, 454, 100, 32, "コードコピー", copyRoomCode, null, { micro: true });
+  drawButton(746, 454, 100, 32, "再生成", regenerateRoomMatch, null, { micro: true });
   ctx.fillText(`接続: ${app.match.connection || "offline"}`, 362, 496);
   const participantNames = (app.match.players || [])
     .map((player) => `${player.name}${player.connected === false ? "（再接続待ち）" : ""}`)
@@ -21583,6 +21644,7 @@ const testing = {
   startOnlineMatch,
   copyRoomCode,
   createRoomMatch,
+  regenerateRoomMatch,
   joinRoomMatch,
   broadcastOnlineState,
   syncOnlineAction,
