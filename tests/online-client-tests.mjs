@@ -60,7 +60,12 @@ async function waitForPage(page, predicate, label, arg) {
     if (value) return value;
     await wait(100);
   }
-  throw new Error(`missing page state: ${label}`);
+  const diagnostic = await page.evaluate(() => ({
+    screen: window.__twcg?.app?.screen,
+    match: window.__twcg?.app?.match,
+    savedSession: localStorage.getItem("twcg.onlineSession.v1"),
+  }));
+  throw new Error(`missing page state: ${label} ${JSON.stringify(diagnostic)}`);
 }
 
 try {
@@ -352,6 +357,14 @@ try {
     () => window.__twcg.app.match.status === "online" && window.__twcg.app.match.role === "guest",
     "guest joins regenerated room",
   );
+  await host.evaluate(() => window.__twcg.testing.startOnlineMatch());
+  await waitForPage(host, () => window.__twcg.app.screen === "game", "regenerated room host game");
+  await waitForPage(guestReentry, () => window.__twcg.app.screen === "game", "regenerated room guest game");
+  await host.evaluate(() => {
+    window.__twcg.state.turn = 11;
+    window.__twcg.testing.broadcastOnlineState("regenerated-room-state", "p1");
+  });
+  await waitForPage(guestReentry, () => window.__twcg.state.turn === 11, "regenerated room state sync");
 
   await stopServer(server);
   await wait(300);
@@ -361,7 +374,9 @@ try {
     host,
     () => window.__twcg.app.match.status === "online"
       && window.__twcg.app.match.connection === "connected"
-      && window.__twcg.app.match.role === "host",
+      && window.__twcg.app.match.role === "host"
+      && window.__twcg.app.screen === "game"
+      && window.__twcg.state.turn === 11,
     "host recreates room after server restart",
   );
   await waitForPage(
@@ -369,7 +384,9 @@ try {
     () => window.__twcg.app.match.status === "online"
       && window.__twcg.app.match.connection === "connected"
       && window.__twcg.app.match.role === "guest"
-      && window.__twcg.app.match.players.length === 2,
+      && window.__twcg.app.match.players.length === 2
+      && window.__twcg.app.screen === "game"
+      && window.__twcg.state.turn === 11,
     "guest rejoins after host recovery",
   );
 
@@ -380,12 +397,41 @@ try {
     host,
     () => window.__twcg.app.match.status === "online"
       && window.__twcg.app.match.connection === "connected"
-      && window.__twcg.app.match.role === "host",
+      && window.__twcg.app.match.role === "host"
+      && window.__twcg.app.screen === "game"
+      && window.__twcg.state.turn === 11,
     "host role after page reentry",
   );
 
+  await host.evaluate(() => window.__twcg.testing.signOut());
+  await waitForPage(host, () => window.__twcg.app.screen === "login", "host signed out");
+  await wait(250);
+  await host.evaluate(() => window.__twcg.testing.signInWithGoogleDemo());
+  await waitForPage(
+    host,
+    () => window.__twcg.app.match.status === "online"
+      && window.__twcg.app.match.connection === "connected"
+      && window.__twcg.app.match.role === "host"
+      && window.__twcg.app.screen === "game",
+    "host reentry after sign out",
+  );
+
+  await guestReentry.evaluate(() => window.__twcg.testing.signOut());
+  await waitForPage(guestReentry, () => window.__twcg.app.screen === "login", "guest signed out");
+  await wait(250);
+  await guestReentry.evaluate(() => window.__twcg.testing.signInAsGuest());
+  await waitForPage(
+    guestReentry,
+    () => window.__twcg.app.match.status === "online"
+      && window.__twcg.app.match.connection === "connected"
+      && window.__twcg.app.match.role === "guest"
+      && window.__twcg.app.screen === "game"
+      && window.__twcg.state.turn === 11,
+    "guest reentry after sign out",
+  );
+
   await browser.close();
-  console.log(JSON.stringify({ ok: true, cases: ["client-deck-sync", "client-create", "client-copy-room-code", "client-join", "client-start", "client-perspective", "client-player-names", "client-opponent-pre-confirm-hidden", "client-opponent-card-reveal", "client-turn-ownership", "client-state", "client-host-auto-reconnect", "client-offline-action-retry", "client-current-deck-lobby-start", "client-guest-deck-start", "client-same-user-reentry", "client-room-regenerate-discard", "client-server-restart-role-recovery", "client-host-page-reentry"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, cases: ["client-deck-sync", "client-create", "client-copy-room-code", "client-join", "client-start", "client-perspective", "client-player-names", "client-opponent-pre-confirm-hidden", "client-opponent-card-reveal", "client-turn-ownership", "client-state", "client-host-auto-reconnect", "client-offline-action-retry", "client-current-deck-lobby-start", "client-guest-deck-start", "client-same-user-reentry", "client-room-regenerate-discard", "client-server-restart-role-recovery", "client-host-page-reentry", "client-host-sign-out-reentry", "client-guest-sign-out-reentry"] }, null, 2));
 } finally {
   await stopServer(server);
 }

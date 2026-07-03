@@ -1180,7 +1180,12 @@ const abilityEffects = {
       playerId,
       unitRow: card.row,
       unitCol: card.col,
-      targetUnits: targets.map((u) => ({ row: u.row, col: u.col, name: u.name })),
+      targetUnits: targets.map((u) => ({
+        instanceId: u.instanceId,
+        row: u.row,
+        col: u.col,
+        name: u.name,
+      })),
       combinedActCost,
       total,
       cardName: card.name,
@@ -1901,6 +1906,7 @@ const abilityEffects = {
     transferUnitControl(game, target, playerId, { rested: false });
     target.rested = false;
     target.lockedRestTurns = 0;
+    delete target.skipNextOwnerUnrest;
     log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」の支配を得た`);
   },
   highSuccubusForcedAttack({ game, playerId, card, target }) {
@@ -1914,6 +1920,7 @@ const abilityEffects = {
     if (target.rested) {
       target.rested = false;
       target.lockedRestTurns = 0;
+      delete target.skipNextOwnerUnrest;
     }
     if (adjacentEnemies.length === 1) {
       const defender = adjacentEnemies[0];
@@ -3043,6 +3050,7 @@ const abilityEffects = {
   unrestSelf({ game, playerId, card }) {
     card.rested = false;
     card.lockedRestTurns = 0;
+    delete card.skipNextOwnerUnrest;
     log(game, `${game.players[playerId].name}: ${card.name} unrests`);
   },
   summonTagFromDumpAndRest({ game, playerId, card, ability }) {
@@ -7613,7 +7621,8 @@ function signInAsGuest() {
 }
 
 function signOut() {
-  clearOnlineSession();
+  if (app.match.status === "online" && app.screen === "game") persistOnlineSession(serializeGameState());
+  suspendOnlineSession();
   onlineManualClose = true;
   onlineSocket?.close();
   app.auth = { provider: null, signedIn: false, name: "未ログイン", email: null };
@@ -7692,24 +7701,36 @@ function readOnlineSession() {
   }
 }
 
-function persistOnlineSession() {
+function persistOnlineSession(snapshot = null) {
   if (!app.match.roomCode || !app.match.userId || !["host", "guest"].includes(app.match.role)) return;
   try {
-    const serialized = JSON.stringify({
+    const previous = readOnlineSession();
+    const recoveryState = snapshot
+      || (app.screen === "game" ? serializeGameState() : null)
+      || previous?.state
+      || null;
+    const session = {
       roomCode: app.match.roomCode,
       userId: app.match.userId,
       role: app.match.role,
       playerName: app.auth?.name || app.match.players?.find((player) => player.role === app.match.role)?.name || "Player",
       deck: normalizeDeckData(app.match.role === "host" ? app.match.hostDeck : app.match.guestDeck) || normalizeDeckData(currentDeckPayload()),
-    });
+      stateVersion: Number(app.match.lastStateVersion) || Number(previous?.stateVersion) || 0,
+      ...(recoveryState ? { state: recoveryState } : {}),
+    };
+    const serialized = JSON.stringify(session);
     localStorage.setItem(ONLINE_SESSION_KEY, serialized);
     sessionStorage.setItem(ONLINE_SESSION_KEY, serialized);
+    if (onlineDesiredSession?.roomCode === session.roomCode && onlineDesiredSession.userId === session.userId) {
+      onlineDesiredSession.recoveryState = recoveryState;
+      onlineDesiredSession.stateVersion = session.stateVersion;
+    }
   } catch {
     // Session persistence is best-effort; the live socket can still reconnect.
   }
 }
 
-function configureOnlineSession({ roomCode, role, playerName, deck, intent = "rejoin", acknowledged = false, userId = onlineUserId() }) {
+function configureOnlineSession({ roomCode, role, playerName, deck, state: recoveryState = null, stateVersion = 0, intent = "rejoin", acknowledged = false, userId = onlineUserId() }) {
   clearGuestRoomJoinRetry();
   onlineGuestJoinRetries = 0;
   onlineDesiredSession = {
@@ -7720,6 +7741,8 @@ function configureOnlineSession({ roomCode, role, playerName, deck, intent = "re
     intent,
     acknowledged,
     userId,
+    recoveryState,
+    stateVersion: Number(stateVersion) || 0,
   };
   app.match.userId = userId;
   return onlineDesiredSession;
@@ -7746,7 +7769,7 @@ function resumeOnlineSessionIfAvailable() {
   return true;
 }
 
-function clearOnlineSession() {
+function suspendOnlineSession() {
   onlineDesiredSession = null;
   onlineOpenCallbacks = [];
   onlineReconnectAttempt = 0;
@@ -7754,6 +7777,10 @@ function clearOnlineSession() {
   if (onlineReconnectTimer) clearTimeout(onlineReconnectTimer);
   onlineReconnectTimer = null;
   stopOnlineHeartbeat();
+}
+
+function clearOnlineSession() {
+  suspendOnlineSession();
   try { sessionStorage.removeItem(ONLINE_SESSION_KEY); } catch {}
   try { localStorage.removeItem(ONLINE_SESSION_KEY); } catch {}
 }
@@ -7844,6 +7871,8 @@ function joinRoomMatch() {
     role,
     playerName: app.auth.name,
     deck: normalizeDeckData(knownSession?.deck) || guestDeck || app.deck,
+    state: knownSession?.state || null,
+    stateVersion: knownSession?.stateVersion || 0,
     intent: knownSession ? "rejoin" : "join",
     acknowledged: Boolean(knownSession),
     userId,
@@ -8111,7 +8140,6 @@ function handleOnlineMessage(message) {
         acknowledged: true,
       });
     }
-    persistOnlineSession();
     const queuedWasAcknowledged = Boolean(
       queuedOnlineAction?.opId && (message.ackedOpIds || []).includes(queuedOnlineAction.opId),
     );
@@ -8122,7 +8150,9 @@ function handleOnlineMessage(message) {
     if (message.state) {
       if (message.players) app.match.players = message.players;
       syncMatchDecksFromPlayers(app.match.players);
-      if (shouldApplyOnlineState(message.version, Boolean(message.rejoined))) {
+      // A restarted server can legitimately restart its state version at 1.
+      // A room rejoin is authoritative even when this tab remembers a higher old version.
+      if (message.rejoined || shouldApplyOnlineState(message.version)) {
         applyRemoteGameState(message.state);
         markOnlineStateApplied(message.version);
         applyOnlinePlayerNames();
@@ -8130,7 +8160,21 @@ function handleOnlineMessage(message) {
         app.match.mode = "???????";
       }
       render();
+    } else if (message.role === "host" && onlineDesiredSession?.recoveryState) {
+      const recoveryState = onlineDesiredSession.recoveryState;
+      applyRemoteGameState(recoveryState);
+      applyOnlinePlayerNames();
+      app.screen = "game";
+      app.match.mode = "オンライン対戦";
+      app.match.message = "保存済みの対戦状態を復元しました。";
+      sendOnline({
+        type: "start",
+        roomCode: app.match.roomCode,
+        reason: "hostRecovery",
+        state: recoveryState,
+      });
     }
+    persistOnlineSession(message.state || onlineDesiredSession?.recoveryState || null);
     if (queuedOnlineAction?.snapshot) {
       sendOnlineStateSnapshot(queuedOnlineAction.reason, queuedOnlineAction.opId, queuedOnlineAction.snapshot);
     } else if (message.rejoined && message.state) {
@@ -8187,6 +8231,7 @@ function handleOnlineMessage(message) {
     app.match.status = "online";
     app.match.mode = "???????";
     app.screen = "game";
+    persistOnlineSession(message.state);
     render();
     return;
   }
@@ -8210,6 +8255,7 @@ function handleOnlineMessage(message) {
     applyRemoteGameState(message.state);
     markOnlineStateApplied(message.version);
     applyOnlinePlayerNames();
+    persistOnlineSession(message.state);
     render();
     return;
   }
@@ -8331,6 +8377,7 @@ function startOnlineMatch() {
   app.match.mode = "???????";
   app.match.message = "???????????????";
   app.screen = "game";
+  persistOnlineSession(snapshot);
 }
 
 function stripImageUrls(obj) {
@@ -8383,7 +8430,9 @@ function broadcastOnlineState(reason = "action", senderPlayerId = state.activePl
   if (applyingRemoteState || app.screen !== "game" || app.match.status !== "online") return false;
   // Only the side that performed the action sends state, preventing stale overwrites.
   if (controlledPlayerId() !== senderPlayerId) return false;
-  return sendOnlineStateSnapshot(reason);
+  const snapshot = serializeGameState();
+  persistOnlineSession(snapshot);
+  return sendOnlineStateSnapshot(reason, null, snapshot);
 }
 
 function syncOnlineAction(reason, playerId = state.activePlayer) {
@@ -8393,6 +8442,7 @@ function syncOnlineAction(reason, playerId = state.activePlayer) {
   if (controlledPlayerId() !== playerId) { console.warn("[sync] blocked: controlled=", controlledPlayerId(), "playerId=", playerId, reason); return false; }
   const opId = `${app.match.role || "local"}-${Date.now().toString(36)}-${nextOnlineOpId++}`;
   const snapshot = serializeGameState();
+  persistOnlineSession(snapshot);
   queuedOnlineAction = { opId, reason, playerId, snapshot };
   app.match.pendingOpId = opId;
   const sent = sendOnlineStateSnapshot(reason, opId, snapshot);
@@ -12385,7 +12435,10 @@ function startTurn(game, playerId, options = {}) {
     ensureStructPhaseAbilities(struct);
   }
   for (const unit of unitsOwnedBy(playerId, game)) {
-    if ((unit.lockedRestTurns || 0) > 0) {
+    if (unit.skipNextOwnerUnrest) {
+      delete unit.skipNextOwnerUnrest;
+      if ((unit.lockedRestTurns || 0) > 0) unit.lockedRestTurns--;
+    } else if ((unit.lockedRestTurns || 0) > 0) {
       unit.lockedRestTurns--;
     } else {
       unit.rested = false;
@@ -14716,10 +14769,11 @@ function resolvePayEnemyAttackCostsAndRest(shouldPay) {
     if (total > 0) pay(player, pending.combinedActCost || {});
     const restedNames = [];
     for (const loc of pending.targetUnits || []) {
-      const unit = state.board[loc.row]?.[loc.col];
+      const unit = findUnitByInstanceId(state, loc.instanceId) || state.board[loc.row]?.[loc.col];
       if (unit && unit.owner !== pending.playerId) {
         unit.rested = true;
-        unit.lockedRestTurns = (unit.lockedRestTurns || 0) + 1;
+        unit.lockedRestTurns = Math.max(unit.lockedRestTurns || 0, 1);
+        unit.skipNextOwnerUnrest = true;
         restedNames.push(unit.name);
       }
     }
@@ -21420,6 +21474,8 @@ function gameSummary() {
               hp: unit.currentHp,
               maxHp: unit.maxHp,
               rested: unit.rested,
+              lockedRestTurns: unit.lockedRestTurns || 0,
+              skipNextOwnerUnrest: Boolean(unit.skipNextOwnerUnrest),
               keywords: keywordLabels(unit),
               image: cardImageSource(unit),
               attacksThisTurn: unit.attacksThisTurn || 0,

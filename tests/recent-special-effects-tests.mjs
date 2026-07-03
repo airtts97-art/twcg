@@ -89,6 +89,32 @@ const checks = await page.evaluate(() => {
   results.nextTurnNoUnrest = skippedNextUnrest && !noUnrestTarget.rested;
 
   reset();
+  api.testing.placeUnit("card_1782818887721", "p1", 2, 5, { rested: false });
+  const notionPrimary = api.testing.placeUnit("militia", "p2", 1, 5, { rested: false, hp: 20 });
+  const notionAdjacent = api.testing.placeUnit("armoredCar", "p2", 1, 4, { rested: false, hp: 20 });
+  api.testing.selectUnit(2, 5);
+  api.testing.attack({ kind: "unit", row: 1, col: 5 });
+  if (api.state.pendingChoice?.type === "chargeAttack") api.testing.resolveChargeAttack(false);
+  const notionChoice = api.state.pendingChoice;
+  // Exercise the same JSON round trip used by online state synchronization.
+  api.state.pendingChoice = JSON.parse(JSON.stringify(notionChoice));
+  api.testing.resolvePayEnemyAttackCostsAndRest(true);
+  const bothNotionTargetsLocked = notionPrimary.rested
+    && notionAdjacent.rested
+    && notionPrimary.skipNextOwnerUnrest
+    && notionAdjacent.skipNextOwnerUnrest;
+  api.testing.startTurn("p2", { skipDraw: true });
+  const bothRemainRested = notionPrimary.rested
+    && notionAdjacent.rested
+    && !notionPrimary.skipNextOwnerUnrest
+    && !notionAdjacent.skipNextOwnerUnrest;
+  api.testing.startTurn("p2", { skipDraw: true });
+  results.notionAdjacentRestPersistsThroughNextTurn = bothNotionTargetsLocked
+    && bothRemainRested
+    && !notionPrimary.rested
+    && !notionAdjacent.rested;
+
+  reset();
   const eater = api.testing.placeUnit("card_1782992896163", "p1", 2, 5, { rested: false });
   const counterHolder = api.testing.placeUnit("militia", "p2", 1, 5, { rested: false });
   counterHolder.charmCounters = 8;
