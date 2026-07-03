@@ -31,6 +31,18 @@ const checks = await page.evaluate(() => {
   }
 
   reset();
+  const restedChurch = structuredClone(api.testing.catalogCard("card_1782995682140"));
+  restedChurch.rested = true;
+  api.state.players.p1.structs = [restedChurch];
+  api.state.players.p1.resources.magic = 0;
+  for (let index = 0; index < 4; index += 1) {
+    api.testing.notifyHandOrDumpCardExiled("p1", "hand", { name: `除外テスト${index + 1}` });
+  }
+  results.churchPassiveWhileRested = restedChurch.rested
+    && api.state.players.p1.resources.magic === 3
+    && restedChurch.exileMagicGainedThisTurn === 3;
+
+  reset();
   const arc = api.testing.placeUnit("card_1782991288361", "p1", 2, 5, { rested: false });
   const arcTarget = api.testing.placeUnit("militia", "p2", 1, 5, { rested: false });
   api.testing.selectUnit(2, 5);

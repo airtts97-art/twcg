@@ -6512,13 +6512,16 @@ function fromDeckmakerCard(card) {
     keywords: parseDeckmakerKeywords(card),
     abilities: parseDeckmakerAbilities(card, localType),
   };
-  if (card.id === EVIL_CHURCH_ID && !base.abilities.some((ability) => ability.effect === "structPayProduce")) {
-    base.abilities.push({
-      trigger: "onStructurePhase",
-      effect: "structPayProduce",
-      cost: { people: 4 },
-      produces: { magic: 2 },
-    });
+  if (card.id === EVIL_CHURCH_ID) {
+    base.exileMagicPassive = true;
+    if (!base.abilities.some((ability) => ability.effect === "structPayProduce")) {
+      base.abilities.push({
+        trigger: "onStructurePhase",
+        effect: "structPayProduce",
+        cost: { people: 4 },
+        produces: { magic: 2 },
+      });
+    }
   }
   const deckLimit = Number(card.limit);
   const bundledDeckLimit = bundledDeckLimitFor(base.id);
@@ -8586,7 +8589,8 @@ function notifyHandOrDumpCardExiled(game, playerId, sourceZone, exiledCard) {
   const sources = [];
   if (player.core?.id === VELSBURG_CORE_ID) sources.push(player.core);
   for (const struct of player.structs || []) {
-    if (struct?.id === EVIL_CHURCH_ID) sources.push(struct);
+    // 除外時の魔獲得はパッシブ。起動効果でレスト中でも常に発動する。
+    if (struct?.id === EVIL_CHURCH_ID || struct?.exileMagicPassive) sources.push(struct);
   }
   let gained = 0;
   for (const source of sources) {
