@@ -2114,7 +2114,7 @@ const abilityEffects = {
   dimensionEscapeTactPlay({ game, playerId, card }) {
     if (!game.globalEffects) game.globalEffects = [];
     game.globalEffects.push({ type: "dimensionEscape", playerId });
-    log(game, `${game.players[playerId].name}: 「${card.name}」— 味方が攻撃対象になった時に発動`);
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 味方が攻撃対象になった時に任意発動可能`);
   },
   exileSelfOnDestroyCoreDamage({ game, playerId, card, ability }) {
     card.exileInsteadOfDump = true;
@@ -6128,7 +6128,6 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({
       trigger: "onSummon",
       effect: "placeCharmCounters",
-      target: "anyUnit",
       targetScope: "anyUnit",
       maxTargets: 1,
       charmAmount: 2,
@@ -6163,7 +6162,6 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({
       trigger: "onSummon",
       effect: "placeCharmCounters",
-      target: "anyUnit",
       targetScope: "anyUnit",
       maxTargets: 1,
       charmAmount: 1,
@@ -9191,7 +9189,7 @@ function notifyDivineTagPresence(game, _summoningPlayerId, reasonUnit = null) {
   processEffectQueue(game);
 }
 
-function tryDimensionEscapeIntercept(defender, attacker, game = state) {
+function tryDimensionEscapeIntercept(defender, attacker, game = state, attackOptions = {}) {
   if (!defender || !attacker || defender.owner === attacker.owner) return false;
   const ownerId = defender.owner;
   const player = game.players[ownerId];
@@ -9200,20 +9198,28 @@ function tryDimensionEscapeIntercept(defender, attacker, game = state) {
   const handCard = handIdx >= 0 ? player.hand[handIdx] : null;
   const canUseFromHand = handCard && canPayForCard(player, handCard.cost || {}, handCard);
   if (!hasEffect && !canUseFromHand) return false;
-  if (!hasEffect && !payForCard(player, handCard.cost || {}, handCard)) return false;
-  game.board[defender.row][defender.col] = null;
-  player.exileZone.push(stripRuntime(defender));
-  attacker.rested = true;
-  log(game, `${player.name}: 「ディメンションエスケープ」— 「${defender.name}」を除外、「${attacker.name}」をレスト`);
-  if (!hasEffect) {
-    const [used] = player.hand.splice(handIdx, 1);
-    player.dump.push(used);
-    notifyDumpChanged(game, ownerId);
-  } else {
-    game.globalEffects = (game.globalEffects || []).filter(
-      (effect) => !(effect.type === "dimensionEscape" && effect.playerId === ownerId),
-    );
-  }
+  const costLabel = hasEffect
+    ? "待機中の効果を使用"
+    : Object.entries(normalizeResourceObject(handCard.cost || {}))
+      .filter(([, amount]) => amount > 0)
+      .map(([resource, amount]) => `${RESOURCE_LABELS[resource] || resource}${amount}`)
+      .join("");
+  game.pendingChoice = {
+    type: "dimensionEscapeIntercept",
+    playerId: ownerId,
+    source: hasEffect ? "globalEffect" : "hand",
+    handIndex: hasEffect ? null : handIdx,
+    cardName: handCard?.name || "ディメンションエスケープ",
+    attackerInstanceId: attacker.instanceId,
+    defenderInstanceId: defender.instanceId,
+    attackerName: attacker.name,
+    defenderName: defender.name,
+    useCharge: Boolean(attackOptions.useCharge),
+    skipActCost: Boolean(attackOptions.skipActCost),
+    costLabel,
+  };
+  game.selected = { kind: "choice", choice: "dimensionEscapeIntercept" };
+  game.message = `「${defender.name}」への攻撃に「ディメンションエスケープ」を発動しますか？`;
   return true;
 }
 
@@ -11625,6 +11631,66 @@ function resolveNekoMasterIntercept(useCard) {
     syncOnlineAction("resolveChoice", pending.playerId);
     render();
     return true;
+  }
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveDimensionEscapeIntercept(activate) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "dimensionEscapeIntercept") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const attacker = findUnitByInstanceId(state, pending.attackerInstanceId);
+  const defender = findUnitByInstanceId(state, pending.defenderInstanceId);
+  if (!attacker || !defender || defender.owner !== pending.playerId) {
+    state.pendingChoice = null;
+    state.selected = null;
+    state.message = "攻撃対象が存在しないため、選択を終了しました。";
+    syncOnlineAction("resolveChoice", pending.playerId);
+    render();
+    return false;
+  }
+
+  let handIndex = pending.handIndex;
+  let handCard = handIndex != null ? player.hand[handIndex] : null;
+  if (pending.source === "hand" && handCard?.id !== "card_1782997215577") {
+    handIndex = player.hand.findIndex((card) => card.id === "card_1782997215577");
+    handCard = handIndex >= 0 ? player.hand[handIndex] : null;
+  }
+  if (activate && pending.source === "hand") {
+    if (!handCard || !payForCard(player, handCard.cost || {}, handCard)) {
+      state.message = "ディメンションエスケープの発動コストが不足しています。";
+      render();
+      return false;
+    }
+  }
+
+  state.pendingChoice = null;
+  state.selected = null;
+  if (activate) {
+    state.board[defender.row][defender.col] = null;
+    player.exileZone.push(stripRuntime(defender));
+    attacker.rested = true;
+    state.attackMode = false;
+    log(state, `${player.name}: 「ディメンションエスケープ」— 「${defender.name}」を除外、「${attacker.name}」をレスト`);
+    if (pending.source === "hand") {
+      const [used] = player.hand.splice(handIndex, 1);
+      player.dump.push(used);
+      notifyDumpChanged(state, pending.playerId);
+    } else {
+      state.globalEffects = (state.globalEffects || []).filter(
+        (effect) => !(effect.type === "dimensionEscape" && effect.playerId === pending.playerId),
+      );
+    }
+  } else {
+    state.selected = { kind: "unit", row: attacker.row, col: attacker.col };
+    executeUnitAttack(attacker, defender, { row: defender.row, col: defender.col }, {
+      useCharge: pending.useCharge,
+      skipActCost: pending.skipActCost,
+      skipDimensionEscape: true,
+    });
   }
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -14595,10 +14661,10 @@ function continueUnitAttackAfterOnAttack(unit, defender, { useCharge = false } =
   return true;
 }
 
-function executeUnitAttack(unit, defender, target, { useCharge = false, skipActCost = false } = {}) {
+function executeUnitAttack(unit, defender, target, { useCharge = false, skipActCost = false, skipDimensionEscape = false } = {}) {
   const player = state.players[unit.owner];
-  if (tryDimensionEscapeIntercept(defender, unit, state)) {
-    syncOnlineAction("attackUnit", unit.owner);
+  if (!skipDimensionEscape && tryDimensionEscapeIntercept(defender, unit, state, { useCharge, skipActCost })) {
+    syncOnlineAction("dimensionEscapeChoice", controlledPlayerId());
     render();
     return true;
   }
@@ -18117,6 +18183,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "removeFieldCounter") drawRemoveFieldCounterPanel(pending);
   else if (pending.type === "ashitaStackPick") drawAshitaStackPickPanel(pending);
   else if (pending.type === "nekoMasterIntercept") drawNekoMasterInterceptPanel(pending);
+  else if (pending.type === "dimensionEscapeIntercept") drawDimensionEscapeInterceptPanel(pending);
   else if (pending.type === "imposterTact") drawImposterTactPanel(pending);
   else if (pending.type === "otherworldKin") drawOtherworldKinPanel(pending);
   else if (pending.type === "uniqueRiteDump") drawUniqueRiteDumpPanel(pending);
@@ -18788,6 +18855,23 @@ function drawNekoMasterInterceptPanel(pending) {
   if (isController) {
     drawButton(x + 40, y + 88, 280, 38, "使用する", () => resolveNekoMasterIntercept(true), null, { accent: "p1" });
     drawButton(x + 400, y + 88, 280, 38, "使用しない", () => resolveNekoMasterIntercept(false), null, { accent: "dim" });
+  }
+}
+
+function drawDimensionEscapeInterceptPanel(pending) {
+  const isController = canControlChoicePlayer(pending.playerId);
+  const x = 340, y = 220, w = 760, h = 200;
+  drawChoicePanelBase(x, y, w, h, "rgba(70,40,130,0.88)", "#a060ff");
+  ctx.fillStyle = "#eadcff";
+  ctx.font = "700 19px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("ディメンションエスケープを発動しますか？", x + 28, y + 42);
+  ctx.fillStyle = "#cbb8ed";
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.defenderName}」を除外し、「${pending.attackerName}」をレスト`, x + 28, y + 76);
+  ctx.fillText(pending.costLabel || "", x + 28, y + 102);
+  if (isController) {
+    drawButton(x + 40, y + 136, 300, 40, "発動する", () => resolveDimensionEscapeIntercept(true), null, { accent: "p1" });
+    drawButton(x + 420, y + 136, 300, 40, "発動しない", () => resolveDimensionEscapeIntercept(false), null, { accent: "dim" });
   }
 }
 
@@ -21266,7 +21350,7 @@ function abilityText(card) {
         warMaidenCharmAttackBuff: "魅了対象への攻撃時ATK修正",
         warMaidenDamageAtkBuff: "被ダメージ分ATK修正",
         verzariaDivineOffer: "[神格]条件：魅了12除去か魔⑤除外",
-        dimensionEscapeTactPlay: "味方が攻撃対象時：除外＋攻撃者レスト",
+        dimensionEscapeTactPlay: "味方が攻撃対象時に任意発動：除外＋攻撃者レスト",
         exileSelfOnDestroyCoreDamage: "破壊時：除外＋コアダメージ",
         exileUnitSilently: "効果発動なしで除外",
         succubusHealFromPureHumanDamage: "[純人間]への与ダメージ分HP回復",
@@ -21663,6 +21747,7 @@ const testing = {
   resolveRemoveFieldCounter,
   resolveAshitaStackPick,
   resolveNekoMasterIntercept,
+  resolveDimensionEscapeIntercept,
   resolveCharmDestroyShield,
   resolveVerzariaDivineMode,
   resolveVerzariaDivineExileTarget,

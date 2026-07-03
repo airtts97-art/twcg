@@ -53,6 +53,25 @@ const checks = await page.evaluate(() => {
   api.testing.resolveCharmCounterPlacementConfirm();
   results.arcSuccubusCharm = arcChoiceOpened && arcTarget.charmCounters === 2 && arc.rested;
 
+  const summonCharmSpecs = [
+    ["card_1782991288361", 2],
+    ["card_1782990420906", 1],
+    ["card_1782991941200", 2],
+    ["card_1782992896163", 2],
+  ];
+  let allSuccubusSummonChoicesOpened = true;
+  for (const [cardId, expectedCounters] of summonCharmSpecs) {
+    reset();
+    const summonSource = api.testing.placeUnit(cardId, "p1", 2, 5, { rested: false });
+    const summonTarget = api.testing.placeUnit("militia", "p2", 1, 5, { rested: false });
+    api.testing.triggerAbilities("p1", summonSource, "onSummon");
+    allSuccubusSummonChoicesOpened &&= api.state.pendingChoice?.type === "charmCounterPlacement";
+    api.testing.toggleCharmCounterPlacementTarget(1, 5);
+    api.testing.resolveCharmCounterPlacementConfirm();
+    allSuccubusSummonChoicesOpened &&= summonTarget.charmCounters === expectedCounters;
+  }
+  results.succubusSummonCharmUsesChoiceUI = allSuccubusSummonChoicesOpened;
+
   reset();
   const worm = api.testing.placeUnit("card_1783011918209", "p1", 2, 5, { rested: false });
   api.testing.setResources("p1", { ...fullResources, magic: 3 });
@@ -316,14 +335,41 @@ const checks = await page.evaluate(() => {
   api.testing.addHandCard("p1", "card_1782997215577");
   api.state.activePlayer = "p2";
   api.state.phase = "main";
+  const escapeMagicBefore = api.state.players.p1.resources.magic;
+  const escapeElectricBefore = api.state.players.p1.resources.electric;
   api.testing.selectUnit(1, 5);
   api.testing.attack({ kind: "unit", row: 2, col: 5 });
-  results.dimensionEscape = api.state.board[2][5] === null
+  const escapeChoiceOpened = api.state.pendingChoice?.type === "dimensionEscapeIntercept"
+    && api.state.board[2][5] === escapeDefender
+    && !escapeAttacker.rested;
+  api.testing.resolveDimensionEscapeIntercept(true);
+  results.dimensionEscape = escapeChoiceOpened
+    && api.state.board[2][5] === null
     && escapeAttacker.rested
     && api.state.players.p1.exileZone.some((card) => card.id === escapeDefender.id)
-    && api.state.players.p1.dump.some((card) => card.id === "card_1782997215577");
+    && api.state.players.p1.dump.some((card) => card.id === "card_1782997215577")
+    && api.state.players.p1.resources.magic === escapeMagicBefore - 1
+    && api.state.players.p1.resources.electric === escapeElectricBefore - 1;
   api.testing.startTurn("p2", { skipDraw: true });
   results.dimensionEscapeNormalUnrest = !escapeAttacker.rested && !escapeAttacker.lockedRestTurns;
+
+  reset();
+  const declineDefender = api.testing.placeUnit("militia", "p1", 2, 5, { rested: false, hp: 20 });
+  const declineAttacker = api.testing.placeUnit("militia", "p2", 1, 5, { rested: false, hp: 20 });
+  api.testing.addHandCard("p1", "card_1782997215577");
+  api.state.activePlayer = "p2";
+  api.state.phase = "main";
+  const declineHandBefore = api.state.players.p1.hand.length;
+  const declineDefenderHpBefore = declineDefender.currentHp;
+  api.testing.selectUnit(1, 5);
+  api.testing.attack({ kind: "unit", row: 2, col: 5 });
+  const declineChoiceOpened = api.state.pendingChoice?.type === "dimensionEscapeIntercept";
+  api.testing.resolveDimensionEscapeIntercept(false);
+  results.dimensionEscapeCanDecline = declineChoiceOpened
+    && api.state.board[2][5] === declineDefender
+    && declineDefender.currentHp < declineDefenderHpBefore
+    && api.state.players.p1.hand.length === declineHandBefore
+    && !api.state.players.p1.dump.some((card) => card.id === "card_1782997215577");
 
   reset();
   api.testing.addDumpCard("p1", "precisionStrike");
