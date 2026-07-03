@@ -1859,10 +1859,16 @@ const abilityEffects = {
       addCharmCounters(target, amount, game, `${game.players[playerId].name}: 「${card.name}」`);
       return;
     }
-    if ((ability.maxTargets || 1) > 1) {
-      beginCharmCounterPlacement(game, playerId, card, ability, source);
-      return "pending";
+    const pendingSpec = {
+      playerId,
+      targetScope: ability.targetScope || ability.target || "enemyUnit",
+    };
+    if (!allUnitsOnField(game).some(({ unit }) => isValidCharmPlacementTarget(unit, pendingSpec))) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 魅了カウンターを載せる対象がいない`);
+      return;
     }
+    beginCharmCounterPlacement(game, playerId, card, ability, source);
+    return "pending";
   },
   placeCharmOnDamageTarget({ game, playerId, card, ability, source, target }) {
     const victim = target || source?.attackTarget;
@@ -1909,11 +1915,8 @@ const abilityEffects = {
     }
     if (adjacentEnemies.length === 1) {
       const defender = adjacentEnemies[0];
-      const damage = calculateAttackDamage(target, defender);
-      dealDamageToUnit(game, defender, damage, { source: target }, { cleanup: true, killer: target });
-      target.rested = true;
       log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」が「${defender.name}」を攻撃`);
-      return;
+      return executeUnitAttack(target, defender, { row: defender.row, col: defender.col }, { skipActCost: true });
     }
     game.pendingChoice = {
       type: "highSuccubusForcedAttack",
@@ -1989,6 +1992,7 @@ const abilityEffects = {
     log(game, `${game.players[playerId].name}: 「${card.name}」— 次の相手ターン中、効果で指定されない`);
   },
   dailyToyRemoveCounter({ game, playerId, card, ability, source }) {
+    if (ability.requiresDamage && (source?.damage || 0) <= 0) return;
     const eligible = collectUnitsWithCounters(game);
     if (!eligible.length) return;
     game.pendingChoice = {
@@ -2076,7 +2080,9 @@ const abilityEffects = {
   },
   ashitaStackDiscardBounce({ game, playerId, card, target }) {
     if (!target || (card.tactStack || []).length < 2) return;
-    card.tactStack.splice(-2, 2);
+    const discarded = card.tactStack.splice(-2, 2);
+    game.players[playerId].dump.push(...discarded.map(cloneCard));
+    notifyDumpChanged(game, playerId);
     returnUnitToOwnerHand(game, target);
     log(game, `${game.players[playerId].name}: 「${card.name}」— 下タクト2枚捨て「${target.name}」を手札へ`);
   },
@@ -8318,6 +8324,7 @@ function createGame(
     pendingChoice: null,
     pendingAttackContinuation: null,
     pendingDamageBatch: null,
+    pendingEndTurn: null,
     pendingStructPhase: null,
     turnStartSequence: null,
     cardReveal: null,
@@ -8771,16 +8778,25 @@ function beginCharmCounterPlacement(game, playerId, card, ability, source) {
   game.message = `${card.name}: 魅了カウンターを載せるユニットを選んでください（最大${ability.maxTargets || 1}体）`;
 }
 
-function notifyDivineTagPresence(game, playerId, reasonUnit = null) {
-  const eater = unitsOwnedBy(playerId, game).find((unit) => unit.id === "card_1782992896163");
-  if (!eater) return;
-  const divinePresent = unitsOwnedBy(playerId, game).some(
-    (unit) => unit.instanceId !== eater.instanceId && matchesCond(unit, { tag: "神格" }, { selectorPlayerId: playerId }),
-  );
-  const divineSummoned = reasonUnit && matchesCond(reasonUnit, { tag: "神格" });
-  if (!divinePresent && !divineSummoned) return;
-  if (game.pendingChoice?.type === "verzariaDivine") return;
-  abilityEffects.verzariaDivineOffer({ game, playerId, card: eater, ability: {} });
+function notifyDivineTagPresence(game, _summoningPlayerId, reasonUnit = null) {
+  const divineSummoned = Boolean(reasonUnit && matchesCond(reasonUnit, { tag: "神格" }));
+  const allUnits = allUnitsOnField(game).map(({ unit }) => unit);
+  for (const eater of allUnits.filter((unit) => unit.id === "card_1782992896163")) {
+    const divineAlreadyPresent = allUnits.some(
+      (unit) => unit.instanceId !== eater.instanceId && matchesCond(unit, { tag: "神格" }),
+    );
+    const eaterJustSummoned = reasonUnit?.instanceId === eater.instanceId;
+    if (!(divineSummoned || (eaterJustSummoned && divineAlreadyPresent))) continue;
+    if (game.pendingChoice?.type === "verzariaDivine") continue;
+    if (game.effectQueue.some((item) => item.card?.instanceId === eater.instanceId && item.ability?.effect === "verzariaDivineOffer")) continue;
+    game.effectQueue.push({
+      playerId: eater.owner,
+      card: eater,
+      ability: { effect: "verzariaDivineOffer" },
+      source: { zone: "board", reasonUnit },
+    });
+  }
+  processEffectQueue(game);
 }
 
 function tryDimensionEscapeIntercept(defender, attacker, game = state) {
@@ -8811,6 +8827,10 @@ function tryDimensionEscapeIntercept(defender, attacker, game = state) {
 }
 
 function tryCharmShieldBeforeDestroy(game, unit, source = {}) {
+  if (unit?.skipCharmShieldOnce) {
+    delete unit.skipCharmShieldOnce;
+    return false;
+  }
   const needed = unit?.charmDestroyShield || 0;
   if (!needed || countCharmCountersOnField(game) < needed) return false;
   if (game.pendingChoice?.type === "charmDestroyShield") return true;
@@ -8820,6 +8840,7 @@ function tryCharmShieldBeforeDestroy(game, unit, source = {}) {
     unitInstanceId: unit.instanceId,
     needed,
     sourceCardName: source?.source?.name || source?.source?.id || "破壊効果",
+    destroySource: source,
     queueItem: null,
   };
   game.selected = { kind: "choice", choice: "charmDestroyShield" };
@@ -9917,6 +9938,7 @@ function processEffectQueue(game) {
     game._effectQueueDepth -= 1;
     if (game._effectQueueDepth === 0) {
       advanceTurnStartSequence(game);
+      resumePendingEndTurn(game);
     }
   }
 }
@@ -11150,8 +11172,7 @@ function playAshitaStackedTact(game, unit, tactIndex) {
   const player = game.players[unit.owner];
   for (const ability of tact.abilities || []) {
     if (ability.trigger === "onPlay") {
-      abilityEffects[ability.effect]?.({
-        game,
+      game.effectQueue.push({
         playerId: unit.owner,
         card: tact,
         ability,
@@ -11162,6 +11183,7 @@ function playAshitaStackedTact(game, unit, tactIndex) {
   player.dump.push(tact);
   notifyDumpChanged(game, unit.owner);
   log(game, `${player.name}: 「${unit.name}」の下敷き「${tact.name}」を使用`);
+  processEffectQueue(game);
 }
 
 function resolveAshitaStackPick(index) {
@@ -11227,6 +11249,12 @@ function resolveCharmDestroyShield(useShield) {
   if (useShield) {
     removeCharmCountersFromField(state, pending.needed);
     log(state, `${state.players[pending.playerId].name}: 魅了カウンター${pending.needed}個で破壊効果を無効化`);
+  } else {
+    const unit = findUnitByInstanceId(state, pending.unitInstanceId);
+    if (unit) {
+      unit.skipCharmShieldOnce = true;
+      destroyUnitByEffect(state, unit, pending.destroySource || {});
+    }
   }
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
@@ -11290,15 +11318,12 @@ function resolveHighSuccubusForcedAttackTarget(index) {
   const attacker = pending.attacker;
   const defender = pending.targets?.[index];
   if (!attacker || !defender) return false;
-  const damage = calculateAttackDamage(attacker, defender);
-  dealDamageToUnit(state, defender, damage, { source: attacker }, { cleanup: true, killer: attacker });
-  attacker.rested = true;
-  log(state, `${state.players[pending.playerId].name}: 「${pending.cardName}」— 「${attacker.name}」が「${defender.name}」を攻撃`);
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
   if (qi) completeAbilitySource(state, qi);
-  processEffectQueue(state);
+  log(state, `${state.players[pending.playerId].name}: 「${pending.cardName}」— 「${attacker.name}」が「${defender.name}」を攻撃`);
+  executeUnitAttack(attacker, defender, { row: defender.row, col: defender.col }, { skipActCost: true });
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
   return true;
@@ -12007,6 +12032,7 @@ function startTurn(game, playerId, options = {}) {
   for (const unit of unitsOwnedBy(playerId, game)) {
     if ((unit.lockedRestTurns || 0) > 0) {
       unit.lockedRestTurns--;
+      if (unit.lockedRestTurns === 0) unit.rested = false;
     } else {
       unit.rested = false;
     }
@@ -12564,12 +12590,54 @@ function processWarBondCountersAtTurnEnd(game, playerId) {
   }
 }
 
+function finishEndTurn(game, endingPlayer, shouldSyncOnline = false) {
+  processGoltenaBombardments(game, endingPlayer);
+  processWarBondCountersAtTurnEnd(game, endingPlayer);
+  clearTacticalStructRestLocks(game, endingPlayer);
+  for (const unit of unitsOwnedBy(endingPlayer, game)) {
+    if (unit.indestructibleUntilTurnEnd === endingPlayer) delete unit.indestructibleUntilTurnEnd;
+    if (unit.effectTargetImmuneForActivePlayer === endingPlayer) delete unit.effectTargetImmuneForActivePlayer;
+    if (unit.abilities) {
+      unit.abilities = unit.abilities.filter((ability) => ability.untilPlayerTurnEnd !== endingPlayer);
+    }
+  }
+  for (const effect of (game.globalEffects || []).filter(
+    (entry) => entry.type === "restoreKaijuLocks" && entry.untilPlayerTurnEnd === endingPlayer,
+  )) {
+    const unit = unitsOwnedBy(effect.playerId, game).find((candidate) => candidate.instanceId === effect.instanceId);
+    if (unit) {
+      ensureKeyword(unit, "immobile");
+      ensureKeyword(unit, "noAttack");
+      delete unit.noRetreatUntilOpponentTurnEnd;
+    }
+  }
+  game.globalEffects = (game.globalEffects || []).filter(
+    (effect) => effect.untilPlayerTurnEnd !== endingPlayer,
+  );
+  const next = opponentOf(endingPlayer);
+  if (endingPlayer === "p2") game.turn += 1;
+  log(game, `${game.players[endingPlayer].name}: ターン終了`);
+  game.pendingEndTurn = null;
+  startTurn(game, next);
+  if (shouldSyncOnline && game === state) syncOnlineAction("endTurn", endingPlayer);
+  if (game === state) render();
+}
+
+function resumePendingEndTurn(game = state) {
+  const pending = game.pendingEndTurn;
+  if (!pending) return false;
+  if (game.pendingChoice || game.pendingTarget || game.effectQueue.length) return false;
+  if (game.pendingAttackContinuation || game.pendingDamageBatch) return false;
+  finishEndTurn(game, pending.endingPlayer, pending.shouldSyncOnline);
+  return true;
+}
+
 function endTurn() {
   if (!requireActivePlayerControl()) return false;
   if (state.winner) return false;
   if (state.turnStartSequence) return fail("ターン開始処理を完了してください。");
   if (state.pendingStructPhase) return fail("ストラクトフェーズを終了してください。");
-  if (state.pendingChoice) return fail("選択を完了してください。");
+  if (state.pendingChoice || state.pendingTarget) return fail("選択を完了してください。");
   const endingPlayer = state.activePlayer;
   const shouldSyncOnline = app.screen === "game" && app.match.status === "online" && !applyingRemoteState;
   // 天撃効果: 指定ターン終了時に持ち主の手札へ返却
@@ -12603,39 +12671,17 @@ function endTurn() {
       log(state, `${state.players[endingPlayer].name}: 降臨ターン終了時回復 +${healAmt}（治療${healingCount}体）`);
     }
   }
-  // onTurnEnd: trigger for all owned units (destroySelfIfUnrested, etc.)
+  // onTurnEnd をすべてキューに積み、選択がある場合は現在ターンを維持する。
   for (const unit of unitsOwnedBy(endingPlayer)) {
-    if ((unit.abilities || []).some((a) => a.trigger === "onTurnEnd")) {
-      triggerAbilities(state, endingPlayer, unit, "onTurnEnd");
+    for (const ability of unit.abilities || []) {
+      if (ability.trigger === "onTurnEnd") {
+        state.effectQueue.push({ playerId: endingPlayer, card: unit, ability, source: { zone: "board" } });
+      }
     }
   }
-  processGoltenaBombardments(state, endingPlayer);
-  processWarBondCountersAtTurnEnd(state, endingPlayer);
-  clearTacticalStructRestLocks(state, endingPlayer);
-  for (const unit of unitsOwnedBy(endingPlayer)) {
-    if (unit.indestructibleUntilTurnEnd === endingPlayer) delete unit.indestructibleUntilTurnEnd;
-    if (unit.effectTargetImmuneForActivePlayer === endingPlayer) delete unit.effectTargetImmuneForActivePlayer;
-    // ターン終了時に期間切れの一時的ability（保険金など）を削除
-    if (unit.abilities) {
-      unit.abilities = unit.abilities.filter((a) => a.untilPlayerTurnEnd !== endingPlayer);
-    }
-  }
-  for (const effect of (state.globalEffects || []).filter((e) => e.type === "restoreKaijuLocks" && e.untilPlayerTurnEnd === endingPlayer)) {
-    const unit = unitsOwnedBy(effect.playerId).find((candidate) => candidate.instanceId === effect.instanceId);
-    if (unit) {
-      ensureKeyword(unit, "immobile");
-      ensureKeyword(unit, "noAttack");
-      delete unit.noRetreatUntilOpponentTurnEnd;
-    }
-  }
-  state.globalEffects = (state.globalEffects || []).filter(
-    (effect) => effect.untilPlayerTurnEnd !== endingPlayer
-  );
-  const next = opponentOf(endingPlayer);
-  if (endingPlayer === "p2") state.turn += 1;
-  log(state, `${state.players[endingPlayer].name}: ターン終了`);
-  startTurn(state, next);
-  if (shouldSyncOnline) syncOnlineAction("endTurn", endingPlayer);
+  state.pendingEndTurn = { endingPlayer, shouldSyncOnline };
+  processEffectQueue(state);
+  resumePendingEndTurn(state);
   render();
   return true;
 }
@@ -16160,7 +16206,9 @@ function drawHeader() {
   const canEndTurn = canControlActivePlayer()
     && !state.turnStartSequence
     && !state.pendingStructPhase
-    && !state.pendingChoice;
+    && !state.pendingChoice
+    && !state.pendingTarget
+    && !state.pendingEndTurn;
   const activePlayer = state.players[state.activePlayer];
   const isP1Active = state.activePlayer === "p1";
   const pillColor = isP1Active ? "rgba(16,56,180,0.80)" : "rgba(160,20,20,0.80)";
@@ -16187,6 +16235,11 @@ function drawHeader() {
 
 function drawBoardCard(cx, cy, cellW, cellH, unit) {
   const isSelected = selectedUnit() === unit;
+  const charmPending = state.pendingChoice?.type === "charmCounterPlacement" ? state.pendingChoice : null;
+  const isCharmTarget = Boolean(charmPending && isValidCharmPlacementTarget(unit, charmPending));
+  const isCharmSelected = Boolean(
+    isCharmTarget && (charmPending.selected || []).includes(charmPlacementUnitKey(unit)),
+  );
   const padX = 6, padY = 4;
   const statsH = 22;
   const avW = cellW - padX * 2;
@@ -16207,6 +16260,7 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
     ctx.rotate(Math.PI / 2);
     drawCard(-cardW / 2, -cardH / 2, cardW, cardH, unit, {
       selected: isSelected, noHover: true, artOnly: true,
+      targetable: isCharmTarget, targetSelected: isCharmSelected,
     });
     ctx.restore();
     if (isEnemy) {
@@ -16221,7 +16275,12 @@ function drawBoardCard(cx, cy, cellW, cellH, unit) {
   } else {
     const offX = centerX - cardW / 2;
     const offY = centerY - cardH / 2;
-    drawCard(offX, offY, cardW, cardH, unit, { selected: isSelected, artOnly: true });
+    drawCard(offX, offY, cardW, cardH, unit, {
+      selected: isSelected,
+      artOnly: true,
+      targetable: isCharmTarget,
+      targetSelected: isCharmSelected,
+    });
     if (isEnemy) {
       ctx.save();
       ctx.globalAlpha = 0.22;
@@ -20279,18 +20338,27 @@ function drawCard(x, y, w, h, card, options = {}) {
   if (card && !options.noHover) addCardHover(x, y, w, h, card);
   const theme = CARD_TYPE_THEME[card.type] || CARD_TYPE_THEME.struct;
   const isSelected = options.selected;
+  const isTargetable = options.targetable;
+  const isTargetSelected = options.targetSelected;
   const isSmall = options.small;
   const fs = isSmall ? 10 : 13;
 
   ctx.save();
-  if (isSelected || options.affordable) {
-    ctx.shadowColor = isSelected ? "#f0c040" : "#ffd84a";
-    ctx.shadowBlur = isSelected ? 20 : 14;
+  if (isSelected || options.affordable || isTargetable) {
+    ctx.shadowColor = isTargetable ? (isTargetSelected ? "#f4b0ff" : "#b060ff") : isSelected ? "#f0c040" : "#ffd84a";
+    ctx.shadowBlur = isTargetable ? (isTargetSelected ? 30 : 24) : isSelected ? 20 : 14;
   }
   const bgGrd = ctx.createLinearGradient(x, y, x, y + h);
   bgGrd.addColorStop(0, theme.grad[0]);
   bgGrd.addColorStop(1, theme.grad[1]);
-  roundRect(x, y, w, h, 6, bgGrd, isSelected ? "#f0c040" : options.affordable ? "#ffd84a" : theme.accent, isSelected || options.affordable ? 2.5 : 1.5);
+  const borderColor = isTargetable
+    ? (isTargetSelected ? "#ffd0ff" : "#c070ff")
+    : isSelected
+      ? "#f0c040"
+      : options.affordable
+        ? "#ffd84a"
+        : theme.accent;
+  roundRect(x, y, w, h, 6, bgGrd, borderColor, isSelected || options.affordable || isTargetable ? 2.5 : 1.5);
   ctx.shadowBlur = 0;
   ctx.restore();
 
@@ -21139,6 +21207,11 @@ const testing = {
   countCharmCountersOnField,
   notifyHandOrDumpCardExiled: (playerId, sourceZone, card) =>
     notifyHandOrDumpCardExiled(state, playerId, sourceZone, card),
+  notifyDivineTagPresence: (playerId, reasonUnit = null) =>
+    notifyDivineTagPresence(state, playerId, reasonUnit),
+  triggerAbilities: (playerId, card, trigger, source = {}) =>
+    triggerAbilities(state, playerId, card, trigger, source),
+  destroyUnitByEffect: (unit, source = {}) => destroyUnitByEffect(state, unit, source),
   startTurn: (playerId, options = {}) => startTurn(state, playerId, options),
   selectHandCard: selectHandCardForTest,
   selectStructDeckCard: selectStructDeckCardForTest,
