@@ -1968,7 +1968,7 @@ const abilityEffects = {
       if (!target || target.owner === playerId) continue;
       if (hasKeyword(target, "flying")) continue;
       target.rested = true;
-      target.lockedRestTurns = Math.max(target.lockedRestTurns || 0, 2);
+      target.lockedRestTurns = Math.max(target.lockedRestTurns || 0, 1);
       log(game, `「${target.name}」をレスト（次ターン終了まで解除不可）`);
     }
   },
@@ -8816,7 +8816,6 @@ function tryDimensionEscapeIntercept(defender, attacker, game = state) {
   game.board[defender.row][defender.col] = null;
   player.exileZone.push(stripRuntime(defender));
   attacker.rested = true;
-  attacker.lockedRestTurns = Math.max(attacker.lockedRestTurns || 0, 1);
   log(game, `${player.name}: 「ディメンションエスケープ」— 「${defender.name}」を除外、「${attacker.name}」をレスト`);
   if (!hasEffect) {
     const [used] = player.hand.splice(handIdx, 1);
@@ -12036,7 +12035,6 @@ function startTurn(game, playerId, options = {}) {
   for (const unit of unitsOwnedBy(playerId, game)) {
     if ((unit.lockedRestTurns || 0) > 0) {
       unit.lockedRestTurns--;
-      if (unit.lockedRestTurns === 0) unit.rested = false;
     } else {
       unit.rested = false;
     }

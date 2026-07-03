@@ -76,9 +76,17 @@ const checks = await page.evaluate(() => {
   api.testing.toggleMultiUnitTarget(1, 5);
   api.testing.resolveMultiUnitTargetConfirm();
   api.testing.startTurn("p2", { skipDraw: true });
-  const lockedForNextTurn = lockTarget.rested && lockTarget.lockedRestTurns === 1;
+  const lockedForNextTurn = lockTarget.rested && lockTarget.lockedRestTurns === 0;
   api.testing.startTurn("p2", { skipDraw: true });
   results.restLockExpires = lockedForNextTurn && !lockTarget.rested && lockTarget.lockedRestTurns === 0;
+
+  reset();
+  const noUnrestTarget = api.testing.placeUnit("militia", "p2", 1, 5, { rested: false });
+  api.abilityEffects.restTargetNoUnrest({ game: api.state, target: noUnrestTarget });
+  api.testing.startTurn("p2", { skipDraw: true });
+  const skippedNextUnrest = noUnrestTarget.rested && noUnrestTarget.lockedRestTurns === 0;
+  api.testing.startTurn("p2", { skipDraw: true });
+  results.nextTurnNoUnrest = skippedNextUnrest && !noUnrestTarget.rested;
 
   reset();
   const eater = api.testing.placeUnit("card_1782992896163", "p1", 2, 5, { rested: false });
@@ -258,6 +266,8 @@ const checks = await page.evaluate(() => {
     && escapeAttacker.rested
     && api.state.players.p1.exileZone.some((card) => card.id === escapeDefender.id)
     && api.state.players.p1.dump.some((card) => card.id === "card_1782997215577");
+  api.testing.startTurn("p2", { skipDraw: true });
+  results.dimensionEscapeNormalUnrest = !escapeAttacker.rested && !escapeAttacker.lockedRestTurns;
 
   reset();
   api.testing.addDumpCard("p1", "precisionStrike");
