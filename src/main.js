@@ -20425,7 +20425,13 @@ function canAffordStructActivation(struct, player) {
 
 function drawStructPhaseOverlay() {
   const pending = state.pendingStructPhase;
-  if (!pending) { structPhaseScroll = 0; enemyStructChoiceScroll = 0; return; }
+  if (!pending) {
+    structPhaseScroll = 0;
+    // このスクロール値は破壊工作等の pendingChoice「destroyEnemyStruct」でも共有しているため、
+    // そちらが表示中は毎フレームここでリセットしないようにする。
+    if (state.pendingChoice?.type !== "destroyEnemyStruct") enemyStructChoiceScroll = 0;
+    return;
+  }
   const player = state.players[pending.playerId];
   if (!pending.activatedTactIndexes) pending.activatedTactIndexes = [];
   const activatables = structPhaseActivatables(player);
