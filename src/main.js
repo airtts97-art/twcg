@@ -1198,7 +1198,7 @@ const abilityEffects = {
   },
   payEnemyAttackCostsAndRest({ game, playerId, card, ability, source }) {
     const primaryTarget = source?.attackTarget;
-    const targets = collectEnemyAttackCostRestTargets(game, playerId, primaryTarget);
+    const targets = collectEnemyAttackCostRestTargets(game, playerId, primaryTarget, card);
     if (!targets.length) return;
     const combinedActCost = sumUnitsActCosts(targets);
     const total = totalCostAmount(combinedActCost);
@@ -3992,6 +3992,9 @@ function applyCoreDefaults(core) {
   core.deckMax = Number(core.deckMax) || Number(fallback.deckMax) || 60;
   core.startResources = normalizeResourceObject(hasResourceValue(core.startResources) ? core.startResources : fallback.startResources || {});
   if (isNobelburg) core.startResources = normalizeResourceObject({ funds: 8 });
+  // Firebase still serves a stale 初期資源 snapshot (人1/金5) for this core; force the current
+  // intended distribution (人2/金4) instead of trusting whatever synced value is non-empty.
+  if (core.id === VELSBURG_CORE_ID) core.startResources = normalizeResourceObject({ people: 2, funds: 4 });
   if (hasExplicitNoIncome) {
     core.income = {};
   } else if (hasResourceValue(core.income)) {
@@ -15282,7 +15285,11 @@ function capUnitDamage(target, amount, game = state) {
     reduced = Math.max(0, reduced - airBuff.damageReduction);
   }
   reduced = applyBraveBloodDamageReduction(target, reduced, game);
-  return hasKeyword(target, "oneDamage") ? Math.min(reduced, 1) : reduced;
+  reduced = hasKeyword(target, "oneDamage") ? Math.min(reduced, 1) : reduced;
+  // Reported/consumed damage should never exceed the target's remaining HP, so
+  // onDamageDealt/onDamageReceived rewards (e.g. heal-on-damage) can't overcount overkill.
+  const remainingHp = target?.currentHp ?? target?.maxHp ?? target?.hp ?? 0;
+  return Math.min(reduced, Math.max(0, remainingHp));
 }
 
 function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
@@ -15618,13 +15625,15 @@ function adjacentCells(row, col) {
   ].filter(([r, c]) => r >= 0 && r < ROWS && c >= 0 && c < COLS);
 }
 
-function collectEnemyAttackCostRestTargets(game, playerId, primaryTarget) {
+function collectEnemyAttackCostRestTargets(game, playerId, primaryTarget, sourceCard = null) {
   if (!primaryTarget || primaryTarget.owner === playerId) return [];
   const opponentId = primaryTarget.owner;
   const seen = new Set();
   const targets = [];
   const add = (unit) => {
     if (!unit || unit.owner !== opponentId || seen.has(unit)) return;
+    // Resting a unit this way is a card effect, not combat damage, so effect protection applies.
+    if (sourceCard && !canAffectUnitByEffect(game, unit, sourceCard)) return;
     seen.add(unit);
     targets.push(unit);
   };
