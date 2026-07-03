@@ -12413,7 +12413,7 @@ function isAmbushHidden(unit, game = state) {
   return Boolean(
     unit
     && hasKeyword(unit, "ambush")
-    && !unit.ambushRevealed
+    // 一度解除されたら潜伏に戻らない仕様は一時的に無効化中（unit.ambushRevealed を見ない）。
     && hasAmbushSupportAdjacent(unit, game),
   );
 }
