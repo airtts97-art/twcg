@@ -1943,9 +1943,11 @@ const abilityEffects = {
     const gained = target.charmCounters;
     target.charmCounters = 0;
     game.board[target.row][target.col] = null;
-    game.players[target.owner].exileZone.push(stripRuntime(target));
+    const exiledTarget = stripRuntime(target);
+    game.players[target.owner].exileZone.push(exiledTarget);
     card.atk = (card.atk || 0) + gained;
     log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」を除外しATK+${gained}`);
+    triggerAbilities(game, target.owner, exiledTarget, "onExile");
   },
   charmControlSteal({ game, playerId, card, target }) {
     if (!target) return;
@@ -2385,8 +2387,10 @@ const abilityEffects = {
     const world = unitWorld(target);
     if (!world || world === "ニュートラル" || world === "ユニフォール") return;
     game.board[target.row][target.col] = null;
-    game.players[target.owner].exileZone.push(stripRuntime(target));
+    const exiledTarget = stripRuntime(target);
+    game.players[target.owner].exileZone.push(exiledTarget);
     log(game, `「${target.name}」を除外`);
+    triggerAbilities(game, target.owner, exiledTarget, "onExile");
   },
   exileAllNonNeutralNonUnifall({ game }) {
     const exiled = [];
@@ -2397,12 +2401,14 @@ const abilityEffects = {
         const world = unitWorld(unit);
         if (!world || world === "ニュートラル" || world === "ユニフォール") continue;
         game.board[row][col] = null;
-        game.players[unit.owner].exileZone.push(stripRuntime(unit));
-        exiled.push(unit.name);
+        const exiledUnit = stripRuntime(unit);
+        game.players[unit.owner].exileZone.push(exiledUnit);
+        exiled.push({ name: unit.name, ownerId: unit.owner, card: exiledUnit });
       }
     }
-    if (exiled.length > 0) log(game, `除外：${exiled.join("、")}`);
+    if (exiled.length > 0) log(game, `除外：${exiled.map((e) => e.name).join("、")}`);
     else log(game, "除外対象のユニットはいなかった");
+    for (const entry of exiled) triggerAbilities(game, entry.ownerId, entry.card, "onExile");
     cleanupAllDestroyed();
   },
   reviveFromExile({ game, playerId, card }) {
@@ -12624,10 +12630,12 @@ function resolveDimensionEscapeIntercept(activate) {
   state.selected = null;
   if (activate) {
     state.board[defender.row][defender.col] = null;
-    player.exileZone.push(stripRuntime(defender));
+    const exiledDefender = stripRuntime(defender);
+    player.exileZone.push(exiledDefender);
     attacker.rested = true;
     state.attackMode = false;
     log(state, `${player.name}: 「ディメンションエスケープ」— 「${defender.name}」を除外、「${attacker.name}」をレスト`);
+    triggerAbilities(state, defender.owner, exiledDefender, "onExile");
     if (pending.source === "hand") {
       const [used] = player.hand.splice(handIndex, 1);
       player.dump.push(used);
