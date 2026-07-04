@@ -17224,7 +17224,17 @@ function render() {
   drawZoneViewerOverlay();
   drawOnlinePendingOverlay();
   drawGameOverOverlay();
+  drawEscapeToLobbyButton();
   if (appHoveredCard) drawCardTooltip(appHoveredCard.card, appHoveredCard.mx, appHoveredCard.my);
+}
+
+// 選択待ち・対象選択待ちなどでゲームが固まった場合の脱出用。
+// どんなオーバーレイの全画面クリックブロックより後に登録することで、常に押せるようにする。
+function drawEscapeToLobbyButton() {
+  if (app.screen !== "game") return;
+  const w = 150, h = 34;
+  const x = W - w - 14, y = H - h - 14;
+  drawButton(x, y, w, h, "ロビーに戻る", leaveMatchToLobby, null, { accent: "dim" });
 }
 
 function drawGameOverOverlay() {
