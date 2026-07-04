@@ -1018,10 +1018,11 @@ const abilityEffects = {
     }
     log(game, "全ユニット・タクト・ストラクトを破壊");
   },
-  destroyAllUnits({ game, playerId, card }) {
+  destroyAllUnits({ game, playerId, card, ability }) {
     for (let row = 0; row < ROWS; row++) {
       for (let col = 0; col < COLS; col++) {
         const unit = game.board[row][col];
+        if (ability?.excludeSelf && unit === card) continue;
         if (unit && canAffectUnitByEffect(game, unit, card)) {
           const result = effectDestroyUnit(game, unit, { source: card });
           if (result === "pending") return "pending";
@@ -1029,7 +1030,7 @@ const abilityEffects = {
       }
     }
     cleanupAllDestroyed(null, game);
-    log(game, `${game.players[playerId].name}: 「${card.name}」— 全ユニットを破壊`);
+    log(game, `${game.players[playerId].name}: 「${card.name}」— ${ability?.excludeSelf ? "自身以外の" : ""}全ユニットを破壊`);
   },
   destroyAllEnemyUnits({ game, playerId, card }) {
     const opponent = opponentOf(playerId);
@@ -2441,6 +2442,18 @@ const abilityEffects = {
       }
     }
     log(game, `${game.players[playerId].name}: 味方ユニットATK +${ability.amount}`);
+  },
+  // 北東軍軍楽隊: レストする：1ターンの間自分ユニット全員がATK+③の修正を得る
+  buffFriendlyUnitsAtkUntilTurnEnd({ game, playerId, card, ability }) {
+    if (!game.globalEffects) game.globalEffects = [];
+    game.globalEffects.push({
+      type: "temporaryFriendlyAtkBuff",
+      playerId,
+      amount: ability.amount || 1,
+      untilPlayerTurnEnd: playerId,
+    });
+    refreshContinuousEffects(game);
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 1ターンの間、味方ユニット全員ATK+${ability.amount || 1}`);
   },
   descentEffect({ game, playerId }) {
     clearDescentGodEffects(game, playerId);
@@ -5775,7 +5788,8 @@ function parseDeckmakerAbilities(card, localType) {
           abilities.push({ trigger: "onActivate", effect: "searchUnitToCostHand", maxCost: parseDeckmakerKeywordValue(m2[1]) || 3, tag: m2[2] || null, amount: 1, activationCost });
         }
       } else if (/全(?:て)?のユニットを破壊/.test(effectText)) {
-        abilities.push({ trigger: "onActivate", effect: "destroyAllUnits", activationCost });
+        const excludeSelf = /この(?:ユニット|カード)以外の全/.test(effectText);
+        abilities.push({ trigger: "onActivate", effect: "destroyAllUnits", activationCost, excludeSelf });
       }
     }
   }
@@ -5838,7 +5852,7 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.length = 0;
     abilities.push({ trigger: "onAttack", effect: "summonGolemToSameRow", maxCost: 3 });
     abilities.push({ trigger: "onAttack", effect: "buffSelfAtkThisAttack", amount: 2 });
-    abilities.push({ trigger: "onActivate", effect: "destroyAllUnits", activationCost: { magic: 10 } });
+    abilities.push({ trigger: "onActivate", effect: "destroyAllUnits", activationCost: { magic: 10 }, excludeSelf: true });
   }
 
   // 農業協同組合: 建設時に農民・農場を合計3枚まで場に出す
@@ -5955,7 +5969,8 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({
       trigger: "onStructurePhase",
       effect: "chooseProduceResource",
-      multiActivate: true,  // 複数回激活を許可
+      multiActivate: true,  // 複数回激活を許可(合計5回まで)
+      maxPicks: 5,
       options: [
         { id: "people", label: "人③", cost: { funds: 3 }, produces: { people: 3 } },
         { id: "nature", label: "自③", cost: { funds: 3 }, produces: { nature: 3 } },
@@ -6361,8 +6376,10 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   if (card.id === "card_1782777924727") {
-    if (!abilities.some((a) => a.trigger === "onActivate" && a.effect === "buffFriendlyUnitsAtk")) {
-      abilities.push({ trigger: "onActivate", effect: "buffFriendlyUnitsAtk", amount: 3 });
+    const staleIdx = abilities.findIndex((a) => a.trigger === "onActivate" && a.effect === "buffFriendlyUnitsAtk");
+    if (staleIdx >= 0) abilities.splice(staleIdx, 1);
+    if (!abilities.some((a) => a.trigger === "onActivate" && a.effect === "buffFriendlyUnitsAtkUntilTurnEnd")) {
+      abilities.push({ trigger: "onActivate", effect: "buffFriendlyUnitsAtkUntilTurnEnd", amount: 3 });
     }
   }
 
@@ -6727,8 +6744,8 @@ function parseDeckmakerAbilities(card, localType) {
       trigger: "onStructurePhase",
       effect: "chooseProduceResource",
       options: [
-        { id: "nature", label: "自①", cost: { nature: 1 }, produces: { funds: 4 } },
-        { id: "ore", label: "鉱①", cost: { ore: 1 }, produces: { funds: 4 } },
+        { id: "nature", label: "自①", cost: { nature: 1 }, produces: { funds: 5 } },
+        { id: "ore", label: "鉱①", cost: { ore: 1 }, produces: { funds: 5 } },
       ],
     });
   } else if (card.id === "card_1753661462969") {
@@ -10200,6 +10217,10 @@ function refreshContinuousEffects(game = state) {
     for (const unit of unitsOwnedBy(pid, game)) {
       if (hasDescentGod) unit.descentReturnToHand = true;
       else delete unit.descentReturnToHand;
+    }
+    const marchBuff = (game.globalEffects || []).find((e) => e.type === "temporaryFriendlyAtkBuff" && e.playerId === pid);
+    for (const unit of unitsOwnedBy(pid, game)) {
+      applyConditionalBuff(unit, "temporaryFriendlyAtkBuff", Boolean(marchBuff), { atk: marchBuff?.amount || 0, hp: 0 });
     }
   }
 }
