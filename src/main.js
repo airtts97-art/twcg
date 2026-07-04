@@ -744,22 +744,35 @@ function matchesDeckSearchFilter(deckCard, filter) {
   return keywordLabels(deckCard).some((label) => label === filter.tag || label.includes(filter.tag));
 }
 
-function buildSearchDeckPickCandidates(player, filters) {
-  return player.mainDeck
-    .map((deckCard, deckIndex) => ({ card: deckCard, deckIndex }))
+function buildSearchDeckPickCandidates(player, filters, opts = {}) {
+  const deckEntries = player.mainDeck
+    .map((deckCard, deckIndex) => ({ card: deckCard, deckIndex, zone: "mainDeck" }))
     .filter(({ card }) => (filters || []).some((filter) => matchesDeckSearchFilter(card, filter)));
+  if (!opts.includeDump) return deckEntries;
+  const dumpEntries = player.dump
+    .map((dumpCard, dumpIndex) => ({ card: dumpCard, dumpIndex, zone: "dump" }))
+    .filter(({ card }) => (filters || []).some((filter) => matchesDeckSearchFilter(card, filter)));
+  return [...deckEntries, ...dumpEntries];
 }
 
-function pickCardFromPlayerDeck(player, entry) {
+function pickCardFromPlayerZone(player, entry) {
   if (!entry) return null;
   const card = entry.card || entry;
+  if (entry.zone === "dump") {
+    let dumpIdx = typeof entry.dumpIndex === "number" ? entry.dumpIndex : player.dump.indexOf(card);
+    if (!(dumpIdx >= 0 && dumpIdx < player.dump.length && player.dump[dumpIdx] === card)) {
+      dumpIdx = player.dump.findIndex((c) => c.id === card.id);
+    }
+    if (dumpIdx < 0) return null;
+    return { card: player.dump.splice(dumpIdx, 1)[0], zone: "dump" };
+  }
   let deckIdx = typeof entry.deckIndex === "number" ? entry.deckIndex : player.mainDeck.indexOf(card);
   if (deckIdx >= 0 && deckIdx < player.mainDeck.length && player.mainDeck[deckIdx] === card) {
-    return player.mainDeck.splice(deckIdx, 1)[0];
+    return { card: player.mainDeck.splice(deckIdx, 1)[0], zone: "mainDeck" };
   }
   deckIdx = player.mainDeck.findIndex((c) => c.id === card.id);
   if (deckIdx < 0) return null;
-  return player.mainDeck.splice(deckIdx, 1)[0];
+  return { card: player.mainDeck.splice(deckIdx, 1)[0], zone: "mainDeck" };
 }
 
 const abilityEffects = {
@@ -2491,14 +2504,15 @@ const abilityEffects = {
     }
     const player = game.players[playerId];
     const filters = ability.filters || [];
-    const candidates = buildSearchDeckPickCandidates(player, filters);
+    const includeDump = Boolean(ability.includeDump);
+    const candidates = buildSearchDeckPickCandidates(player, filters, { includeDump });
     if (!candidates.length) {
-      log(game, `${player.name}: 条件に合うカードがデッキにありません`);
+      log(game, `${player.name}: 条件に合うカードが${includeDump ? "デッキにも墓地にも" : "デッキに"}ありません`);
       return;
     }
     const pickCount = ability.pickCount || 1;
     const pickedSoFar = ability.pickedSoFar || 0;
-    const pickPromptBase = ability.pickPrompt || "デッキから1枚選んで手札に加えてください。";
+    const pickPromptBase = ability.pickPrompt || (includeDump ? "デッキ・墓地から1枚選んで手札に加えてください。" : "デッキから1枚選んで手札に加えてください。");
     const pickPrompt = pickCount > 1
       ? `${pickPromptBase}（${pickedSoFar + 1}/${pickCount}枚目）`
       : pickPromptBase;
@@ -3084,26 +3098,6 @@ const abilityEffects = {
     }
     cleanupAllDestroyed(card, game);
   },
-  // 研究所: レストする：デッキ・墓地から[研究]タグのカードを手札に加える（複数該当時は先頭を自動選択）
-  researchInstituteSearch({ game, playerId, card, ability }) {
-    const player = game.players[playerId];
-    const tag = ability.tag || "研究";
-    let idx = player.mainDeck.findIndex((c) => (c.tags || []).includes(tag));
-    let zone = "mainDeck";
-    if (idx < 0) {
-      idx = player.dump.findIndex((c) => (c.tags || []).includes(tag));
-      zone = "dump";
-    }
-    card.rested = true;
-    if (idx < 0) {
-      log(game, `${player.name}: 「${card.name}」— [${tag}]タグのカードがデッキにも墓地にもない`);
-      return;
-    }
-    const [found] = zone === "mainDeck" ? player.mainDeck.splice(idx, 1) : player.dump.splice(idx, 1);
-    player.hand.push(found);
-    if (zone === "dump") notifyDumpChanged(game, playerId);
-    log(game, `${player.name}: 「${card.name}」— ${zone === "mainDeck" ? "デッキ" : "墓地"}から「${found.name}」を手札に加えた`);
-  },
   // 研究所: 自分が「研究」を発動した時：金③を得る
   gainResourceOnNamedTactPlay({ game, playerId, card, ability, source }) {
     const tactCard = source?.tactCard;
@@ -3127,16 +3121,32 @@ const abilityEffects = {
     player.hand.push(found);
     log(game, `${player.name}: 「${card.name}」— デッキから「${found.name}」を手札に加えた`);
   },
-  // 博物館: 金①を支払い、レストする：墓地から5枚デッキに戻す。戻した[研究]タグのカードだけ金を得る
-  museumMillBackForFunds({ game, playerId, card, ability }) {
+  // 博物館: 金①を支払い、レストする：墓地から5枚選んでデッキに戻す。戻した[研究]タグのカードだけ金を得る
+  museumMillBackForFunds({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
     const cost = ability.cost || { funds: 1 };
     if (!pay(player, cost)) return;
     card.rested = true;
     const amount = Math.min(ability.amount || 5, player.dump.length);
-    const returned = player.dump.splice(0, amount);
-    player.mainDeck.push(...returned);
-    notifyDumpChanged(game, playerId);
+    if (amount <= 0) {
+      log(game, `${player.name}: 「${card.name}」— 墓地にカードがない`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "dumpCardsPick",
+      playerId,
+      cardName: card.name,
+      amount,
+      selected: [],
+      confirmEffect: "museumMillBackForFundsApply",
+      queueItem: { playerId, card, ability, source: source || { zone: "struct" } },
+    };
+    game.selected = { kind: "choice", choice: "dumpCardsPick" };
+    game.message = `「${card.name}」: 墓地から${amount}枚選んでデッキに戻してください`;
+    return "pending";
+  },
+  museumMillBackForFundsApply({ game, playerId, card, ability, returned }) {
+    const player = game.players[playerId];
     const tag = ability.tag || "研究";
     const matchCount = returned.filter((c) => (c.tags || []).includes(tag)).length;
     const gain = matchCount * (ability.perCardAmount || 1);
@@ -6094,10 +6104,18 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onSummon", effect: "huascarMultiDamageOnSummon" });
   }
 
-  // 研究所: レストで[研究]タグ検索、「研究」発動時に金③
-  if (card.id === "card_1783152716278" && !abilities.some((a) => a.effect === "researchInstituteSearch")) {
+  // 研究所: レストで[研究]タグをデッキ・墓地から選んで手札に、「研究」発動時に金③
+  if (card.id === "card_1783152716278" && !abilities.some((a) => a.effect === "searchDeckPick" && a.includeDump)) {
     abilities.length = 0;
-    abilities.push({ trigger: "onStructurePhase", effect: "researchInstituteSearch", tag: "研究" });
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "searchDeckPick",
+      filters: [{ tag: "研究" }],
+      includeDump: true,
+      restOnStart: true,
+      pickPrompt: "デッキ・墓地から[研究]タグのカードを1枚選んで手札に加えてください。",
+      filterHint: "[研究]タグ",
+    });
     abilities.push({
       trigger: "onFriendlyTactPlay",
       effect: "gainResourceOnNamedTactPlay",
@@ -10813,11 +10831,13 @@ function resolveSearchDeckPick(cardIndex) {
   const player = state.players[pending.playerId];
   const entry = pending.candidates[cardIndex];
   if (!entry) return false;
-  const picked = pickCardFromPlayerDeck(player, entry.card ? entry : { card: entry });
-  if (!picked) {
-    state.message = "そのカードはもうデッキにありません。";
+  const result = pickCardFromPlayerZone(player, entry.card ? entry : { card: entry });
+  if (!result) {
+    state.message = "そのカードはもう見つかりません。";
     return false;
   }
+  const picked = result.card;
+  if (result.zone === "dump") notifyDumpChanged(state, pending.playerId);
   player.hand.push(picked);
   const qi = pending.queueItem;
   const ability = qi?.ability || {};
@@ -10826,7 +10846,7 @@ function resolveSearchDeckPick(cardIndex) {
   log(state, `${player.name}: 「${picked.name}」を手札に加えた（${pickedSoFar}/${pickCount}）`);
   if (pickedSoFar < pickCount) {
     const filters = ability.filters || [];
-    const candidates = buildSearchDeckPickCandidates(player, filters);
+    const candidates = buildSearchDeckPickCandidates(player, filters, { includeDump: Boolean(ability.includeDump) });
     if (candidates.length) {
       const pickPromptBase = ability.pickPrompt || "デッキから1枚選んで手札に加えてください。";
       state.pendingChoice = {
@@ -10853,6 +10873,47 @@ function resolveSearchDeckPick(cardIndex) {
   resumePendingAfterChoice();
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function toggleDumpCardsPick(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "dumpCardsPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const selected = new Set(pending.selected || []);
+  if (selected.has(index)) selected.delete(index);
+  else if (selected.size < pending.amount) selected.add(index);
+  pending.selected = [...selected];
+  render();
+  return true;
+}
+
+function resolveDumpCardsPick() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "dumpCardsPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const selected = pending.selected || [];
+  if (selected.length < pending.amount) {
+    state.message = `あと${pending.amount - selected.length}枚選んでください。`;
+    render();
+    return false;
+  }
+  const indexes = [...selected].sort((a, b) => b - a);
+  const returned = indexes.map((idx) => player.dump.splice(idx, 1)[0]).filter(Boolean).reverse();
+  player.mainDeck.push(...returned);
+  notifyDumpChanged(state, pending.playerId);
+  const qi = pending.queueItem;
+  const effect = abilityEffects[pending.confirmEffect];
+  if (effect) {
+    effect({ game: state, playerId: pending.playerId, card: qi?.card, ability: qi?.ability || {}, returned });
+  }
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
   return true;
 }
 
@@ -14056,8 +14117,8 @@ function playTactFromHand(handIndex, soulPayAmount = undefined) {
     }
     if (ability.trigger === "onPlay" && ability.effect === "searchDeckPick") {
       const filters = ability.filters || [];
-      if (!buildSearchDeckPickCandidates(player, filters).length) {
-        return fail(`${card.name}: デッキに条件に合うカードがありません。`);
+      if (!buildSearchDeckPickCandidates(player, filters, { includeDump: Boolean(ability.includeDump) }).length) {
+        return fail(`${card.name}: 条件に合うカードがありません。`);
       }
     }
   }
@@ -18772,6 +18833,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "lifeCounterPayment") drawLifeCounterPaymentPanel(pending);
   else if (pending.type === "drawPlusPayResource") drawDrawPlusPayResourcePanel(pending);
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
+  else if (pending.type === "dumpCardsPick") drawDumpCardsPickPanel(pending);
   else if (pending.type === "deployNamedSelection") drawDeployNamedSelectionPanel(pending);
   else if (pending.type === "veresSonsChoice") drawVeresSonsChoicePanel(pending);
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
@@ -19794,7 +19856,8 @@ function drawSearchDeckPickPanel(pending) {
     ctx.fillStyle = "rgba(180,160,220,0.7)";
     ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
     const tagHint = requiresTactSummon(card) ? "降臨" : (card.tags?.slice(0, 2).join("/") || "");
-    ctx.fillText(card.type + (tagHint ? `  ${tagHint}` : ""), cx + 8, cy + 40, colW - 16);
+    const zoneHint = entry.zone === "dump" ? "［墓地］" : "";
+    ctx.fillText(card.type + (tagHint ? `  ${tagHint}` : "") + (zoneHint ? `  ${zoneHint}` : ""), cx + 8, cy + 40, colW - 16);
     ctx.fillText(formatCost(card.cost || {}), cx + 8, cy + 56, colW - 16);
     if (isController) {
       addHit(cx, cy, colW, colH, () => {
@@ -20750,6 +20813,37 @@ function drawSelectDestroyCardsPanel(pending) {
   }
 }
 
+function drawDumpCardsPickPanel(pending) {
+  const x = 330, y = 162, w = 780, h = 474;
+  drawChoicePanelBase(x, y, w, h, "rgba(120,80,180,0.75)", "#8040ff");
+  const player = state.players[pending.playerId];
+  const selected = new Set(pending.selected || []);
+  const candidates = player.dump;
+  ctx.fillStyle = "#d0b8ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 墓地からデッキに戻すカードを選択`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(210,190,255,0.82)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.amount}枚選択してください。現在: ${selected.size}/${pending.amount}`, x + 28, y + 64, w - 56);
+  const isController = canControlChoicePlayer(pending.playerId);
+  const cardW = 74;
+  const cardH = Math.round(cardW / CARD_ASPECT);
+  candidates.slice(0, 40).forEach((card, i) => {
+    const cx = x + 28 + (i % 8) * (cardW + 18);
+    const cy = y + 92 + Math.floor(i / 8) * (cardH + 30);
+    const active = selected.has(i);
+    drawSelectableChoiceCard(cx, cy, cardW, cardH, card, {
+      selected: active,
+      label: active ? "選択中" : (card.tags || []).slice(0, 2).join("/"),
+      onClick: isController ? () => toggleDumpCardsPick(i) : null,
+    });
+  });
+  if (isController) {
+    const canConfirm = selected.size >= pending.amount;
+    drawButton(x + w - 180, y + h - 56, 152, 36, "決定", canConfirm ? () => resolveDumpCardsPick() : null, null, canConfirm ? { accent: "p1" } : { accent: "dim" });
+  }
+}
+
 function drawVeresSonsChoicePanel(pending) {
   const options = [
     { id: "servants", label: "「ヴェレスの従者トークン」(1/2, [屍人])を2体出す" },
@@ -20863,7 +20957,7 @@ function canAffordSingleStructPhaseAbility(ab, player, game = state) {
     return getDestroyableEnemyStructEntries(game, opponent, { name: ab.cardName }).length > 0;
   }
   if (ab.effect === "searchDeckPick") {
-    return buildSearchDeckPickCandidates(player, ab.filters || []).length > 0;
+    return buildSearchDeckPickCandidates(player, ab.filters || [], { includeDump: Boolean(ab.includeDump) }).length > 0;
   }
   for (const [res, amt] of Object.entries(ab.cost || {})) {
     if ((player.resources[res] || 0) < amt) return false;
@@ -22046,7 +22140,6 @@ function abilityText(card) {
         quicheArmorGrantOnSummon: "出撃時：場のユニット1つに[装甲③]を与える",
         pachamamaSearchSelfOrFarmer: "出撃時：デッキから「パチャママ・ルクルナ」または「農民」を1体出す",
         huascarMultiDamageOnSummon: "出撃時：相手のユニット3つに5ダメージ",
-        researchInstituteSearch: "レストする：デッキ・墓地から[研究]タグのカードを手札に加える",
         gainResourceOnNamedTactPlay: `自分が「${ability.tactName}」を発動した時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         museumSearchMining: `金①：デッキから「${ability.cardName}」を手札に加える`,
         museumMillBackForFunds: `金①：墓地${ability.amount}枚をデッキに戻す（戻した[${ability.tag}]は${RESOURCE_LABELS[ability.resource] || ability.resource}化）`,
@@ -22397,6 +22490,8 @@ const testing = {
   resolveDeployNamedSelection,
   resolveVeresSonsChoice,
   resolveDestroyChoice,
+  toggleDumpCardsPick,
+  resolveDumpCardsPick,
   toggleKaijuAwakenChoice,
   resolveKaijuAwakenChoice,
   toggleMysticCaptureChoice,
