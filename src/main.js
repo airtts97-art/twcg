@@ -3064,19 +3064,26 @@ const abilityEffects = {
     ensureKeyword(target, "armor", Math.max(keywordValue(target, "armor"), 3));
     log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」に[装甲③]を付与`);
   },
-  // パチャママ・ルクルナ: 出撃時、デッキから「パチャママ・ルクルナ」または「農民」を1体出す
+  // パチャママ・ルクルナ: 出撃時、デッキから「パチャママ・ルクルナ」または「農民」を1体選んで出す
   pachamamaSearchSelfOrFarmer({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
-    const idx = player.mainDeck.findIndex((c) => c.name === "パチャママ・ルクルナ" || c.name === "農民");
-    if (idx < 0) {
+    const candidates = player.mainDeck
+      .map((c, deckIndex) => ({ card: c, deckIndex }))
+      .filter(({ card: c }) => c.name === "パチャママ・ルクルナ" || c.name === "農民");
+    if (!candidates.length) {
       log(game, `${player.name}: 「${card.name}」— デッキに対象カードがない`);
       return;
     }
-    const [unitCard] = player.mainDeck.splice(idx, 1);
-    log(game, `${player.name}: 「${card.name}」— デッキから「${unitCard.name}」を出す`);
-    continueUnitDeployQueue(playerId, [unitCard], { playerId, card, ability, source: source || { zone: "board" } }, {
-      suppressAbilityEffect: "pachamamaSearchSelfOrFarmer",
-    });
+    game.pendingChoice = {
+      type: "pachamamaSearchPick",
+      playerId,
+      cardName: card.name,
+      candidates,
+      selectedIndex: undefined,
+      queueItem: { playerId, card, ability, source: source || { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "pachamamaSearchPick" };
+    game.message = `${card.name}: デッキから出すユニットを選んでください`;
     return "pending";
   },
   // ワスカル・コリ: 出撃時、相手のユニット3つに5ダメージ
@@ -10904,6 +10911,42 @@ function resolveDumpCardsPick() {
   state.selected = null;
   completeAbilitySource(state, qi);
   processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function selectPachamamaSearchPick(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "pachamamaSearchPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  pending.selectedIndex = pending.selectedIndex === index ? undefined : index;
+  render();
+  return true;
+}
+
+function resolvePachamamaSearchPick(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "pachamamaSearchPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const entry = pending.candidates[index];
+  if (!entry) return false;
+  let deckIdx = player.mainDeck.indexOf(entry.card);
+  if (deckIdx < 0) deckIdx = entry.deckIndex;
+  if (deckIdx < 0 || player.mainDeck[deckIdx] !== entry.card) {
+    state.message = "そのカードはもうデッキにありません。";
+    render();
+    return false;
+  }
+  const [unitCard] = player.mainDeck.splice(deckIdx, 1);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  log(state, `${player.name}: 「${qi.card.name}」— デッキから「${unitCard.name}」を出す`);
+  continueUnitDeployQueue(pending.playerId, [unitCard], qi, {
+    suppressAbilityEffect: "pachamamaSearchSelfOrFarmer",
+  });
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
   return true;
@@ -18826,6 +18869,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "drawPlusPayResource") drawDrawPlusPayResourcePanel(pending);
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
   else if (pending.type === "dumpCardsPick") drawDumpCardsPickPanel(pending);
+  else if (pending.type === "pachamamaSearchPick") drawPachamamaSearchPickPanel(pending);
   else if (pending.type === "deployNamedSelection") drawDeployNamedSelectionPanel(pending);
   else if (pending.type === "veresSonsChoice") drawVeresSonsChoicePanel(pending);
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
@@ -20836,6 +20880,58 @@ function drawDumpCardsPickPanel(pending) {
   }
 }
 
+function drawPachamamaSearchPickPanel(pending) {
+  const entries = pending.candidates || [];
+  const colW = 200, colH = 80, cols = Math.min(entries.length, 3);
+  const rows = Math.ceil(entries.length / cols);
+  const panelW = Math.max(500, cols * (colW + 16) + 56);
+  const panelH = Math.max(390, rows * (colH + 16) + 160);
+  const x = Math.round((W - panelW) / 2);
+  const y = Math.round((H - panelH) / 2);
+  const sel = pending.selectedIndex;
+  drawChoicePanelBase(x, y, panelW, panelH, "rgba(120,80,180,0.7)", "#8040ff");
+  ctx.fillStyle = "#d0b8ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: デッキから出すユニットを選択`, x + 24, y + 36);
+  ctx.fillStyle = "rgba(180,160,220,0.75)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("「パチャママ・ルクルナ」または「農民」", x + 24, y + 56);
+  const isController = canControlChoicePlayer(pending.playerId);
+  entries.forEach((entry, i) => {
+    const card = entry.card;
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    const cx = x + 28 + col * (colW + 16);
+    const cy = y + 72 + row * (colH + 16);
+    const selected = sel === i;
+    const fill = selected ? "rgba(50,30,90,0.95)" : "rgba(30,20,50,0.8)";
+    const border = selected ? "rgba(255,216,74,0.95)" : "rgba(140,100,220,0.8)";
+    roundRect(cx, cy, colW, colH, 6, fill, border, selected ? 3 : 2);
+    ctx.fillStyle = "#e8d8ff";
+    ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.name, cx + 8, cy + 22, colW - 16);
+    ctx.fillStyle = "rgba(180,160,220,0.7)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(card.type + `  ${(card.tags || []).slice(0, 2).join("/")}`, cx + 8, cy + 40, colW - 16);
+    ctx.fillText(formatCost(card.cost || {}), cx + 8, cy + 56, colW - 16);
+    if (isController) {
+      addHit(cx, cy, colW, colH, () => selectPachamamaSearchPick(i));
+    }
+  });
+  if (isController && sel !== undefined) {
+    drawButton(
+      x + panelW / 2 - 100,
+      y + panelH - 56,
+      200,
+      38,
+      "このユニットを出す",
+      () => resolvePachamamaSearchPick(sel),
+      null,
+      { accent: "p1" },
+    );
+  }
+}
+
 function drawVeresSonsChoicePanel(pending) {
   const options = [
     { id: "servants", label: "「ヴェレスの従者トークン」(1/2, [屍人])を2体出す" },
@@ -22484,6 +22580,8 @@ const testing = {
   resolveDestroyChoice,
   toggleDumpCardsPick,
   resolveDumpCardsPick,
+  selectPachamamaSearchPick,
+  resolvePachamamaSearchPick,
   toggleKaijuAwakenChoice,
   resolveKaijuAwakenChoice,
   toggleMysticCaptureChoice,
