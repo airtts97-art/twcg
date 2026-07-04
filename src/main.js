@@ -3934,9 +3934,9 @@ const cardCatalog = {
       id: "powerPlant",
       type: "struct",
       name: "風力発電所",
-      tags: ["産業"],
-      cost: { funds: 3, ore: 1 },
-      text: "Structure Phase: 電気 +2",
+      tags: ["産業", "発電"],
+      cost: { funds: 1, ore: 1 },
+      text: "レストする：電②を得る。",
       abilities: [{ trigger: "onStructurePhase", effect: "produceResource", resource: "electric", amount: 2 }],
     },
     magicWell: {
@@ -3953,9 +3953,9 @@ const cardCatalog = {
       name: "後方要塞",
       faction: "ニュートラル",
       tags: ["要塞"],
-      cost: { ore: 2 },
+      cost: { funds: 2, ore: 2 },
       keywords: [{ id: "structTaunt", value: 1 }],
-      text: "[構造挑発①] 相手がストラクトを選ぶ時、[構造挑発]値が最も高いカードの中から選ぶ必要がある。",
+      text: "相手がストラクトを選ぶ時、このカードを選ばなければならない",
       abilities: [],
     },
   },
@@ -4796,6 +4796,10 @@ function parseDeckmakerKeywords(card) {
     /墓地除外で支払/.test(fullDesc)
   ) {
     if (!keywords.some((kw) => kw.id === "soulPay")) keywords.push({ id: "soulPay" });
+  }
+  // 後方要塞: 現行テキストに[構造挑発]の括弧表記がなく自動検出できないため強制付与
+  if (card.id === "rearFortress" && !keywords.some((kw) => kw.id === "structTaunt")) {
+    keywords.push({ id: "structTaunt", value: 1 });
   }
   return keywords;
 }
