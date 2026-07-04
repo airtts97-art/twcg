@@ -16827,7 +16827,7 @@ function drawHomeScreen() {
   ctx.fillText(`コア ${cardCatalog.cores[app.deck.core]?.name || app.deck.core} / メイン ${app.deck.main.length}枚 / 施設 ${app.deck.struct.length}枚`, 322, 284);
   drawButton(320, 344, 240, 52, "デッキビルダー", openDeckBuilder);
   drawButton(600, 344, 240, 52, "試合ロビー", openMatchLobby);
-  drawButton(880, 344, 240, 52, "ローカル対戦開始", startLocalMatch, null, { accent: "p1" });
+  drawButton(880, 344, 240, 52, "ローカル対戦開始", startLocalMatch);
   drawButton(320, 452, 240, 42, "ログアウト", signOut);
 }
 
@@ -17330,8 +17330,8 @@ function drawMatchLobbyScreen() {
     .map((player) => `${player.name}${player.connected === false ? "（再接続待ち）" : ""}`)
     .join(" / ");
   ctx.fillText(`参加者: ${participantNames || "なし"}`, 362, 516);
-  drawButton(362, 552, 210, 50, "ローカル対戦", startLocalMatch, null, { accent: "p1" });
-  drawButton(606, 552, 210, 50, "ルーム作成", createRoomMatch);
+  drawButton(362, 552, 210, 50, "ローカル対戦", startLocalMatch);
+  drawButton(606, 552, 210, 50, "ルーム作成", createRoomMatch, null, { accent: "p1" });
   drawButton(850, 552, 210, 50, "ルーム参加", joinRoomMatch);
   const waitingForOpponent = app.match.status === "online" && connectedOnlinePlayerCount() < 2;
   if (app.match.status === "online" || app.match.status === "connecting") {
