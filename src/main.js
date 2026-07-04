@@ -1161,7 +1161,7 @@ const abilityEffects = {
   // このカードが除外ゾーンへ行った時、任意で[奇襲]を与えて出撃可能なマスへ再展開する
   offerSelfRedeployFromExileWithRaid({ game, playerId, card }) {
     const validRows = summonPlacementRowsForPlayer(game, playerId, { allowRaid: true });
-    const hasOpenCell = validRows.some((row) => Array.from({ length: COLS }, (_, col) => col).some((col) => !game.board[row]?.[col]));
+    const hasOpenCell = validRows.some((row) => unitFieldColsForRow(row).some((col) => !game.board[row]?.[col]));
     if (!hasOpenCell) {
       log(game, `${game.players[playerId].name}: 「${card.name}」を出撃させるマスがないため除外されたまま`);
       return;
@@ -2983,37 +2983,33 @@ const abilityEffects = {
     log(game, `${game.players[playerId].name}: 「${card.name}」— 初めての与ダメージにより出撃時効果を再使用`);
     return abilityEffects.veresSonsOnSummon({ game, playerId, card, ability: {}, source });
   },
-  // ヴェレス: 出撃時、コスト総量2以下のユニットを最大4体墓地から出し、[屍人]と+2/+2を与える
+  // ヴェレス: 出撃時、コスト総量2以下のユニットを最大4体墓地から選んで出し、[屍人]と+2/+2を与える
   veresReviveFromDumpBuffed({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
     const maxCost = ability.maxCost ?? 2;
     const maxCount = ability.maxCount || 4;
-    const eligible = player.dump.filter((c) => isUnitCard(c) && totalCostAmount(c.cost || {}) <= maxCost);
-    if (!eligible.length) {
+    const candidates = player.dump
+      .map((c, dumpIndex) => ({ card: c, dumpIndex }))
+      .filter(({ card: c }) => isUnitCard(c) && totalCostAmount(c.cost || {}) <= maxCost);
+    if (!candidates.length) {
       log(game, `${player.name}: 「${card.name}」— 墓地に対象ユニットがいない`);
       return;
     }
-    const picked = eligible.slice(0, maxCount);
-    const unitQueue = picked.map((c) => {
-      const idx = player.dump.indexOf(c);
-      return player.dump.splice(idx, 1)[0];
-    });
-    notifyDumpChanged(game, playerId);
-    log(game, `${player.name}: 「${card.name}」— 墓地から${unitQueue.length}体を蘇生（[屍人]・+2/+2）`);
-    continueUnitDeployQueue(playerId, unitQueue, { playerId, card, ability, source: source || { zone: "board" } }, {
-      fromDump: true,
-      onEachPlaced: (unit) => {
-        applyGrantedTag(unit, "屍人");
-        unit.atk = (unit.atk || 0) + 2;
-        unit.maxHp = (unit.maxHp || unit.hp || 0) + 2;
-        unit.currentHp = (unit.currentHp || unit.hp || 0) + 2;
-      },
-    });
+    game.pendingChoice = {
+      type: "veresDumpPick",
+      playerId,
+      cardName: card.name,
+      candidates,
+      maxCount,
+      selected: [],
+      queueItem: { playerId, card, ability, source: source || { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "veresDumpPick" };
+    game.message = `${card.name}: 墓地から出すユニットを最大${maxCount}体選んでください`;
     return "pending";
   },
   // ヴェレス: レストする：コスト総量4以下の[獣]ユニットを1体デッキから出す
   veresRestSummonBeastFromDeck({ game, playerId, card, ability, source }) {
-    if (card.rested) return;
     const player = game.players[playerId];
     const maxCost = ability.maxCost ?? 4;
     const idx = player.mainDeck.findIndex((c) => isUnitCard(c) && (c.tags || []).includes("獣") && totalCostAmount(c.cost || {}) <= maxCost);
@@ -3021,7 +3017,6 @@ const abilityEffects = {
       log(game, `${player.name}: 「${card.name}」— デッキに対象の[獣]ユニットがいない`);
       return;
     }
-    card.rested = true;
     const [unitCard] = player.mainDeck.splice(idx, 1);
     log(game, `${player.name}: 「${card.name}」をレスト → デッキから「${unitCard.name}」を出す`);
     continueUnitDeployQueue(playerId, [unitCard], { playerId, card, ability, source: source || { zone: "board" } }, {});
@@ -10166,10 +10161,10 @@ function refreshContinuousEffects(game = state) {
         applyConditionalKeywordValue(unit, "northeastGloryArmor", hasAtlasUnit, "armor", 5);
       }
     }
-    if (hasDescentGodOnField(game, pid)) {
-      for (const unit of unitsOwnedBy(pid, game)) {
-        unit.descentReturnToHand = true;
-      }
+    const hasDescentGod = hasDescentGodOnField(game, pid);
+    for (const unit of unitsOwnedBy(pid, game)) {
+      if (hasDescentGod) unit.descentReturnToHand = true;
+      else delete unit.descentReturnToHand;
     }
   }
 }
@@ -10916,6 +10911,55 @@ function resolveDumpCardsPick() {
   return true;
 }
 
+function toggleVeresDumpPick(index) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "veresDumpPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const selected = new Set(pending.selected || []);
+  if (selected.has(index)) selected.delete(index);
+  else if (selected.size < pending.maxCount) selected.add(index);
+  pending.selected = [...selected];
+  render();
+  return true;
+}
+
+function resolveVeresDumpPick() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "veresDumpPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const player = state.players[pending.playerId];
+  const selected = pending.selected || [];
+  const qi = pending.queueItem;
+  if (!selected.length) {
+    state.pendingChoice = null;
+    state.selected = null;
+    log(state, `${player.name}: 「${qi.card.name}」— 墓地から出さなかった`);
+    if (qi) completeAbilitySource(state, qi);
+    processEffectQueue(state);
+    syncOnlineAction("resolveChoice", pending.playerId);
+    render();
+    return true;
+  }
+  const indexes = [...selected].sort((a, b) => b - a);
+  const picked = indexes.map((idx) => player.dump.splice(idx, 1)[0]).filter(Boolean).reverse();
+  notifyDumpChanged(state, pending.playerId);
+  state.pendingChoice = null;
+  state.selected = null;
+  log(state, `${player.name}: 「${qi.card.name}」— 墓地から${picked.length}体を蘇生（[屍人]・+2/+2）`);
+  continueUnitDeployQueue(pending.playerId, picked, qi, {
+    fromDump: true,
+    onEachPlaced: (unit) => {
+      applyGrantedTag(unit, "屍人");
+      unit.atk = (unit.atk || 0) + 2;
+      unit.maxHp = (unit.maxHp || unit.hp || 0) + 2;
+      unit.currentHp = (unit.currentHp || unit.hp || 0) + 2;
+    },
+  });
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function selectPachamamaSearchPick(index) {
   const pending = state.pendingChoice;
   if (pending?.type !== "pachamamaSearchPick") return false;
@@ -11394,6 +11438,7 @@ function resolveSummonPlacement(row, col) {
   const pending = state.pendingChoice;
   if (pending?.type !== "summonPlacement") return false;
   if (!pending.validRows.includes(row)) return false;
+  if (!isUnitFieldCell(row, col)) return false;
   if (state.board[row]?.[col]) {
     state.message = "そのマスは空いていません。";
     return false;
@@ -11500,7 +11545,7 @@ function resolveReviveFromDump(index) {
     validRows = [...new Set([battleRow, player.summonRow])].filter((row) => row >= 0 && row < ROWS);
   }
   const rowsToCheck = validRows || summonPlacementRowsForPlayer(state, pending.playerId, { allowRaid: false });
-  const hasOpenCell = rowsToCheck.some((row) => Array.from({ length: COLS }, (_, col) => col).some((col) => !state.board[row]?.[col]));
+  const hasOpenCell = rowsToCheck.some((row) => unitFieldColsForRow(row).some((col) => !state.board[row]?.[col]));
   if (!hasOpenCell) {
     log(state, `${player.name}: 出すマスがないため「${entry.card.name}」を蘇生できません`);
     const qi = pending.queueItem;
@@ -12373,7 +12418,7 @@ function resolveReviveFromExile(index) {
   const row = playerInfo.summonRow;
   const exileCard = ownerExile[exileIndex];
   const qi = pending.queueItem;
-  const hasOpenCell = Array.from({ length: COLS }, (_, col) => col).some((col) => !state.board[row]?.[col]);
+  const hasOpenCell = unitFieldColsForRow(row).some((col) => !state.board[row]?.[col]);
   if (!hasOpenCell) {
     log(state, `${player.name}: 場が満員のため「${exileCard.name}」を場に出せない`);
     state.pendingChoice = null;
@@ -12612,7 +12657,7 @@ function continueUnitDeployQueue(playerId, unitQueue, queueItem, options = {}) {
     return;
   }
   const rows = summonPlacementRowsForPlayer(state, playerId, { allowRaid: false });
-  const hasOpenCell = rows.some((row) => Array.from({ length: COLS }, (_, col) => col).some((col) => !state.board[row]?.[col]));
+  const hasOpenCell = rows.some((row) => unitFieldColsForRow(row).some((col) => !state.board[row]?.[col]));
   if (!hasOpenCell) {
     log(state, `${player.name}: 出すマスがないため「${unitCard.name}」を出せません`);
     return continueUnitDeployQueue(playerId, unitQueue, queueItem, options);
@@ -12640,7 +12685,7 @@ function continueTokenDeployQueue(playerId, tokenId, remaining, queueItem) {
   const def = TOKEN_DEFS[tokenId];
   const hasRaid = (def?.keywords || []).some((k) => k.id === "raid");
   const rows = summonPlacementRowsForPlayer(state, playerId, { allowRaid: hasRaid });
-  const hasOpenCell = rows.some((row) => Array.from({ length: COLS }, (_, col) => col).some((col) => !state.board[row]?.[col]));
+  const hasOpenCell = rows.some((row) => unitFieldColsForRow(row).some((col) => !state.board[row]?.[col]));
   if (!hasOpenCell) {
     log(state, `${player.name}: 出すマスがないため「${def?.name || tokenId}」を出せません`);
     if (queueItem) completeAbilitySource(state, queueItem);
@@ -18768,7 +18813,7 @@ function drawPendingTargetHighlights() {
 
 function drawSummonPlacementHint(pending) {
   for (const row of pending.validRows || []) {
-    for (let col = 0; col < COLS; col += 1) {
+    for (const col of unitFieldColsForRow(row)) {
       if (state.board[row][col]) continue;
       const visualRow = boardRowToVisualRow(row);
       const cx = layout.board.x + col * layout.cell.w;
@@ -18861,6 +18906,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
   else if (pending.type === "dumpCardsPick") drawDumpCardsPickPanel(pending);
   else if (pending.type === "pachamamaSearchPick") drawPachamamaSearchPickPanel(pending);
+  else if (pending.type === "veresDumpPick") drawVeresDumpPickPanel(pending);
   else if (pending.type === "deployNamedSelection") drawDeployNamedSelectionPanel(pending);
   else if (pending.type === "veresSonsChoice") drawVeresSonsChoicePanel(pending);
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
@@ -20871,6 +20917,35 @@ function drawDumpCardsPickPanel(pending) {
   }
 }
 
+function drawVeresDumpPickPanel(pending) {
+  const x = 330, y = 162, w = 780, h = 474;
+  drawChoicePanelBase(x, y, w, h, "rgba(60,50,120,0.75)", "#8060ff");
+  const selected = new Set(pending.selected || []);
+  const candidates = pending.candidates || [];
+  ctx.fillStyle = "#d8c8ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 墓地から出すユニットを選択`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(216,200,255,0.82)";
+  ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`最大${pending.maxCount}体まで選択。現在: ${selected.size}/${pending.maxCount}`, x + 28, y + 64, w - 56);
+  const isController = canControlChoicePlayer(pending.playerId);
+  const cardW = 74;
+  const cardH = Math.round(cardW / CARD_ASPECT);
+  candidates.slice(0, 16).forEach((entry, i) => {
+    const cx = x + 28 + (i % 8) * (cardW + 18);
+    const cy = y + 92 + Math.floor(i / 8) * (cardH + 30);
+    const active = selected.has(i);
+    drawSelectableChoiceCard(cx, cy, cardW, cardH, entry.card, {
+      selected: active,
+      label: active ? "選択中" : formatCost(entry.card.cost || {}),
+      onClick: isController ? () => toggleVeresDumpPick(i) : null,
+    });
+  });
+  if (isController) {
+    drawButton(x + w - 152, y + h - 56, 124, 36, "決定", () => resolveVeresDumpPick(), null, { accent: "p1" });
+  }
+}
+
 function drawPachamamaSearchPickPanel(pending) {
   const entries = pending.candidates || [];
   const colW = 200, colH = 80, cols = Math.min(entries.length, 3);
@@ -22573,6 +22648,8 @@ const testing = {
   resolveDumpCardsPick,
   selectPachamamaSearchPick,
   resolvePachamamaSearchPick,
+  toggleVeresDumpPick,
+  resolveVeresDumpPick,
   toggleKaijuAwakenChoice,
   resolveKaijuAwakenChoice,
   toggleMysticCaptureChoice,
