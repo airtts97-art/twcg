@@ -3084,6 +3084,79 @@ const abilityEffects = {
     }
     cleanupAllDestroyed(card, game);
   },
+  // 研究所: レストする：デッキ・墓地から[研究]タグのカードを手札に加える（複数該当時は先頭を自動選択）
+  researchInstituteSearch({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const tag = ability.tag || "研究";
+    let idx = player.mainDeck.findIndex((c) => (c.tags || []).includes(tag));
+    let zone = "mainDeck";
+    if (idx < 0) {
+      idx = player.dump.findIndex((c) => (c.tags || []).includes(tag));
+      zone = "dump";
+    }
+    card.rested = true;
+    if (idx < 0) {
+      log(game, `${player.name}: 「${card.name}」— [${tag}]タグのカードがデッキにも墓地にもない`);
+      return;
+    }
+    const [found] = zone === "mainDeck" ? player.mainDeck.splice(idx, 1) : player.dump.splice(idx, 1);
+    player.hand.push(found);
+    if (zone === "dump") notifyDumpChanged(game, playerId);
+    log(game, `${player.name}: 「${card.name}」— ${zone === "mainDeck" ? "デッキ" : "墓地"}から「${found.name}」を手札に加えた`);
+  },
+  // 研究所: 自分が「研究」を発動した時：金③を得る
+  gainResourceOnNamedTactPlay({ game, playerId, card, ability, source }) {
+    const tactCard = source?.tactCard;
+    if (!tactCard || tactCard.name !== ability.tactName) return;
+    addResources(game.players[playerId], ability.resource, ability.amount);
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 「${tactCard.name}」発動により${RESOURCE_LABELS[ability.resource]}+${ability.amount}`);
+  },
+  // 博物館: 金①を支払い、レストする：デッキから指定カードを手札に加える
+  museumSearchMining({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const cost = ability.cost || { funds: 1 };
+    if (!pay(player, cost)) return;
+    const targetName = ability.cardName || "採掘";
+    const idx = player.mainDeck.findIndex((c) => c.name === targetName);
+    card.rested = true;
+    if (idx < 0) {
+      log(game, `${player.name}: 「${card.name}」— デッキに「${targetName}」がない`);
+      return;
+    }
+    const [found] = player.mainDeck.splice(idx, 1);
+    player.hand.push(found);
+    log(game, `${player.name}: 「${card.name}」— デッキから「${found.name}」を手札に加えた`);
+  },
+  // 博物館: 金①を支払い、レストする：墓地から5枚デッキに戻す。戻した[研究]タグのカードだけ金を得る
+  museumMillBackForFunds({ game, playerId, card, ability }) {
+    const player = game.players[playerId];
+    const cost = ability.cost || { funds: 1 };
+    if (!pay(player, cost)) return;
+    card.rested = true;
+    const amount = Math.min(ability.amount || 5, player.dump.length);
+    const returned = player.dump.splice(0, amount);
+    player.mainDeck.push(...returned);
+    notifyDumpChanged(game, playerId);
+    const tag = ability.tag || "研究";
+    const matchCount = returned.filter((c) => (c.tags || []).includes(tag)).length;
+    const gain = matchCount * (ability.perCardAmount || 1);
+    if (gain > 0) addResources(player, ability.resource || "funds", gain);
+    log(game, `${player.name}: 「${card.name}」— 墓地${returned.length}枚をデッキに戻し、[${tag}]${matchCount}枚分の${RESOURCE_LABELS[ability.resource || "funds"]}+${gain}`);
+  },
+  // 古文書調査: 墓地からタクトカードを手札に加え、このカードを除外する
+  ancientTextsInvestigation({ game, playerId, card }) {
+    const player = game.players[playerId];
+    const idx = player.dump.findIndex((c) => c.type === "tact");
+    if (idx >= 0) {
+      const [found] = player.dump.splice(idx, 1);
+      player.hand.push(found);
+      notifyDumpChanged(game, playerId);
+      log(game, `${player.name}: 「${card.name}」— 墓地から「${found.name}」を手札に加えた`);
+    } else {
+      log(game, `${player.name}: 「${card.name}」— 墓地にタクトカードがない`);
+    }
+    card.exileAfterPlay = true;
+  },
   restTargetNoUnrest({ game, target }) {
     if (!target) return;
     target.rested = true;
@@ -6019,6 +6092,47 @@ function parseDeckmakerAbilities(card, localType) {
   // ワスカル・コリ: 出撃時、相手のユニット3つに5ダメージ
   if (card.id === "card_1783090514852" && !abilities.some((a) => a.effect === "huascarMultiDamageOnSummon")) {
     abilities.push({ trigger: "onSummon", effect: "huascarMultiDamageOnSummon" });
+  }
+
+  // 研究所: レストで[研究]タグ検索、「研究」発動時に金③
+  if (card.id === "card_1783152716278" && !abilities.some((a) => a.effect === "researchInstituteSearch")) {
+    abilities.length = 0;
+    abilities.push({ trigger: "onStructurePhase", effect: "researchInstituteSearch", tag: "研究" });
+    abilities.push({
+      trigger: "onFriendlyTactPlay",
+      effect: "gainResourceOnNamedTactPlay",
+      tactName: "研究",
+      resource: "funds",
+      amount: 3,
+    });
+  }
+
+  // 博物館: 金①で「採掘」をデッキから、金①で墓地5枚をデッキに戻し[研究]分金を得る
+  if (card.id === "card_1783153165525" && !abilities.some((a) => a.effect === "museumSearchMining")) {
+    abilities.length = 0;
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "museumSearchMining",
+      choiceLabel: "金①：デッキから「採掘」を手札に",
+      cost: { funds: 1 },
+      cardName: "採掘",
+    });
+    abilities.push({
+      trigger: "onStructurePhase",
+      effect: "museumMillBackForFunds",
+      choiceLabel: "金①：墓地5枚をデッキに戻す（[研究]は金に）",
+      cost: { funds: 1 },
+      amount: 5,
+      tag: "研究",
+      resource: "funds",
+      perCardAmount: 1,
+    });
+  }
+
+  // 古文書調査: 墓地からタクトカードを手札に加え、このカードを除外する
+  if (card.id === "card_1783153313760" && !abilities.some((a) => a.effect === "ancientTextsInvestigation")) {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "ancientTextsInvestigation" });
   }
 
   if (card.id === "card_1782545233380") {
@@ -12912,7 +13026,11 @@ function completeAbilitySource(game, item) {
   if (index >= 0) {
     const card = player.tactZone[index];
     markPermanentTactIfNeeded(card);
-    if (!isPermanentTactCard(card)) {
+    if (card.exileAfterPlay) {
+      const [removed] = player.tactZone.splice(index, 1);
+      player.exileZone.push(removed);
+      log(game, `「${removed.name}」が除外された`);
+    } else if (!isPermanentTactCard(card)) {
       const [removed] = player.tactZone.splice(index, 1);
       player.dump.push(removed);
       notifyDumpChanged(game, item.playerId);
@@ -13972,6 +14090,12 @@ function disposeNonPermanentTactAfterPlay(game, tactOwnerId, tactCard) {
   if (index < 0) return;
   const card = player.tactZone[index];
   markPermanentTactIfNeeded(card);
+  if (card.exileAfterPlay) {
+    const [removed] = player.tactZone.splice(index, 1);
+    player.exileZone.push(removed);
+    log(game, `「${removed.name}」が除外された`);
+    return;
+  }
   if (!isPermanentTactCard(card)) {
     const [removed] = player.tactZone.splice(index, 1);
     player.dump.push(removed);
@@ -13980,6 +14104,9 @@ function disposeNonPermanentTactAfterPlay(game, tactOwnerId, tactCard) {
 }
 
 function finishPlayTact(tactOwnerId, tactCard) {
+  for (const struct of state.players[tactOwnerId].structs) {
+    triggerAbilities(state, tactOwnerId, struct, "onFriendlyTactPlay", { tactCard });
+  }
   const pending = triggerAbilities(state, tactOwnerId, tactCard, "onPlay", { zone: "tact" });
   if (!pending
       && !state.pendingChoice
@@ -21919,6 +22046,11 @@ function abilityText(card) {
         quicheArmorGrantOnSummon: "出撃時：場のユニット1つに[装甲③]を与える",
         pachamamaSearchSelfOrFarmer: "出撃時：デッキから「パチャママ・ルクルナ」または「農民」を1体出す",
         huascarMultiDamageOnSummon: "出撃時：相手のユニット3つに5ダメージ",
+        researchInstituteSearch: "レストする：デッキ・墓地から[研究]タグのカードを手札に加える",
+        gainResourceOnNamedTactPlay: `自分が「${ability.tactName}」を発動した時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
+        museumSearchMining: `金①：デッキから「${ability.cardName}」を手札に加える`,
+        museumMillBackForFunds: `金①：墓地${ability.amount}枚をデッキに戻す（戻した[${ability.tag}]は${RESOURCE_LABELS[ability.resource] || ability.resource}化）`,
+        ancientTextsInvestigation: "墓地からタクトカードを手札に加え、このカードを除外する",
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })

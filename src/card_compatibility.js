@@ -67,6 +67,9 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "quicheArmorGrantOnSummon", "quicheArmorGrantApply",
   "pachamamaSearchSelfOrFarmer",
   "huascarMultiDamageOnSummon", "huascarMultiDamageApply",
+  "researchInstituteSearch", "gainResourceOnNamedTactPlay",
+  "museumSearchMining", "museumMillBackForFunds",
+  "ancientTextsInvestigation",
 ]);
 
 const STRUCT_PRODUCTION_EFFECTS = new Set([
