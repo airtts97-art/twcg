@@ -70,6 +70,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "gainResourceOnNamedTactPlay",
   "museumSearchMining", "museumMillBackForFunds", "museumMillBackForFundsApply",
   "ancientTextsInvestigation",
+  "electrification",
 ]);
 
 const STRUCT_PRODUCTION_EFFECTS = new Set([

@@ -3169,6 +3169,35 @@ const abilityEffects = {
     }
     card.exileAfterPlay = true;
   },
+  // 通電: 2枚手札からデッキに戻し、4枚ドローする
+  electrification({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const returnCount = Math.min(ability.returnCount ?? 2, player.hand.length);
+    const drawAmount = ability.drawAmount ?? 4;
+    if (returnCount <= 0) {
+      let drawn = 0;
+      for (let i = 0; i < drawAmount; i++) {
+        const c = player.mainDeck.shift();
+        if (!c) break;
+        player.hand.push(c);
+        drawn++;
+      }
+      log(game, `${player.name}: 「${card.name}」— ${drawn}枚ドロー`);
+      return;
+    }
+    game.pendingChoice = {
+      type: "handToDeckPick",
+      playerId,
+      cardName: card.name,
+      returnCount,
+      drawAmount,
+      selectedHandIndexes: [],
+      queueItem: { playerId, card, ability, source: source || { zone: "tact" } },
+    };
+    game.selected = { kind: "choice", choice: "handToDeckPick" };
+    game.message = `${card.name}: 手札から${returnCount}枚選んでデッキに戻してください`;
+    return "pending";
+  },
   restTargetNoUnrest({ game, target }) {
     if (!target) return;
     target.rested = true;
@@ -6145,6 +6174,12 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1783153313760" && !abilities.some((a) => a.effect === "ancientTextsInvestigation")) {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "ancientTextsInvestigation" });
+  }
+
+  // 通電: 2枚手札からデッキに戻し、4枚ドローする
+  if (card.id === "card_1783112025794" && !abilities.some((a) => a.effect === "electrification")) {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "electrification", returnCount: 2, drawAmount: 4 });
   }
 
   if (card.id === "card_1782545233380") {
@@ -10955,6 +10990,51 @@ function resolveVeresDumpPick() {
       unit.currentHp = (unit.currentHp || unit.hp || 0) + 2;
     },
   });
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function toggleHandToDeckPick(handIndex) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "handToDeckPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const selected = new Set(pending.selectedHandIndexes || []);
+  if (selected.has(handIndex)) selected.delete(handIndex);
+  else if (selected.size < pending.returnCount) selected.add(handIndex);
+  pending.selectedHandIndexes = [...selected];
+  render();
+  return true;
+}
+
+function resolveHandToDeckPick() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "handToDeckPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const selected = pending.selectedHandIndexes || [];
+  if (selected.length < pending.returnCount) {
+    state.message = `あと${pending.returnCount - selected.length}枚選んでください。`;
+    render();
+    return false;
+  }
+  const player = state.players[pending.playerId];
+  const indexes = [...selected].sort((a, b) => b - a);
+  const returned = indexes.map((idx) => player.hand.splice(idx, 1)[0]).filter(Boolean).reverse();
+  player.mainDeck.push(...returned);
+  log(state, `${player.name}: 「${pending.cardName}」— 手札${returned.length}枚をデッキに戻した`);
+  let drawn = 0;
+  for (let i = 0; i < pending.drawAmount; i++) {
+    const c = player.mainDeck.shift();
+    if (!c) break;
+    player.hand.push(c);
+    drawn++;
+  }
+  log(state, `${player.name}: 「${pending.cardName}」— ${drawn}枚ドロー`);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  completeAbilitySource(state, qi);
+  processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
   return true;
@@ -18384,6 +18464,7 @@ const HAND_SELECTION_CHOICE_TYPES = new Set([
   "lifeCounterPayment",
   "fieldExperiment",
   "revealTagsForResources",
+  "handToDeckPick",
 ]);
 
 const DECK_SELECTION_CHOICE_TYPES = new Set([
@@ -18907,6 +18988,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "dumpCardsPick") drawDumpCardsPickPanel(pending);
   else if (pending.type === "pachamamaSearchPick") drawPachamamaSearchPickPanel(pending);
   else if (pending.type === "veresDumpPick") drawVeresDumpPickPanel(pending);
+  else if (pending.type === "handToDeckPick") drawHandToDeckPickPanel(pending);
   else if (pending.type === "deployNamedSelection") drawDeployNamedSelectionPanel(pending);
   else if (pending.type === "veresSonsChoice") drawVeresSonsChoicePanel(pending);
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
@@ -20946,6 +21028,49 @@ function drawVeresDumpPickPanel(pending) {
   }
 }
 
+function drawHandToDeckPickPanel(pending) {
+  const player = state.players[pending.playerId];
+  const canSeeHand = canViewerSeeChoiceHand(pending);
+  const isController = canControlChoicePlayer(pending.playerId);
+  const x = 388, y = 180, w = 664, h = 380;
+  drawChoicePanelBase(x, y, w, h, "rgba(60,120,180,0.75)", "#4090e0");
+  ctx.fillStyle = "#c0e0ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 手札${pending.returnCount}枚をデッキに戻す`, x + 28, y + 34);
+  ctx.fillStyle = "rgba(200,230,255,0.85)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${(pending.selectedHandIndexes || []).length}/${pending.returnCount}枚選択（戻した後${pending.drawAmount}枚ドロー）`, x + 28, y + 56);
+  if (!canSeeHand) {
+    ctx.fillText("相手の手札内容は見えません。", x + 28, y + 74);
+  }
+  player.hand.forEach((card, handIndex) => {
+    const selected = (pending.selectedHandIndexes || []).includes(handIndex);
+    const cx = x + 28 + (handIndex % 4) * 154;
+    const cy = y + 88 + Math.floor(handIndex / 4) * 150;
+    const toggle = () => {
+      toggleHandToDeckPick(handIndex);
+      render();
+    };
+    if (canSeeHand) {
+      drawSelectableChoiceCard(cx, cy, 140, 196, card, {
+        selected,
+        label: card.name,
+        onClick: isController ? toggle : null,
+      });
+    } else {
+      drawCardBack(cx, cy, 140, 196);
+      if (selected) {
+        roundRect(cx - 3, cy - 3, 146, 202, 8, null, "#ffd84a", 3);
+      }
+      if (isController) addHit(cx, cy, 140, 196, toggle);
+    }
+  });
+  const ready = (pending.selectedHandIndexes || []).length === pending.returnCount;
+  if (isController) {
+    drawButton(x + w - 180, y + h - 48, 150, 32, "確定", ready ? resolveHandToDeckPick : null, null, ready ? { accent: "p1" } : { accent: "dim" });
+  }
+}
+
 function drawPachamamaSearchPickPanel(pending) {
   const entries = pending.candidates || [];
   const colW = 200, colH = 80, cols = Math.min(entries.length, 3);
@@ -22298,6 +22423,7 @@ function abilityText(card) {
         museumSearchMining: `金①：デッキから「${ability.cardName}」を手札に加える`,
         museumMillBackForFunds: `金①：墓地${ability.amount}枚をデッキに戻す（戻した[${ability.tag}]は${RESOURCE_LABELS[ability.resource] || ability.resource}化）`,
         ancientTextsInvestigation: "墓地からタクトカードを手札に加え、このカードを除外する",
+        electrification: `${ability.returnCount ?? 2}枚手札からデッキに戻し、${ability.drawAmount ?? 4}枚ドローする`,
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })
@@ -22650,6 +22776,8 @@ const testing = {
   resolvePachamamaSearchPick,
   toggleVeresDumpPick,
   resolveVeresDumpPick,
+  toggleHandToDeckPick,
+  resolveHandToDeckPick,
   toggleKaijuAwakenChoice,
   resolveKaijuAwakenChoice,
   toggleMysticCaptureChoice,
