@@ -2084,7 +2084,7 @@ const abilityEffects = {
     game.pendingTarget = {
       playerId,
       card,
-      ability: { ...ability, effect: "lowNinBatSummonStrikeResolve" },
+      ability: { ...ability, effect: "lowNinBatSummonStrikeResolve", target: "enemyUnit", requiresAttackableTarget: true },
       source: source || { zone: "board" },
       filter: (unit) => unit.owner !== playerId && canAttackUnit(card, unit).ok,
     };
@@ -2107,6 +2107,29 @@ const abilityEffects = {
     card.maxHp = (card.maxHp || card.hp || 0) + 5;
     card.currentHp = (card.currentHp || card.maxHp || 0) + 5;
     log(game, `${game.players[playerId].name}: 「${card.name}」— 高ATK対象へ +2/±5`);
+  },
+  sparrowDestroyNonEnemyCard({ game, playerId, card }) {
+    const candidates = sparrowDestroyCandidates(playerId);
+    if (!candidates.length) return;
+    game.pendingChoice = {
+      type: "sparrowDestroyChoice",
+      playerId,
+      cardName: card.name,
+      queueItem: { playerId, card, ability: { effect: "sparrowDestroyNonEnemyCard" }, source: { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "sparrowDestroyChoice" };
+    game.message = `${card.name}: 破壊するカードを1枚選んでください`;
+    return "pending";
+  },
+  sparrowGainLibraryCounter({ game, playerId, card }) {
+    card.counters = (card.counters || 0) + 1;
+    if (card.counters >= 3) {
+      card.counters -= 3;
+      addResources(game.players[playerId], "electric", 3);
+      log(game, `${game.players[playerId].name}: 「${card.name}」— ライブラリカウンター3消費、電③を得た`);
+    } else {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— ライブラリカウンター+1（${card.counters}）`);
+    }
   },
   ashitaStackDumpTactsOnSummon({ game, playerId, card }) {
     const player = game.players[playerId];
@@ -6612,6 +6635,12 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onAttacked", effect: "lowNinBatHigherAtkBuff" });
   }
 
+  if (card.id === "card_1782928730197") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onSummon", effect: "sparrowDestroyNonEnemyCard" });
+    abilities.push({ trigger: "onFriendlyTactPlay", effect: "sparrowGainLibraryCounter" });
+  }
+
   if (card.id === "card_1783012268813") {
     abilities.length = 0;
   }
@@ -7029,6 +7058,11 @@ function fromDeckmakerCard(card) {
     if (card.id === "card_1783012700492") {
       ensureKeyword(base, "charge");
       ensureKeyword(base, "alert");
+    }
+    if (card.id === "card_1782928730197") {
+      ensureKeyword(base, "flying", 1);
+      ensureKeyword(base, "arc", 1);
+      ensureKeyword(base, "antiAir", 3);
     }
     if (card.id === "card_1783012268813") {
       ensureKeyword(base, "charge");
@@ -8872,6 +8906,7 @@ function handleOnlineMessage(message) {
   if (message.type === "error") {
     app.match.message = message.message || "エラーが発生しました。";
     const roomNotFound = /ルームが見つかりません/.test(message.message || "");
+    const roomFull = /満員/.test(message.message || "");
     if (roomNotFound && onlineDesiredSession?.roomCode) {
       if (onlineDesiredSession.role === "host") {
         app.match.message = "ルームをホストとして復旧しています。";
@@ -8879,8 +8914,44 @@ function handleOnlineMessage(message) {
       } else if (onlineDesiredSession.role === "guest") {
         scheduleGuestRoomJoinRetry();
       }
+      return;
+    }
+    if (roomFull && onlineDesiredSession?.roomCode && onlineDesiredSession.role !== "spectator") {
+      attemptSpectateFallback(onlineDesiredSession.roomCode);
+      return;
     }
   }
+}
+
+async function attemptSpectateFallback(roomCode) {
+  try {
+    const response = await fetch(`${SERVER_BASE}/api/rooms`, { cache: "no-store" });
+    if (response.ok) {
+      const payload = await response.json();
+      const room = (Array.isArray(payload.rooms) ? payload.rooms : [])
+        .find((entry) => normalizeRoomCodeClient(entry.roomCode) === roomCode);
+      if (room?.canSpectate) {
+        resetOnlineConnectionToOffline();
+        app.match.message = "ルームが満員のため観戦モードに切り替えます。";
+        render();
+        joinSpectatorRoom(roomCode);
+        return;
+      }
+    }
+  } catch {
+    // Fall through to resetting the connection below.
+  }
+  app.match.message = "このルームは満員です。";
+  resetOnlineConnectionToOffline();
+  render();
+}
+
+function resetOnlineConnectionToOffline() {
+  onlineDesiredSession = null;
+  onlineManualClose = true;
+  onlineSocket?.close();
+  app.match.status = "offline";
+  app.match.connection = "offline";
 }
 
 function shouldApplyOnlineState(version, allowEqual = false) {
@@ -13149,6 +13220,67 @@ function resolveDestroyChoice({ payCost = true } = {}) {
   return true;
 }
 
+function sparrowDestroyCandidates(playerId) {
+  const opponent = opponentOf(playerId);
+  const items = [];
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const unit = state.board[row]?.[col];
+      if (unit && unit.owner !== opponent) {
+        items.push({ key: `unit:${row}:${col}`, card: unit, label: unit.name, sub: `Unit ${unit.owner}` });
+      }
+    }
+  }
+  for (const pid of ["p1", "p2"]) {
+    (state.players[pid].structs || []).forEach((struct, index) => {
+      items.push({ key: `struct:${pid}:${index}`, card: struct, label: struct.name, sub: `Struct ${state.players[pid].name}` });
+    });
+    (state.players[pid].tactZone || []).forEach((tact, index) => {
+      items.push({ key: `tact:${pid}:${index}`, card: tact, label: tact.name, sub: `Tact ${state.players[pid].name}` });
+    });
+  }
+  return items;
+}
+
+function resolveSparrowDestroyChoice(key) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "sparrowDestroyChoice") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const [kind, a, b] = String(key || "").split(":");
+  if (kind === "unit") {
+    const row = Number(a);
+    const col = Number(b);
+    const unit = state.board[row]?.[col];
+    if (!unit || unit.owner === opponentOf(pending.playerId)) return false;
+    unit.currentHp = 0;
+    log(state, `${state.players[pending.playerId].name}: 「${pending.cardName}」— 「${unit.name}」を破壊`);
+  } else if (kind === "struct") {
+    const player = state.players[a];
+    const index = Number(b);
+    const struct = player?.structs?.[index];
+    if (!struct) return false;
+    player.structs.splice(index, 1);
+    returnStructCardToDeck(player, struct, state, "破壊");
+  } else if (kind === "tact") {
+    const player = state.players[a];
+    const index = Number(b);
+    const tact = player?.tactZone?.[index];
+    if (!tact) return false;
+    destroyTactFromZone(state, a, tact);
+  } else {
+    return false;
+  }
+  cleanupAllDestroyed();
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function toggleKaijuAwakenChoice(kind, value) {
   const pending = state.pendingChoice;
   if (pending?.type !== "kaijuAwaken") return false;
@@ -14561,6 +14693,9 @@ function disposeNonPermanentTactAfterPlay(game, tactOwnerId, tactCard) {
 function finishPlayTact(tactOwnerId, tactCard) {
   for (const struct of state.players[tactOwnerId].structs) {
     triggerAbilities(state, tactOwnerId, struct, "onFriendlyTactPlay", { tactCard });
+  }
+  for (const unit of unitsOwnedBy(tactOwnerId, state)) {
+    triggerAbilities(state, tactOwnerId, unit, "onFriendlyTactPlay", { tactCard });
   }
   const pending = triggerAbilities(state, tactOwnerId, tactCard, "onPlay", { zone: "tact" });
   if (!pending
@@ -19410,6 +19545,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "deployHeroFromAttack") drawDeployHeroFromAttackPanel(pending);
   else if (pending.type === "intelAgencyCancel") drawIntelAgencyCancelPanel(pending);
   else if (pending.type === "destroyEnemyStruct") drawDestroyEnemyStructPanel(pending);
+  else if (pending.type === "sparrowDestroyChoice") drawSparrowDestroyChoicePanel(pending);
   else if (pending.type === "chargeAttack") drawChargeAttackPanel(pending);
   else if (pending.type === "payOnAttackEnhance") drawPayOnAttackEnhancePanel(pending);
   else if (pending.type === "payDefenderActCostBonus") drawPayDefenderActCostBonusPanel(pending);
@@ -21356,6 +21492,26 @@ function drawSelectDestroyCardsPanel(pending) {
   }
 }
 
+function drawSparrowDestroyChoicePanel(pending) {
+  const x = 330, y = 162, w = 780, h = 474;
+  drawChoicePanelBase(x, y, w, h, "rgba(180,70,50,0.75)", "#ff5040");
+  const candidates = sparrowDestroyCandidates(pending.playerId);
+  ctx.fillStyle = "#ffd0c0";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 破壊するカードを1枚選んでください`, x + 28, y + 36);
+  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
+  const cardW = 74;
+  const cardH = Math.round(cardW / CARD_ASPECT);
+  candidates.slice(0, 16).forEach((item, i) => {
+    const cx = x + 28 + (i % 8) * (cardW + 18);
+    const cy = y + 92 + Math.floor(i / 8) * (cardH + 30);
+    drawSelectableChoiceCard(cx, cy, cardW, cardH, item.card, {
+      label: item.sub.replace(/^.*? /, ""),
+      onClick: isController ? () => resolveSparrowDestroyChoice(item.key) : null,
+    });
+  });
+}
+
 function drawDumpCardsPickPanel(pending) {
   const x = 330, y = 162, w = 780, h = 474;
   drawChoicePanelBase(x, y, w, h, "rgba(120,80,180,0.75)", "#8040ff");
@@ -22439,6 +22595,30 @@ function drawCard(x, y, w, h, card, options = {}) {
       ctx.textBaseline = "alphabetic";
       ctx.restore();
     }
+    if ((card.tactStack?.length || 0) > 0) {
+      const r = options.small ? 9 : 12;
+      const bx = x + w - r - 4;
+      const by = y + h - r - 4;
+      ctx.save();
+      ctx.shadowColor = "#40a0c0";
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(20,80,110,0.92)";
+      ctx.fill();
+      ctx.strokeStyle = "#a0e0ff";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#e0f8ff";
+      ctx.font = `800 ${options.small ? 8 : 10}px 'Yu Gothic UI', sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`タ${card.tactStack.length}`, bx, by);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.restore();
+    }
     return;
   }
 
@@ -22637,6 +22817,13 @@ function drawCardTooltip(card, mx, my) {
   // 原文テキスト（description）を表示
   const descText = card.description || card.text || card.flavor || "";
   if (descText) lines.push({ text: descText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "rgba(200,220,255,0.8)", wrap: true, maxLines: 12 });
+  if (card.tactStack?.length) {
+    lines.push({ text: `下に重ねたタクト (${card.tactStack.length}枚)`, font: "700 11px 'Yu Gothic UI', sans-serif", color: "#a0e0ff" });
+    const stackText = card.tactStack
+      .map((tact) => `${tact.name}（${CARD_TYPE_LABELS[tact.type] || tact.type}）`)
+      .join(" / ");
+    lines.push({ text: stackText, font: "600 11px 'Yu Gothic UI', sans-serif", color: "rgba(200,230,255,0.85)", wrap: true, maxLines: 6 });
+  }
 
   // compute tooltip height
   ctx.font = "600 11px 'Yu Gothic UI', sans-serif";

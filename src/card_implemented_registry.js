@@ -97,6 +97,7 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1783013402820", // デイリー・トイ
   "card_1783012700492", // ロウニン-バットウ
   "card_1783012268813", // ネコマスター
+  "card_1782928730197", // 《裁定》スパロウ
 ]);
 
 export function isImplementedCard(cardId) {
