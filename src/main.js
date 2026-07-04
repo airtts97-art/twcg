@@ -16455,6 +16455,10 @@ function stripRuntime(unit) {
   delete copy.dealtDamageThisTurn;
   delete copy.redirectingDamage;
   delete copy.fieldPlayCostRemap;
+  delete copy.counters;
+  delete copy.charmCounters;
+  delete copy.braveBloodCounter;
+  delete copy.smokeScreenCounter;
   return copy;
 }
 
