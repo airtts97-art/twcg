@@ -11441,6 +11441,10 @@ function resolveSummonPlacement(row, col) {
       const removed = player.dump.splice(spec.dumpIndex, 1)[0];
       if (removed) notifyDumpChanged(state, pending.playerId);
     }
+    if (spec.fromExile && spec.exileOwner && spec.exileIndex != null && spec.exileIndex >= 0) {
+      const exileList = state.players[spec.exileOwner]?.exileZone;
+      if (exileList) exileList.splice(spec.exileIndex, 1);
+    }
   }
   if (pending.grantTurnEndDeckTop) {
     unit.abilities = [...(unit.abilities || []), { trigger: "onTurnEnd", effect: "returnSelfToDeckTop" }];
@@ -11451,7 +11455,10 @@ function resolveSummonPlacement(row, col) {
   }
   commitUnitToBoard(state, unit, row, col);
   log(state, `${player.name}: 「${unit.name}」を場に出した`);
-  triggerAbilities(state, pending.playerId, unit, "onSummon", { fromDump: Boolean(spec.fromDump) });
+  triggerAbilities(state, pending.playerId, unit, "onSummon", {
+    fromDump: Boolean(spec.fromDump),
+    zone: spec.fromExile ? "exile" : undefined,
+  });
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
@@ -12355,55 +12362,39 @@ function resolveReviveFromExile(index) {
   const choice = pending.eligible[index];
   if (!choice) return false;
   const exileOwner = choice._exileOwner;
+  const exileIndex = choice._exileIndex;
   const ownerExile = exileOwner ? (state.players[exileOwner]?.exileZone || []) : [];
-  let exileCard = null;
-  if (exileOwner) {
-    const idx = typeof choice._exileIndex === "number" ? choice._exileIndex : -1;
-    if (idx >= 0 && ownerExile[idx]) {
-      exileCard = ownerExile[idx];
-      ownerExile.splice(idx, 1);
-    }
-  }
-  if (!exileCard) {
+  if (!exileOwner || typeof exileIndex !== "number" || !ownerExile[exileIndex]) {
     state.message = "除外ゾーンからカードを取り出せませんでした。";
     return false;
   }
   const playerInfo = PLAYERS[pending.playerId];
   const player = state.players[pending.playerId];
-  const template = cloneCard(exileCard);
-  let placed = false;
-  for (let col = 0; col < COLS; col++) {
-    if (!state.board[playerInfo.summonRow][col]) {
-      const unit = {
-        ...template,
-        instanceId: nextInstanceId++,
-        owner: pending.playerId,
-        row: playerInfo.summonRow,
-        col,
-        maxHp: template.hp,
-        currentHp: template.hp,
-        rested: false,
-        attacksThisTurn: 0,
-        mobileMoveUsed: false,
-        counters: 0,
-      };
-      commitUnitToBoard(state, unit, playerInfo.summonRow, col);
-      placed = true;
-      log(state, `${player.name}: 「${template.name}」を除外ゾーンから場に出す`);
-      triggerAbilities(state, pending.playerId, unit, "onSummon", { zone: "exile" });
-      break;
-    }
-  }
-  if (!placed) {
-    log(state, `${player.name}: 場が満員のため「${template.name}」を場に出せない`);
-    ownerExile.push(exileCard);
-  }
+  const row = playerInfo.summonRow;
+  const exileCard = ownerExile[exileIndex];
   const qi = pending.queueItem;
-  state.pendingChoice = null;
-  state.selected = null;
-  completeAbilitySource(state, qi);
-  processEffectQueue(state);
-  syncOnlineAction("resolveChoice", pending.playerId);
+  const hasOpenCell = Array.from({ length: COLS }, (_, col) => col).some((col) => !state.board[row]?.[col]);
+  if (!hasOpenCell) {
+    log(state, `${player.name}: 場が満員のため「${exileCard.name}」を場に出せない`);
+    state.pendingChoice = null;
+    state.selected = null;
+    if (qi) completeAbilitySource(state, qi);
+    processEffectQueue(state);
+    syncOnlineAction("resolveChoice", pending.playerId);
+    return true;
+  }
+  beginSummonPlacementChoice(state, pending.playerId, {
+    kind: "unit",
+    cardId: exileCard.id,
+    fromExile: true,
+    exileOwner,
+    exileIndex,
+  }, {
+    queueItem: qi,
+    validRows: [row],
+    message: `「${exileCard.name}」を出すマスをクリックしてください`,
+  });
+  render();
   return true;
 }
 
@@ -22590,6 +22581,8 @@ const testing = {
   resolveRevealPickSkip,
   resolveSearchDeckPick,
   resolveReviveFromDump,
+  resolveReviveFromExile,
+  resolveReviveFromExileSkip,
   resolveSummonPlacement,
   resolveSummonPlacementSkip,
   resolveSoulPayChoice,
