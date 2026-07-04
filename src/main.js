@@ -13010,6 +13010,21 @@ function resolveLifeCounterPayment(amount) {
   return true;
 }
 
+function resolveLifeCounterPaymentSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "lifeCounterPayment") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  log(state, `${state.players[pending.playerId].name}: 「${pending.cardName}」の出撃をスキップ`);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function destroyChoiceItems(pending) {
   const destroyed = [];
   const ordered = [...(pending.selected || [])].sort((a, b) => {
@@ -21452,13 +21467,22 @@ function drawLifeCounterPaymentPanel(pending) {
   ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`${pending.targetCard.name} の出撃コスト支払い後、追加で支払う人資源を選んでください。（最大${maxPay}）`, x + 28, y + 68, w - 56);
   const isController = canControlChoicePlayer(pending.playerId);
+  const canAffordBase = canPayForCard(player, pending.targetCard.cost || {}, pending.targetCard);
   const btnW = 76, btnH = 42, gap = 12;
   const totalW = (maxPay + 1) * btnW + maxPay * gap;
   const startX = x + Math.max(28, Math.floor((w - totalW) / 2));
+  if (!canAffordBase) {
+    ctx.fillStyle = "rgba(255,160,160,0.9)";
+    ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("出撃コストが不足しています。", x + 28, y + 100);
+  }
   for (let amount = 0; amount <= maxPay; amount++) {
     const bx = startX + amount * (btnW + gap);
     const by = y + 122;
-    drawButton(bx, by, btnW, btnH, `${amount}`, isController ? () => resolveLifeCounterPayment(amount) : null, null, amount > 0 ? { accent: "p1" } : {});
+    drawButton(bx, by, btnW, btnH, `${amount}`, isController && canAffordBase ? () => resolveLifeCounterPayment(amount) : null, null, amount > 0 ? { accent: "p1" } : {});
+  }
+  if (isController) {
+    drawButton(x + w - 130, y + h - 44, 100, 30, "スキップ", resolveLifeCounterPaymentSkip, null, { accent: "dim" });
   }
   ctx.fillStyle = "rgba(150,180,230,0.7)";
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
@@ -23357,6 +23381,7 @@ const testing = {
   resolveChooseUnitActivate,
   resolveChooseStructPhaseActivate,
   resolveLifeCounterPayment,
+  resolveLifeCounterPaymentSkip,
   resolveDrawPlusPayResource,
   resolveFieldExperimentHandUnit,
   resolveFieldExperimentBabelTarget,
