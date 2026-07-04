@@ -95,6 +95,12 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.url === "/api/rooms" && req.method === "GET") {
+    res.setHeader("cache-control", "no-store");
+    sendJson(res, { rooms: publicRoomList() });
+    return;
+  }
+
   if (req.url === "/api/auth/google" && req.method === "POST") {
     const body = await readJsonBody(req).catch(() => null);
     const result = await verifyGoogleCredential(body?.credential);
@@ -421,7 +427,7 @@ function handleMessage(client, message) {
       attachClientToSeat(client, room, seat, message.playerName, message.deck);
       rejoined = true;
     } else {
-      room = createRoom(roomCode);
+      room = createRoom(roomCode, message.settings);
       rooms.set(roomCode, room);
       const seat = assignSeat(room, "host", userId, message.playerName, message.deck);
       attachClientToSeat(client, room, seat, message.playerName, message.deck);
@@ -433,6 +439,20 @@ function handleMessage(client, message) {
       rejoined ? `${client.role === "host" ? "ホスト" : "ゲスト"}席に再入室しました。` : "ルームを作成しました。",
       rejoined,
     );
+    broadcastPresence(room);
+    return;
+  }
+
+  if (message.type === "spectate") {
+    const roomCode = normalizeRoomCode(message.roomCode);
+    const room = rooms.get(roomCode);
+    if (!room) return send(client, { type: "error", roomCode, message: "指定されたルームが見つかりません。" });
+    if (!room.settings.allowSpectators) return send(client, { type: "error", roomCode, message: "このルームは観戦を許可していません。" });
+    const userId = normalizedMessageUserId(message, client);
+    if (seatForUser(room, userId)) return send(client, { type: "error", roomCode, message: "対戦参加者は同じルームを観戦できません。" });
+    attachSpectator(client, room, userId, message.playerName);
+    dbg("spectate", { room: roomCode, client: client.id.slice(0, 8) });
+    sendRoomInfo(client, room, room.lastState ? "対戦を観戦しています。" : "対戦開始を待ちながら観戦しています。", false);
     broadcastPresence(room);
     return;
   }
@@ -466,9 +486,11 @@ function handleMessage(client, message) {
         type: "state",
         roomCode: room.roomCode,
         reason: "syncRequest",
-        state: room.lastState,
+        state: stateForClient(room, client, room.lastState),
         version: room.stateVersion || 0,
         players: playersFor(room),
+        settings: room.settings,
+        spectatorCount: spectatorCountFor(room),
       });
     }
     return;
@@ -477,6 +499,8 @@ function handleMessage(client, message) {
   if (message.type === "start" || message.type === "state") {
     const room = rooms.get(normalizeRoomCode(message.roomCode));
     if (!room || !room.clients.has(client)) return send(client, { type: "error", message: "room not joined" });
+    if (client.role === "spectator") return send(client, { type: "error", message: "観戦者は対戦状態を変更できません。" });
+    if (message.type === "start" && client.role !== "host") return send(client, { type: "error", message: "ホストだけが対戦を開始できます。" });
     if (!message.state) return send(client, { type: "error", message: "missing state" });
     dbg("recv", { type: message.type, room: room.roomCode, role: client.role, reason: message.reason || "-", opId: message.opId || "-" });
     enqueueRoomState(room, client, message);
@@ -490,10 +514,12 @@ function enqueueRoomState(room, client, message) {
       type: message.type,
       roomCode: room.roomCode,
       reason: message.reason || "deduplicated",
-      state: room.lastState,
+      state: stateForClient(room, client, room.lastState),
       version: room.seenOpIds.get(message.opId),
       opId: message.opId,
       players: playersFor(room),
+      settings: room.settings,
+      spectatorCount: spectatorCountFor(room),
       deduplicated: true,
     });
     return;
@@ -530,6 +556,8 @@ function processRoomQueue(room) {
             version: room.stateVersion,
             opId: item.opId,
             players: playersFor(room),
+            settings: room.settings,
+            spectatorCount: spectatorCountFor(room),
             from: item.clientId,
             fromRole: item.clientRole,
           },
@@ -543,9 +571,11 @@ function processRoomQueue(room) {
 }
 
 
-function createRoom(roomCode) {
+function createRoom(roomCode, settings = {}) {
   return {
     roomCode,
+    createdAt: Date.now(),
+    settings: normalizeRoomSettings(settings),
     clients: new Set(),
     seats: { host: null, guest: null },
     lastState: null,
@@ -555,6 +585,44 @@ function createRoom(roomCode) {
     seenOpIds: new Map(),
     cleanupTimer: null,
   };
+}
+
+function publicRoomList() {
+  return [...rooms.values()]
+    .filter((room) => {
+      const host = room.seats?.host;
+      const canJoin = !room.seats?.guest && !room.lastState;
+      return Boolean(host?.connected && (canJoin || room.settings.allowSpectators));
+    })
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    .slice(0, 50)
+    .map((room) => ({
+      roomCode: room.roomCode,
+      hostName: String(room.seats.host.name || "Host").slice(0, 40),
+      playerCount: [room.seats.host, room.seats.guest].filter(Boolean).length,
+      capacity: 2,
+      spectatorCount: spectatorCountFor(room),
+      status: room.lastState ? "playing" : (room.seats.guest ? "ready" : "waiting"),
+      canJoin: Boolean(!room.seats.guest && !room.lastState),
+      canSpectate: Boolean(room.settings.allowSpectators),
+      settings: room.settings,
+    }));
+}
+
+function normalizeRoomSettings(settings = {}) {
+  const firstPlayerRule = ["random", "host", "guest"].includes(settings.firstPlayerRule)
+    ? settings.firstPlayerRule
+    : "random";
+  const allowSpectators = settings.allowSpectators === true;
+  return {
+    allowSpectators,
+    firstPlayerRule,
+    spectatorsSeeHands: allowSpectators && settings.spectatorsSeeHands === true,
+  };
+}
+
+function spectatorCountFor(room) {
+  return [...room.clients].filter((client) => client.role === "spectator").length;
 }
 
 function normalizeUserId(value) {
@@ -604,6 +672,27 @@ function attachClientToSeat(client, room, seat, playerName, deck) {
   seat.deck = client.deck;
   seat.client = client;
   seat.connected = true;
+  room.clients.add(client);
+}
+
+function attachSpectator(client, room, userId, playerName) {
+  removeClient(client);
+  if (room.cleanupTimer) {
+    clearTimeout(room.cleanupTimer);
+    room.cleanupTimer = null;
+  }
+  const replaced = [...room.clients].find((existing) => existing.role === "spectator" && existing.userId === userId);
+  if (replaced && replaced !== client) {
+    room.clients.delete(replaced);
+    replaced.roomCode = null;
+    send(replaced, { type: "replaced", message: "同じ観戦者が再接続したため、この接続を終了します。" });
+    replaced.socket.end();
+  }
+  client.roomCode = room.roomCode;
+  client.role = "spectator";
+  client.userId = userId;
+  client.name = playerName || "Spectator";
+  client.deck = null;
   room.clients.add(client);
 }
 
@@ -672,22 +761,53 @@ function sendRoomInfo(client, room, message, rejoined = false) {
     role: client.role,
     userId: client.userId,
     players: playersFor(room),
+    settings: room.settings,
+    spectatorCount: spectatorCountFor(room),
     message,
     rejoined,
-    state: room.lastState,
+    state: stateForClient(room, client, room.lastState),
     version: room.stateVersion || 0,
     ackedOpIds: [...room.seenOpIds.keys()].slice(-50),
   });
 }
 
 function broadcastPresence(room) {
-  broadcast(room, { type: "presence", roomCode: room.roomCode, players: playersFor(room) });
+  broadcast(room, {
+    type: "presence",
+    roomCode: room.roomCode,
+    players: playersFor(room),
+    settings: room.settings,
+    spectatorCount: spectatorCountFor(room),
+  });
 }
 
 function broadcast(room, payload, exceptClient = null) {
   for (const client of room.clients) {
-    if (client !== exceptClient) send(client, payload);
+    if (client === exceptClient) continue;
+    const clientPayload = payload.state
+      ? { ...payload, state: stateForClient(room, client, payload.state) }
+      : payload;
+    send(client, clientPayload);
   }
+}
+
+function stateForClient(room, client, sourceState) {
+  if (!sourceState || client.role !== "spectator" || room.settings.spectatorsSeeHands) return sourceState;
+  const state = JSON.parse(JSON.stringify(sourceState));
+  for (const player of Object.values(state.players || {})) {
+    if (!Array.isArray(player?.hand)) continue;
+    player.hand = player.hand.map(() => ({
+      id: "hidden-card",
+      name: "非公開カード",
+      type: "hidden",
+      hidden: true,
+      cost: {},
+      actCost: {},
+      abilities: [],
+      keywords: [],
+    }));
+  }
+  return state;
 }
 
 function send(client, payload) {

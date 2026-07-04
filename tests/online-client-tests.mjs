@@ -88,10 +88,23 @@ try {
   });
   assert(loadedDeckCount === 1, "client should load server-saved decks");
 
-  await host.evaluate(() => {
+  const roomSettingsDraft = await host.evaluate(() => {
     window.__twcg.testing.signInWithGoogleDemo();
-    window.__twcg.testing.createRoomMatch();
+    window.__twcg.testing.openMatchLobby();
+    window.__twcg.testing.openRoomSettingsMenu();
+    window.__twcg.testing.updateRoomSetting("allowSpectators", true);
+    window.__twcg.testing.updateRoomSetting("firstPlayerRule", "host");
+    window.__twcg.testing.updateRoomSetting("spectatorsSeeHands", true);
+    return {
+      menuOpen: window.__twcg.app.match.roomSettingsMenuOpen,
+      draft: window.__twcg.app.match.roomSettingsDraft,
+    };
   });
+  assert(roomSettingsDraft.menuOpen === true, "room creation should open the settings menu before publishing");
+  assert(roomSettingsDraft.draft.allowSpectators === true, "room settings should allow spectators");
+  assert(roomSettingsDraft.draft.firstPlayerRule === "host", "room settings should store the first-player rule");
+  assert(roomSettingsDraft.draft.spectatorsSeeHands === true, "room settings should store spectator hand visibility");
+  await host.evaluate(() => window.__twcg.testing.confirmRoomSettingsAndCreate());
   const roomCode = await waitForPage(host, () => window.__twcg.app.match.status === "online" && window.__twcg.app.match.roomCode, "host room");
   const copiedRoomCode = await host.evaluate(async () => {
     Object.defineProperty(navigator, "clipboard", {
@@ -103,16 +116,24 @@ try {
   });
   assert(copiedRoomCode === roomCode, "room code copy should write the active room code");
 
-  await guest.evaluate((code) => {
+  const listedRoom = await guest.evaluate(async () => {
     window.__twcg.testing.signInAsGuest();
-    window.__twcg.app.match.roomCode = code;
-    window.__twcg.testing.joinRoomMatch();
-  }, roomCode);
+    window.__twcg.testing.openMatchLobby();
+    await window.__twcg.testing.refreshRoomList();
+    return window.__twcg.app.match.roomList[0];
+  });
+  assert(listedRoom?.roomCode === roomCode, "guest lobby should list the host waiting room");
+  assert(listedRoom?.hostName === "Google Player", "room list should show the host display name");
+  assert(listedRoom?.playerCount === 1 && listedRoom?.capacity === 2, "room list should show occupancy");
+  assert(listedRoom?.canSpectate === true && listedRoom?.settings?.spectatorsSeeHands === true, "room list should expose spectator settings");
+  await guest.evaluate((code) => window.__twcg.testing.joinListedRoom(code), roomCode);
   await waitForPage(guest, () => window.__twcg.app.match.status === "online", "guest joined");
 
   await host.evaluate(() => window.__twcg.testing.startOnlineMatch());
   await waitForPage(host, () => window.__twcg.app.screen === "game", "host game screen");
   await waitForPage(guest, () => window.__twcg.app.screen === "game", "guest game screen");
+  assert(await host.evaluate(() => window.__twcg.state.activePlayer === "p1"), "host-first room setting should start with p1");
+
   const hostPerspective = await host.evaluate(() => {
     window.__twcg.state.board = Array.from({ length: 4 }, () => Array(5).fill(null));
     window.__twcg.testing.placeUnit("lightInfantry", "p1", 3, 0);
@@ -165,12 +186,17 @@ try {
   );
   assert(guestPreConfirmPopup.handConfirmVisible === false, "opponent pre-confirm hand selection should not show a card popup");
   assert(guestPreConfirmPopup.hasCardReveal === false, "opponent pre-confirm hand selection should not reveal card content");
-  await host.evaluate(() => {
+  const wildPlay = await host.evaluate(() => {
     window.__twcg.testing.setResources("p1", { funds: 10, people: 10, nature: 10, ore: 10, fuel: 10, electric: 10, magic: 10 });
-    const handIndex = window.__twcg.testing.addHandCard("p1", "hiddenSupply");
-    window.__twcg.testing.playWildFromHand(handIndex);
+    window.__twcg.testing.addHandCard("p1", "hiddenSupply");
+    const handIndex = window.__twcg.state.players.p1.hand.findLastIndex((card) => card.id === "hiddenSupply");
+    const card = window.__twcg.state.players.p1.hand[handIndex];
+    if (card) card.type = "wild";
+    const result = window.__twcg.testing.playWildFromHand(handIndex);
     window.__twcg.testing.broadcastOnlineState();
+    return { handIndex, cardId: card?.id, cardType: card?.type, result, role: window.__twcg.app.match.role, activePlayer: window.__twcg.state.activePlayer };
   });
+  assert(wildPlay.result === true, `host should play the added wild card: ${JSON.stringify(wildPlay)}`);
   const guestCardReveal = await waitForPage(
     guest,
     () =>
@@ -204,6 +230,34 @@ try {
   });
   const guestTurn = await waitForPage(guest, () => window.__twcg.state.turn === 7 && window.__twcg.state.turn, "guest turn sync");
   assert(guestTurn === 7, "guest should receive host state updates");
+
+  const spectator = await browser.newPage();
+  await spectator.goto(`http://localhost:${port}`, { waitUntil: "domcontentloaded" });
+  const spectatableRoom = await spectator.evaluate(async () => {
+    window.__twcg.testing.signInAsGuest();
+    window.__twcg.testing.openMatchLobby();
+    await window.__twcg.testing.refreshRoomList();
+    return window.__twcg.app.match.roomList.find((room) => room.status === "playing");
+  });
+  assert(spectatableRoom?.roomCode === roomCode && spectatableRoom?.canSpectate === true, "started room should remain available for spectating");
+  await spectator.evaluate((code) => window.__twcg.testing.joinSpectatorRoom(code), roomCode);
+  await waitForPage(spectator, () => window.__twcg.app.screen === "game" && window.__twcg.app.match.role === "spectator", "spectator game screen");
+  const spectatorView = await spectator.evaluate(() => {
+    const summary = window.__twcg.testing.summary();
+    const before = window.__twcg.state.activePlayer;
+    return {
+      controlledPlayer: window.__twcg.testing.controlledPlayerId(),
+      canSeeHands: window.__twcg.testing.canSpectatorSeeHands(),
+      p1HandVisible: summary.players.p1.hand.some((card) => !card.hidden),
+      p2HandVisible: summary.players.p2.hand.some((card) => !card.hidden),
+      actionResult: window.__twcg.testing.endTurn(),
+      activePlayerBefore: before,
+      activePlayerAfter: window.__twcg.state.activePlayer,
+    };
+  });
+  assert(spectatorView.controlledPlayer === null, "spectator should not control either player");
+  assert(spectatorView.canSeeHands === true && spectatorView.p1HandVisible && spectatorView.p2HandVisible, "hand-visible spectator mode should expose both hands");
+  assert(spectatorView.actionResult === false && spectatorView.activePlayerAfter === spectatorView.activePlayerBefore, "spectator actions should be blocked locally");
 
   await host.evaluate(() => window.__twcg.testing.forceOnlineDisconnect());
   const hostReconnected = await waitForPage(
@@ -253,7 +307,7 @@ try {
     window.__twcg.app.deckName = "Host Current Deck";
     window.__twcg.testing.signInWithGoogleDemo();
     window.__twcg.app.match.selectedDeckId = null;
-    window.__twcg.testing.createRoomMatch();
+    window.__twcg.testing.createRoomMatch({ allowSpectators: false, firstPlayerRule: "guest", spectatorsSeeHands: false });
   });
   const currentDeckRoomCode = await waitForPage(
     hostCurrentDeck,
@@ -292,6 +346,7 @@ try {
   await hostCurrentDeck.evaluate(() => window.__twcg.testing.startMatchFromLobby());
   await waitForPage(hostCurrentDeck, () => window.__twcg.app.screen === "game", "current deck host game screen");
   await waitForPage(guestCurrentDeck, () => window.__twcg.app.screen === "game", "current deck guest game screen");
+  assert(await hostCurrentDeck.evaluate(() => window.__twcg.state.activePlayer === "p2" && window.__twcg.state.turnStartSummary?.playerId === "p2"), "guest-first room setting should initialize p2's first turn");
   const matchedDecks = await hostCurrentDeck.evaluate(() => ({
     p1Core: window.__twcg.state.players.p1.core.id,
     p2Core: window.__twcg.state.players.p2.core.id,
@@ -329,7 +384,10 @@ try {
   );
   assert(guestReentered === true, "same guest identity should reclaim the guest seat from a new page");
 
-  await host.evaluate(() => window.__twcg.testing.regenerateRoomMatch());
+  await host.evaluate(() => {
+    window.__twcg.testing.regenerateRoomMatch();
+    window.__twcg.testing.confirmRoomSettingsAndCreate();
+  });
   const regeneratedRoomCode = await waitForPage(
     host,
     (oldCode) => window.__twcg.app.match.status === "online"
@@ -431,7 +489,7 @@ try {
   );
 
   await browser.close();
-  console.log(JSON.stringify({ ok: true, cases: ["client-deck-sync", "client-create", "client-copy-room-code", "client-join", "client-start", "client-perspective", "client-player-names", "client-opponent-pre-confirm-hidden", "client-opponent-card-reveal", "client-turn-ownership", "client-state", "client-host-auto-reconnect", "client-offline-action-retry", "client-current-deck-lobby-start", "client-guest-deck-start", "client-same-user-reentry", "client-room-regenerate-discard", "client-server-restart-role-recovery", "client-host-page-reentry", "client-host-sign-out-reentry", "client-guest-sign-out-reentry"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, cases: ["client-deck-sync", "client-room-settings-menu", "client-create", "client-copy-room-code", "client-room-list", "client-join", "client-start", "client-first-player-rule", "client-spectator-join", "client-spectator-hand-visibility", "client-spectator-read-only", "client-perspective", "client-player-names", "client-opponent-pre-confirm-hidden", "client-opponent-card-reveal", "client-turn-ownership", "client-state", "client-host-auto-reconnect", "client-offline-action-retry", "client-current-deck-lobby-start", "client-guest-deck-start", "client-same-user-reentry", "client-room-regenerate-discard", "client-server-restart-role-recovery", "client-host-page-reentry", "client-host-sign-out-reentry", "client-guest-sign-out-reentry"] }, null, 2));
 } finally {
   await stopServer(server);
 }

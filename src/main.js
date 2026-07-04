@@ -72,6 +72,11 @@ const SERVER_BASE = (() => {
   return "";
 })();
 const ONLINE_DEBUG = false;
+const DEFAULT_ROOM_SETTINGS = Object.freeze({
+  allowSpectators: false,
+  firstPlayerRule: "random",
+  spectatorsSeeHands: false,
+});
 const RESOURCE_LABELS = {
   funds: "資金",
   people: "人",
@@ -4153,6 +4158,7 @@ let onlineGuestJoinRetryTimer = null;
 let applyingRemoteState = false;
 let nextOnlineOpId = 1;
 let queuedOnlineAction = null;
+let roomListRequestId = 0;
 
 // Deckmaker numeric tokens: ASCII/fullwidth digits, circled ①-⑳ (U+2460-2473), ⓪, ⓵-⓾
 const DECKMAKER_NUM_CHAR_CLASS = "0-9０-９\\u2460-\\u2473\\u24EA\\u24F5-\\u24FE";
@@ -7205,6 +7211,14 @@ function createAppState() {
       message: "オンライン対戦は未接続です。",
       players: [],
       selectedDeckId: null,
+      roomList: [],
+      roomListStatus: "idle",
+      roomListMessage: "",
+      roomListPage: 0,
+      roomSettings: { ...DEFAULT_ROOM_SETTINGS },
+      roomSettingsDraft: { ...DEFAULT_ROOM_SETTINGS },
+      roomSettingsMenuOpen: false,
+      spectatorCount: 0,
     },
     dismissedCardRevealIds: [],
     localCardPopup: null,
@@ -8019,6 +8033,113 @@ function openDeckBuilder() {
 
 function openMatchLobby() {
   app.screen = "matchLobby";
+  refreshRoomList();
+}
+
+function normalizeRoomSettingsClient(settings = {}) {
+  const allowSpectators = settings.allowSpectators === true;
+  return {
+    allowSpectators,
+    firstPlayerRule: ["random", "host", "guest"].includes(settings.firstPlayerRule) ? settings.firstPlayerRule : "random",
+    spectatorsSeeHands: allowSpectators && settings.spectatorsSeeHands === true,
+  };
+}
+
+function openRoomSettingsMenu() {
+  app.match.roomSettingsDraft = normalizeRoomSettingsClient(app.match.roomSettings || DEFAULT_ROOM_SETTINGS);
+  app.match.roomSettingsMenuOpen = true;
+  render();
+  return true;
+}
+
+function closeRoomSettingsMenu() {
+  app.match.roomSettingsMenuOpen = false;
+  render();
+  return true;
+}
+
+function updateRoomSetting(key, value) {
+  const draft = { ...normalizeRoomSettingsClient(app.match.roomSettingsDraft) };
+  if (key === "allowSpectators") draft.allowSpectators = value === true;
+  if (key === "firstPlayerRule" && ["random", "host", "guest"].includes(value)) draft.firstPlayerRule = value;
+  if (key === "spectatorsSeeHands") draft.spectatorsSeeHands = value === true;
+  app.match.roomSettingsDraft = normalizeRoomSettingsClient(draft);
+  render();
+  return true;
+}
+
+function confirmRoomSettingsAndCreate() {
+  const settings = normalizeRoomSettingsClient(app.match.roomSettingsDraft);
+  app.match.roomSettingsMenuOpen = false;
+  return createRoomMatch(settings);
+}
+
+function preservedRoomListState() {
+  return {
+    roomList: Array.isArray(app.match.roomList) ? app.match.roomList : [],
+    roomListStatus: app.match.roomListStatus || "idle",
+    roomListMessage: app.match.roomListMessage || "",
+    roomListPage: Number(app.match.roomListPage) || 0,
+  };
+}
+
+async function refreshRoomList({ silent = false } = {}) {
+  const requestId = ++roomListRequestId;
+  if (!silent) {
+    app.match.roomListStatus = "loading";
+    app.match.roomListMessage = "募集中ルームを取得しています。";
+    render();
+  }
+  try {
+    const response = await fetch(`${SERVER_BASE}/api/rooms`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    if (requestId !== roomListRequestId) return false;
+    app.match.roomList = (Array.isArray(payload.rooms) ? payload.rooms : [])
+      .map((room) => ({
+        roomCode: normalizeRoomCodeClient(room.roomCode),
+        hostName: String(room.hostName || "Host").slice(0, 40),
+        playerCount: Math.max(0, Number(room.playerCount) || 0),
+        capacity: Math.max(1, Number(room.capacity) || 2),
+        spectatorCount: Math.max(0, Number(room.spectatorCount) || 0),
+        status: ["waiting", "ready", "playing"].includes(room.status) ? room.status : "waiting",
+        canJoin: room.canJoin === true,
+        canSpectate: room.canSpectate === true,
+        settings: normalizeRoomSettingsClient(room.settings),
+      }))
+      .filter((room) => room.roomCode);
+    const pageCount = Math.max(1, Math.ceil(app.match.roomList.length / 5));
+    app.match.roomListPage = Math.min(Number(app.match.roomListPage) || 0, pageCount - 1);
+    app.match.roomListStatus = "ready";
+    app.match.roomListMessage = app.match.roomList.length
+      ? `${app.match.roomList.length}件の対戦ルームがあります。`
+      : "現在、参加・観戦できるルームはありません。";
+    if (app.screen === "matchLobby") render();
+    return true;
+  } catch {
+    if (requestId !== roomListRequestId) return false;
+    app.match.roomListStatus = "error";
+    app.match.roomListMessage = "ルーム一覧を取得できませんでした。";
+    if (app.screen === "matchLobby") render();
+    return false;
+  }
+}
+
+function joinListedRoom(roomCode) {
+  if (["online", "connecting"].includes(app.match.status)) {
+    app.match.message = "参加中のルームを終了してから別のルームへ参加してください。";
+    render();
+    return false;
+  }
+  app.match.roomCode = normalizeRoomCodeClient(roomCode);
+  roomCodeInput.value = app.match.roomCode;
+  return joinRoomMatch();
+}
+
+function changeRoomListPage(delta) {
+  const pageCount = Math.max(1, Math.ceil((app.match.roomList?.length || 0) / 5));
+  app.match.roomListPage = Math.max(0, Math.min(pageCount - 1, (Number(app.match.roomListPage) || 0) + delta));
+  render();
 }
 
 function leaveMatchToLobby() {
@@ -8031,6 +8152,7 @@ function leaveMatchToLobby() {
   state.winner = null;
   const selectedDeckId = app.match.selectedDeckId;
   app.match = {
+    ...preservedRoomListState(),
     status: "offline",
     mode: "未開始",
     roomCode: "",
@@ -8041,16 +8163,20 @@ function leaveMatchToLobby() {
     message: "試合を終了し、ロビーに戻りました。",
     players: [],
     selectedDeckId,
+    roomSettings: { ...DEFAULT_ROOM_SETTINGS },
+    roomSettingsDraft: { ...DEFAULT_ROOM_SETTINGS },
+    roomSettingsMenuOpen: false,
+    spectatorCount: 0,
   };
   app.screen = "matchLobby";
   render();
 }
 
-function resetMatchGame(p2Deck) {
+function resetMatchGame(p2Deck, options = {}) {
   const d2 = p2Deck || app.deck;
   Object.assign(state, createGame(
     app.deck.main, app.deck.struct, app.deck.core,
-    {},
+    options,
     d2.main, d2.struct, d2.core,
   ));
   nextInstanceId = 1;
@@ -8071,7 +8197,7 @@ function startLocalMatch() {
   }
   const selectedDeckId = app.match.selectedDeckId;
   resetMatchGame();
-  app.match = { status: "local", mode: "ローカル対戦", roomCode: "", role: "host", connection: "offline", message: "同じブラウザ内で対戦中です。", players: [], selectedDeckId };
+  app.match = { ...preservedRoomListState(), status: "local", mode: "ローカル対戦", roomCode: "", role: "host", connection: "offline", message: "同じブラウザ内で対戦中です。", players: [], selectedDeckId };
   app.screen = "game";
 }
 
@@ -8110,7 +8236,7 @@ function readOnlineSession() {
 }
 
 function persistOnlineSession(snapshot = null) {
-  if (!app.match.roomCode || !app.match.userId || !["host", "guest"].includes(app.match.role)) return;
+  if (!app.match.roomCode || !app.match.userId || !["host", "guest", "spectator"].includes(app.match.role)) return;
   try {
     const previous = readOnlineSession();
     const recoveryState = snapshot
@@ -8122,7 +8248,10 @@ function persistOnlineSession(snapshot = null) {
       userId: app.match.userId,
       role: app.match.role,
       playerName: app.auth?.name || app.match.players?.find((player) => player.role === app.match.role)?.name || "Player",
-      deck: normalizeDeckData(app.match.role === "host" ? app.match.hostDeck : app.match.guestDeck) || normalizeDeckData(currentDeckPayload()),
+      deck: app.match.role === "spectator"
+        ? null
+        : normalizeDeckData(app.match.role === "host" ? app.match.hostDeck : app.match.guestDeck) || normalizeDeckData(currentDeckPayload()),
+      roomSettings: normalizeRoomSettingsClient(app.match.roomSettings),
       stateVersion: Number(app.match.lastStateVersion) || Number(previous?.stateVersion) || 0,
       ...(recoveryState ? { state: recoveryState } : {}),
     };
@@ -8138,14 +8267,15 @@ function persistOnlineSession(snapshot = null) {
   }
 }
 
-function configureOnlineSession({ roomCode, role, playerName, deck, state: recoveryState = null, stateVersion = 0, intent = "rejoin", acknowledged = false, userId = onlineUserId() }) {
+function configureOnlineSession({ roomCode, role, playerName, deck, roomSettings, state: recoveryState = null, stateVersion = 0, intent = "rejoin", acknowledged = false, userId = onlineUserId() }) {
   clearGuestRoomJoinRetry();
   onlineGuestJoinRetries = 0;
   onlineDesiredSession = {
     roomCode: String(roomCode || "").trim().toUpperCase(),
     role,
     playerName: playerName || app.auth?.name || "Player",
-    deck: normalizeDeckData(deck) || normalizeDeckData(currentDeckPayload()),
+    deck: role === "spectator" ? null : normalizeDeckData(deck) || normalizeDeckData(currentDeckPayload()),
+    roomSettings: normalizeRoomSettingsClient(roomSettings || app.match.roomSettings),
     intent,
     acknowledged,
     userId,
@@ -8159,7 +8289,7 @@ function configureOnlineSession({ roomCode, role, playerName, deck, state: recov
 function resumeOnlineSessionIfAvailable() {
   const saved = readOnlineSession();
   if (!saved || saved.userId !== onlineUserId()) return false;
-  configureOnlineSession({ ...saved, intent: "rejoin", acknowledged: true });
+  configureOnlineSession({ ...saved, intent: saved.role === "spectator" ? "spectate" : "rejoin", acknowledged: true });
   app.match = {
     ...app.match,
     status: "connecting",
@@ -8169,9 +8299,10 @@ function resumeOnlineSessionIfAvailable() {
     userId: saved.userId,
     connection: "reconnecting",
     message: "前回の席へ再接続しています。",
+    roomSettings: normalizeRoomSettingsClient(saved.roomSettings),
   };
   if (saved.role === "host") app.match.hostDeck = normalizeDeckData(saved.deck);
-  else app.match.guestDeck = normalizeDeckData(saved.deck);
+  else if (saved.role === "guest") app.match.guestDeck = normalizeDeckData(saved.deck);
   app.screen = "matchLobby";
   connectOnline();
   return true;
@@ -8214,7 +8345,7 @@ function leaveCurrentRoomBeforeCreate() {
   }, { scheduleReconnect: false });
 }
 
-function createRoomMatch() {
+function createRoomMatch(settings = app.match.roomSettings || DEFAULT_ROOM_SETTINGS) {
   if (!prepareSelectedDeckForMatch()) return;
   leaveCurrentRoomBeforeCreate();
   try { sessionStorage.removeItem(ONLINE_SESSION_KEY); } catch {}
@@ -8222,25 +8353,32 @@ function createRoomMatch() {
   const roomCode = makeRoomCode();
   const hostDeck = normalizeDeckData(currentDeckPayload());
   const selectedDeckId = app.match.selectedDeckId || null;
+  const roomSettings = normalizeRoomSettingsClient(settings);
   app.match = {
+    ...preservedRoomListState(),
     status: "connecting",
-    mode: "??????????",
+    mode: "オンライン接続中",
     roomCode,
     role: "host",
     connection: "connecting",
-    message: "??????????????????",
+    message: "オンラインルームを作成しています。",
     players: [],
     selectedDeckId,
     hostDeck,
+    roomSettings,
+    roomSettingsDraft: { ...roomSettings },
+    roomSettingsMenuOpen: false,
+    spectatorCount: 0,
   };
   app.screen = "matchLobby";
-  const session = configureOnlineSession({ roomCode, role: "host", playerName: app.auth.name, deck: hostDeck || app.deck, intent: "create" });
+  const session = configureOnlineSession({ roomCode, role: "host", playerName: app.auth.name, deck: hostDeck || app.deck, roomSettings, intent: "create" });
   connectOnline(() =>
     sendOnline({
       type: "create",
       roomCode,
       playerName: app.auth.name,
       deck: hostDeck || app.deck,
+      settings: roomSettings,
       userId: session.userId,
     }),
   );
@@ -8249,7 +8387,7 @@ function createRoomMatch() {
 function joinRoomMatch() {
   const requestedCode = (app.match.roomCode || "").trim().toUpperCase();
   if (!requestedCode) {
-    app.match.message = "????????????????????????????";
+    app.match.message = "参加するルームコードを入力してください。";
     app.match.roomCodeFocused = true;
     roomCodeInput.value = "";
     setTimeout(() => roomCodeInput.focus(), 0);
@@ -8263,14 +8401,18 @@ function joinRoomMatch() {
   const guestDeck = normalizeDeckData(currentDeckPayload());
   const selectedDeckId = app.match.selectedDeckId || null;
   app.match = {
+    ...preservedRoomListState(),
     status: "connecting",
-    mode: "??????????",
+    mode: "オンライン接続中",
     roomCode: requestedCode,
     role,
     connection: "connecting",
-    message: "??????????????????",
+    message: "オンラインルームへ接続しています。",
     players: [],
     selectedDeckId,
+    roomSettings: normalizeRoomSettingsClient(app.match.roomSettings),
+    roomSettingsMenuOpen: false,
+    spectatorCount: 0,
     ...(role === "host" ? { hostDeck: normalizeDeckData(knownSession?.deck) || guestDeck } : { guestDeck }),
   };
   app.screen = "matchLobby";
@@ -8279,6 +8421,7 @@ function joinRoomMatch() {
     role,
     playerName: app.auth.name,
     deck: normalizeDeckData(knownSession?.deck) || guestDeck || app.deck,
+    roomSettings: app.match.roomSettings,
     state: knownSession?.state || null,
     stateVersion: knownSession?.stateVersion || 0,
     intent: knownSession ? "rejoin" : "join",
@@ -8288,8 +8431,46 @@ function joinRoomMatch() {
   connectOnline(() => sendDesiredSessionHandshake());
 }
 
+function joinSpectatorRoom(roomCode) {
+  const requestedCode = normalizeRoomCodeClient(roomCode);
+  if (!requestedCode) return false;
+  if (["online", "connecting"].includes(app.match.status)) {
+    app.match.message = "参加中のルームを終了してから観戦してください。";
+    render();
+    return false;
+  }
+  const listedRoom = (app.match.roomList || []).find((room) => room.roomCode === requestedCode);
+  const roomSettings = normalizeRoomSettingsClient(listedRoom?.settings);
+  app.match = {
+    ...preservedRoomListState(),
+    status: "connecting",
+    mode: "観戦接続中",
+    roomCode: requestedCode,
+    role: "spectator",
+    connection: "connecting",
+    message: "観戦接続しています。",
+    players: [],
+    selectedDeckId: app.match.selectedDeckId || null,
+    roomSettings,
+    roomSettingsMenuOpen: false,
+    spectatorCount: 0,
+  };
+  app.screen = "matchLobby";
+  configureOnlineSession({
+    roomCode: requestedCode,
+    role: "spectator",
+    playerName: app.auth.name,
+    deck: null,
+    roomSettings,
+    intent: "spectate",
+    userId: onlineUserId(),
+  });
+  connectOnline(() => sendDesiredSessionHandshake());
+  return true;
+}
+
 function regenerateRoomMatch() {
-  return createRoomMatch();
+  return openRoomSettingsMenu();
 }
 
 function makeRoomCode() {
@@ -8372,15 +8553,18 @@ function sendDesiredSessionHandshake() {
   if (!session?.roomCode || !session.userId) return false;
   // A known host uses create as an idempotent rejoin. If the in-memory room was
   // lost during a server restart, the same handshake recreates it as host.
-  const type = session.acknowledged
-    ? (session.role === "host" ? "create" : "join")
-    : session.intent;
+  const type = session.role === "spectator"
+    ? "spectate"
+    : session.acknowledged
+      ? (session.role === "host" ? "create" : "join")
+      : session.intent;
   return sendOnline({
     type,
     roomCode: session.roomCode,
     userId: session.userId,
     playerName: session.playerName,
     deck: session.deck,
+    settings: session.roomSettings,
   }, { scheduleReconnect: false });
 }
 
@@ -8507,6 +8691,11 @@ setInterval(() => {
   requestOnlineStateSync("poll");
 }, 2500);
 
+setInterval(() => {
+  if (app.screen !== "matchLobby") return;
+  refreshRoomList({ silent: true });
+}, 5000);
+
 window.addEventListener("online", () => {
   if (onlineDesiredSession && onlineSocket?.readyState !== WebSocket.OPEN) {
     if (onlineReconnectTimer) clearTimeout(onlineReconnectTimer);
@@ -8527,14 +8716,16 @@ function handleOnlineMessage(message) {
     clearGuestRoomJoinRetry();
     onlineGuestJoinRetries = 0;
     app.match.status = "online";
-    app.match.mode = message.role === "host" ? "????????" : "????????";
+    app.match.mode = message.role === "host" ? "ルームホスト" : message.role === "guest" ? "ルームゲスト" : "観戦中";
     app.match.roomCode = message.roomCode;
     app.match.role = message.role;
     app.match.userId = message.userId || onlineDesiredSession?.userId || app.match.userId;
     app.match.connection = "connected";
     app.match.players = message.players || [];
+    app.match.roomSettings = normalizeRoomSettingsClient(message.settings || app.match.roomSettings);
+    app.match.spectatorCount = Math.max(0, Number(message.spectatorCount) || 0);
     syncMatchDecksFromPlayers(app.match.players);
-    app.match.message = message.message || "???????????";
+    app.match.message = message.message || "ルームに接続しました。";
     if (onlineDesiredSession) {
       onlineDesiredSession.role = message.role;
       onlineDesiredSession.acknowledged = true;
@@ -8545,6 +8736,7 @@ function handleOnlineMessage(message) {
         userId: app.match.userId,
         playerName: app.auth?.name,
         deck: message.role === "host" ? app.match.hostDeck : app.match.guestDeck,
+        roomSettings: app.match.roomSettings,
         acknowledged: true,
       });
     }
@@ -8565,7 +8757,7 @@ function handleOnlineMessage(message) {
         markOnlineStateApplied(message.version);
         applyOnlinePlayerNames();
         app.screen = "game";
-        app.match.mode = "???????";
+        app.match.mode = "オンライン対戦";
       }
       render();
     } else if (message.role === "host" && onlineDesiredSession?.recoveryState) {
@@ -8621,23 +8813,31 @@ function handleOnlineMessage(message) {
   }
   if (message.type === "presence") {
     app.match.players = message.players || app.match.players;
+    app.match.roomSettings = normalizeRoomSettingsClient(message.settings || app.match.roomSettings);
+    app.match.spectatorCount = Math.max(0, Number(message.spectatorCount) || 0);
     syncMatchDecksFromPlayers(app.match.players);
-    app.match.message = connectedOnlinePlayerCount() >= 2
-      ? "対戦相手が接続しています。"
-      : "対戦相手の再接続を待っています。";
+    app.match.message = app.match.role === "spectator"
+      ? `観戦中です。観戦者 ${app.match.spectatorCount}人。`
+      : connectedOnlinePlayerCount() >= 2
+        ? "対戦相手が接続しています。"
+        : (app.match.players || []).length >= 2
+          ? "対戦相手の再接続を待っています。"
+          : "対戦相手の参加を待っています。";
     if (app.screen === "game") applyOnlinePlayerNames();
     render();
     return;
   }
   if (message.type === "start") {
     if (message.players) app.match.players = message.players;
+    app.match.roomSettings = normalizeRoomSettingsClient(message.settings || app.match.roomSettings);
+    app.match.spectatorCount = Math.max(0, Number(message.spectatorCount) || 0);
     syncMatchDecksFromPlayers(app.match.players);
     if (!shouldApplyOnlineState(message.version, message.reason === "syncRequest")) return;
     applyRemoteGameState(message.state);
     markOnlineStateApplied(message.version);
     applyOnlinePlayerNames();
     app.match.status = "online";
-    app.match.mode = "???????";
+    app.match.mode = "オンライン対戦";
     app.screen = "game";
     persistOnlineSession(message.state);
     render();
@@ -8649,6 +8849,8 @@ function handleOnlineMessage(message) {
       app.match.players = message.players;
       syncMatchDecksFromPlayers(app.match.players);
     }
+    app.match.roomSettings = normalizeRoomSettingsClient(message.settings || app.match.roomSettings);
+    app.match.spectatorCount = Math.max(0, Number(message.spectatorCount) || 0);
     // Clear queued action before version check: a syncRequest poll can advance lastStateVersion
     // to the same version as the action echo, causing the echo to fail shouldApplyOnlineState.
     if (message.opId && queuedOnlineAction?.opId === message.opId) {
@@ -8674,7 +8876,7 @@ function handleOnlineMessage(message) {
       if (onlineDesiredSession.role === "host") {
         app.match.message = "ルームをホストとして復旧しています。";
         sendDesiredSessionHandshake();
-      } else {
+      } else if (onlineDesiredSession.role === "guest") {
         scheduleGuestRoomJoinRetry();
       }
     }
@@ -8710,6 +8912,10 @@ function connectedOnlinePlayerCount(players = app.match.players) {
 function startMatchFromLobby() {
   if (!prepareSelectedDeckForMatch()) return;
   if (app.match.status === "online" || app.match.status === "connecting") {
+    if (app.match.role !== "host") {
+      app.match.message = app.match.role === "spectator" ? "観戦者は対戦を開始できません。" : "オンライン対戦はホストが開始します。";
+      return;
+    }
     if (connectedOnlinePlayerCount() < 2) {
       app.match.message = "対戦相手が接続するまで開始できません。";
       return;
@@ -8731,13 +8937,13 @@ function prepareSelectedDeckForMatch() {
   if (!app.match.selectedDeckId) {
     const deck = normalizeDeckData(currentDeckPayload());
     if (!deck) {
-      app.match.message = "????????????????????????????????????";
+      app.match.message = "現在のデッキを対戦用に読み込めません。";
       return false;
     }
     app.deck = deck;
-    app.deckName = app.deckName || "??????";
+    app.deckName = app.deckName || "現在のデッキ";
     app.match.selectedDeckId = null;
-    app.match.message = String(app.deckName) + " ????????????????";
+    app.match.message = `${app.deckName} を使用デッキに選択しました。`;
     return true;
   }
 
@@ -8745,21 +8951,25 @@ function prepareSelectedDeckForMatch() {
   if (!selectedId || !selectMatchDeck(selectedId)) {
     const deck = normalizeDeckData(currentDeckPayload());
     if (!deck) {
-      app.match.message = "??????????????????????";
+      app.match.message = "選択したデッキを読み込めません。";
       return false;
     }
     app.deck = deck;
     app.match.selectedDeckId = null;
-    app.match.message = String(app.deckName) + " ????????????????";
+    app.match.message = `${app.deckName} を使用デッキに選択しました。`;
     return true;
   }
   return true;
 }
 
 function startOnlineMatch() {
+  if (app.match.role !== "host") {
+    app.match.message = "オンライン対戦はホストだけが開始できます。";
+    return false;
+  }
   syncMatchDecksFromPlayers();
   if (connectedOnlinePlayerCount() < 2) {
-    app.match.message = "対戦相手の再接続を待ってください。";
+    app.match.message = "対戦相手が接続するまで開始できません。";
     return;
   }
   const hostDeck = normalizeDeckData(app.match.hostDeck || currentDeckPayload());
@@ -8771,8 +8981,15 @@ function startOnlineMatch() {
     return;
   }
 
+  const roomSettings = normalizeRoomSettingsClient(app.match.roomSettings);
+  const firstPlayerRole = roomSettings.firstPlayerRule === "random"
+    ? (Math.random() < 0.5 ? "host" : "guest")
+    : roomSettings.firstPlayerRule;
+  const startingPlayerId = firstPlayerRole === "guest" ? "p2" : "p1";
   if (hostDeck) app.deck = hostDeck;
-  resetMatchGame(guestDeck || null);
+  resetMatchGame(guestDeck || null, { startingPlayerId });
+  state.onlineOptions = { roomSettings, firstPlayerRole };
+  app.match.firstPlayerRole = firstPlayerRole;
   applyOnlinePlayerNames();
   const snapshot = serializeGameState();
   if (!sendOnline({
@@ -8782,8 +8999,8 @@ function startOnlineMatch() {
   })) return;
   applyRemoteGameState(snapshot);
   app.match.status = "online";
-  app.match.mode = "???????";
-  app.match.message = "???????????????";
+  app.match.mode = "オンライン対戦";
+  app.match.message = "オンライン対戦を開始しました。";
   app.screen = "game";
   persistOnlineSession(snapshot);
 }
@@ -8808,6 +9025,8 @@ function applyRemoteGameState(remoteState) {
   applyingRemoteState = true;
   try {
     Object.assign(state, normalizeGameResources(JSON.parse(JSON.stringify(remoteState))));
+    if (state.onlineOptions?.roomSettings) app.match.roomSettings = normalizeRoomSettingsClient(state.onlineOptions.roomSettings);
+    if (["host", "guest"].includes(state.onlineOptions?.firstPlayerRole)) app.match.firstPlayerRole = state.onlineOptions.firstPlayerRole;
     nextInstanceId = Math.max(nextInstanceId, highestInstanceId(state) + 1);
     refreshContinuousEffects(state);
   } finally {
@@ -9110,8 +9329,9 @@ function createGame(
   p2MainDeckIds, p2StructDeckIds, p2CoreId,
 ) {
   const shuffleMainDeck = options.shuffleMainDeck !== false;
+  const startingPlayerId = options.startingPlayerId === "p2" ? "p2" : "p1";
   const game = {
-    activePlayer: "p1",
+    activePlayer: startingPlayerId,
     phase: "main",
     turn: 1,
     winner: null,
@@ -9143,7 +9363,7 @@ function createGame(
     normalizeMisplacedStructCards(game, playerId);
   }
   log(game, "ゲーム開始");
-  startTurn(game, "p1", { skipDraw: true });
+  startTurn(game, startingPlayerId, { skipDraw: true });
   return game;
 }
 
@@ -10651,10 +10871,12 @@ function opponentOf(playerId) {
 }
 
 function controlledPlayerId() {
+  if (app.match.role === "spectator") return null;
   return app.match.role === "guest" ? "p2" : "p1";
 }
 
 function viewerPlayerId() {
+  if (app.match.status === "online" && app.match.role === "spectator") return "p1";
   if (app.match.status === "online") return controlledPlayerId();
   return state.activePlayer || "p1";
 }
@@ -10687,12 +10909,12 @@ function changeStructDeckScroll(delta) {
 
 function canControlActivePlayer() {
   if (app.match.status !== "online") return true;
-  return controlledPlayerId() === state.activePlayer;
+  return Boolean(controlledPlayerId() && controlledPlayerId() === state.activePlayer);
 }
 
 function canControlChoicePlayer(playerId) {
   if (app.match.status !== "online") return true;
-  return controlledPlayerId() === playerId;
+  return Boolean(controlledPlayerId() && controlledPlayerId() === playerId);
 }
 
 function isStructPhaseInputLocked() {
@@ -10701,7 +10923,7 @@ function isStructPhaseInputLocked() {
 
 function requireActivePlayerControl() {
   if (canControlActivePlayer()) return true;
-  state.message = "相手のターンです。操作できません。";
+  state.message = app.match.role === "spectator" ? "観戦中は対戦を操作できません。" : "相手のターンです。操作できません。";
   return false;
 }
 
@@ -16844,6 +17066,7 @@ function drawGameOverOverlay() {
   if (!state.winner) return;
   const viewer = viewerPlayerId();
   const winnerName = state.players[state.winner]?.name || state.winner;
+  const spectating = app.match.status === "online" && app.match.role === "spectator";
   const won = state.winner === viewer;
   ctx.fillStyle = "rgba(0, 0, 8, 0.72)";
   ctx.fillRect(0, 0, W, H);
@@ -16852,11 +17075,11 @@ function drawGameOverOverlay() {
   const h = 220;
   const x = W / 2 - w / 2;
   const y = H / 2 - h / 2;
-  roundRect(x, y, w, h, 12, "rgba(8,12,28,0.97)", won ? "#40c080" : "#c04040", 2);
-  ctx.fillStyle = won ? "#80f0b0" : "#f08080";
+  roundRect(x, y, w, h, 12, "rgba(8,12,28,0.97)", spectating ? "#407fd0" : won ? "#40c080" : "#c04040", 2);
+  ctx.fillStyle = spectating ? "#a9ccff" : won ? "#80f0b0" : "#f08080";
   ctx.font = "700 26px 'Yu Gothic UI', sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(won ? "勝利！" : "敗北", x + w / 2, y + 62);
+  ctx.fillText(spectating ? "対戦終了" : won ? "勝利！" : "敗北", x + w / 2, y + 62);
   ctx.fillStyle = "#c0d0f0";
   ctx.font = "600 15px 'Yu Gothic UI', sans-serif";
   ctx.fillText(`${winnerName} の勝利`, x + w / 2, y + 96);
@@ -17475,50 +17698,59 @@ function drawMatchLobbyScreen() {
   drawUserBadge();
   drawButton(74, 126, 108, 34, "ホーム", () => (app.screen = "home"), "#575f72");
   drawButton(194, 126, 150, 34, "デッキ編集", openDeckBuilder, "#6a5632");
-  roundRect(300, 200, 840, 520, 10, "rgba(6,8,22,0.95)", "rgba(40,80,200,0.5)", 1.5);
+  roundRect(260, 184, 920, 560, 10, "rgba(6,8,22,0.95)", "rgba(40,80,200,0.5)", 1.5);
   ctx.fillStyle = "#c0d8ff";
   ctx.font = "700 24px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("試合設定", 360, 260);
+  ctx.fillText("試合設定", 300, 230);
   ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
   ctx.fillStyle = "rgba(160,190,240,0.85)";
-  ctx.fillText(`ログイン: ${app.auth.name}`, 362, 296);
-  ctx.fillText(`コア: ${cardCatalog.cores[app.deck.core]?.name || app.deck.core}`, 362, 318);
-  ctx.fillText(`使用デッキ: ${app.deckName} / メイン ${app.deck.main.length}枚 / 施設 ${app.deck.struct.length}枚`, 362, 340, 720);
-  drawMatchDeckSelector(362, 362);
+  ctx.fillText(`ログイン: ${app.auth.name}`, 300, 262, 470);
+  ctx.fillText(`コア: ${cardCatalog.cores[app.deck.core]?.name || app.deck.core}`, 300, 284, 470);
+  ctx.fillText(`使用デッキ: ${app.deckName} / メイン ${app.deck.main.length}枚 / 施設 ${app.deck.struct.length}枚`, 300, 306, 470);
+  drawMatchDeckSelector(300, 328, { columns: 2, buttonWidth: 230 });
   ctx.fillStyle = "rgba(140,170,220,0.75)";
-  ctx.fillText(`状態: ${app.match.mode}`, 362, 448);
+  ctx.fillText(`状態: ${app.match.mode}`, 300, 430);
   // Room code display / input
   const rcFocused = app.match.roomCodeFocused;
   const rcValue = app.match.roomCode || "";
-  roundRect(362, 454, 260, 32, 6, rcFocused ? "rgba(20,50,120,0.8)" : "rgba(10,16,40,0.7)", rcFocused ? "#5090ff" : "rgba(40,70,160,0.45)", rcFocused ? 2 : 1);
+  roundRect(300, 440, 220, 32, 6, rcFocused ? "rgba(20,50,120,0.8)" : "rgba(10,16,40,0.7)", rcFocused ? "#5090ff" : "rgba(40,70,160,0.45)", rcFocused ? 2 : 1);
   ctx.fillStyle = rcValue ? "#d0e8ff" : "rgba(80,110,180,0.5)";
   ctx.font = "700 13px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(rcValue || "ルームコードを入力…", 374, 474, 230);
-  addHit(362, 454, 260, 32, () => {
+  ctx.fillText(rcValue || "ルームコードを入力…", 312, 460, 196);
+  addHit(300, 440, 220, 32, () => {
     app.match.roomCodeFocused = true;
     roomCodeInput.value = app.match.roomCode || "";
     setTimeout(() => roomCodeInput.focus(), 0);
   });
-  drawButton(634, 454, 100, 32, "コードコピー", copyRoomCode, null, { micro: true });
-  drawButton(746, 454, 100, 32, "再生成", regenerateRoomMatch, null, { micro: true });
-  ctx.fillText(`接続: ${app.match.connection || "offline"}`, 362, 496);
+  drawButton(530, 440, 104, 32, "コードコピー", copyRoomCode, null, { micro: true });
+  drawButton(644, 440, 96, 32, "再生成", regenerateRoomMatch, null, { micro: true });
+  ctx.fillText(`接続: ${app.match.connection || "offline"}`, 300, 494);
   const participantNames = (app.match.players || [])
     .map((player) => `${player.name}${player.connected === false ? "（再接続待ち）" : ""}`)
     .join(" / ");
-  ctx.fillText(`参加者: ${participantNames || "なし"}`, 362, 516);
-  drawButton(362, 552, 210, 50, "ローカル対戦", startLocalMatch);
-  drawButton(606, 552, 210, 50, "ルーム作成", createRoomMatch, null, { accent: "p1" });
-  drawButton(850, 552, 210, 50, "ルーム参加", joinRoomMatch);
+  ctx.fillText(`参加者: ${participantNames || "なし"} / 観戦者: ${app.match.spectatorCount || 0}`, 300, 516, 440);
+  drawButton(300, 544, 140, 46, "ローカル対戦", startLocalMatch);
+  drawButton(450, 544, 140, 46, "ルーム作成", openRoomSettingsMenu, null, { accent: "p1" });
+  drawButton(600, 544, 140, 46, "コードで参加", joinRoomMatch);
   const waitingForOpponent = app.match.status === "online" && connectedOnlinePlayerCount() < 2;
-  if (app.match.status === "online" || app.match.status === "connecting") {
-    drawButton(850, 614, 210, 50, waitingForOpponent ? "相手待ち" : "オンライン開始", startMatchFromLobby, null, waitingForOpponent ? {} : { accent: "p1" });
+  if ((app.match.status === "online" || app.match.status === "connecting") && app.match.role === "host") {
+    drawButton(300, 602, 440, 44, waitingForOpponent ? "対戦相手を待っています" : "オンライン対戦を開始", startMatchFromLobby, null, waitingForOpponent ? {} : { accent: "p1" });
+  } else if ((app.match.status === "online" || app.match.status === "connecting") && app.match.role === "spectator") {
+    drawButton(300, 602, 440, 44, "観戦モード", null, null, { accent: "dim" });
   }
   ctx.fillStyle = "rgba(120,150,200,0.65)";
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(app.match.message || "保存済みデッキを選択し、ルームを作成するか参加してください。", 362, 640, 760);
+  drawWrappedText(app.match.message || "保存済みデッキを選択し、ルームを作成するか参加してください。", 300, 674, 440, 18, 3);
+  drawRoomListPanel(790, 222, 350, 482);
+  if (app.match.roomSettingsMenuOpen) drawRoomSettingsOverlay();
 }
 
-function drawMatchDeckSelector(x, y) {
+function drawMatchDeckSelector(x, y, options = {}) {
+  const columns = Math.max(1, options.columns || 4);
+  const buttonWidth = options.buttonWidth || 166;
+  const gapX = options.gapX || 10;
+  const gapY = options.gapY || 6;
+  const buttonHeight = 26;
   ctx.fillStyle = "rgba(120,150,210,0.6)";
   ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
   ctx.fillText("保存デッキ選択", x, y);
@@ -17529,10 +17761,131 @@ function drawMatchDeckSelector(x, y) {
     return;
   }
   app.savedDecks.slice(0, 4).forEach((entry, i) => {
-    const bx = x + i * 178;
+    const bx = x + (i % columns) * (buttonWidth + gapX);
+    const by = y + 16 + Math.floor(i / columns) * (buttonHeight + gapY);
     const selected = app.match.selectedDeckId === entry.id;
-    drawButton(bx, y + 16, 166, 26, entry.name, () => selectMatchDeck(entry.id), null, selected ? { accent: "p1" } : { micro: true });
+    drawButton(bx, by, buttonWidth, buttonHeight, entry.name, () => selectMatchDeck(entry.id), null, selected ? { accent: "p1" } : { micro: true });
   });
+}
+
+function drawRoomListPanel(x, y, w, h) {
+  ctx.fillStyle = "#c0d8ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("対戦ルーム", x, y);
+  drawButton(x + w - 92, y - 22, 92, 30, "一覧更新", () => refreshRoomList(), null, { micro: true });
+  roundRect(x, y + 18, w, h - 18, 8, "rgba(9,14,34,0.72)", "rgba(45,85,180,0.42)", 1);
+
+  const rooms = Array.isArray(app.match.roomList) ? app.match.roomList : [];
+  const pageSize = 5;
+  const pageCount = Math.max(1, Math.ceil(rooms.length / pageSize));
+  const page = Math.max(0, Math.min(pageCount - 1, Number(app.match.roomListPage) || 0));
+  const visibleRooms = rooms.slice(page * pageSize, (page + 1) * pageSize);
+
+  if (!visibleRooms.length) {
+    ctx.fillStyle = "rgba(135,165,215,0.72)";
+    ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+    const emptyText = app.match.roomListStatus === "loading"
+      ? "読み込み中…"
+      : app.match.roomListStatus === "error"
+        ? "一覧を取得できませんでした。"
+        : "現在、参加・観戦できるルームはありません。";
+    drawWrappedText(emptyText, x + 24, y + 82, w - 48, 20, 3);
+  }
+
+  visibleRooms.forEach((room, index) => {
+    const rowY = y + 36 + index * 66;
+    roundRect(x + 12, rowY, w - 24, 56, 6, "rgba(14,25,56,0.78)", "rgba(50,95,190,0.38)", 1);
+    ctx.fillStyle = "#d5e6ff";
+    ctx.font = "800 14px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(room.roomCode, x + 24, rowY + 22, 100);
+    ctx.fillStyle = room.status === "playing" ? "#e4b870" : "#7fd6a6";
+    ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(room.status === "playing" ? "対戦中" : room.status === "ready" ? "開始待ち" : "募集中", x + 112, rowY + 22, 70);
+    ctx.fillStyle = "rgba(155,185,230,0.82)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`ホスト: ${room.hostName}`, x + 24, rowY + 42, 155);
+    ctx.fillStyle = "rgba(170,200,240,0.9)";
+    ctx.font = "700 10px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`${room.playerCount}/${room.capacity} 観${room.spectatorCount || 0}`, x + 174, rowY + 33, 62);
+    const available = !["online", "connecting"].includes(app.match.status);
+    if (!available) {
+      drawButton(x + 248, rowY + 12, 78, 32, "参加中", null, null, { micro: true, accent: "dim" });
+    } else {
+      drawButton(x + 210, rowY + 12, 52, 32, "参加", room.canJoin ? () => joinListedRoom(room.roomCode) : null, null, room.canJoin ? { micro: true, accent: "p1" } : { micro: true, accent: "dim" });
+      drawButton(x + 270, rowY + 12, 56, 32, "観戦", room.canSpectate ? () => joinSpectatorRoom(room.roomCode) : null, null, room.canSpectate ? { micro: true } : { micro: true, accent: "dim" });
+    }
+  });
+
+  if (pageCount > 1) {
+    drawButton(x + 12, y + h - 82, 78, 28, "前へ", page > 0 ? () => changeRoomListPage(-1) : null, null, { micro: true, accent: page > 0 ? undefined : "dim" });
+    ctx.fillStyle = "rgba(150,180,225,0.8)";
+    ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`${page + 1} / ${pageCount}`, x + w / 2, y + h - 62);
+    ctx.textAlign = "left";
+    drawButton(x + w - 90, y + h - 82, 78, 28, "次へ", page < pageCount - 1 ? () => changeRoomListPage(1) : null, null, { micro: true, accent: page < pageCount - 1 ? undefined : "dim" });
+  }
+  ctx.fillStyle = "rgba(115,145,195,0.72)";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  drawWrappedText(app.match.roomListMessage || "一覧更新で募集中ルームを検索します。", x + 16, y + h - 26, w - 32, 16, 2);
+}
+
+function drawRoomSettingsOverlay() {
+  ctx.fillStyle = "rgba(0,0,10,0.76)";
+  ctx.fillRect(0, 0, W, H);
+  addHit(0, 0, W, H, () => {});
+  const x = 410, y = 170, w = 620, h = 560;
+  roundRect(x, y, w, h, 12, "rgba(7,10,28,0.99)", "#407fe0", 2);
+  ctx.fillStyle = "#d4e5ff";
+  ctx.font = "800 24px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("ルーム設定", x + 34, y + 48);
+  ctx.fillStyle = "rgba(145,175,225,0.78)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("部屋を公開する前に対戦・観戦ルールを設定します。", x + 34, y + 74);
+
+  const draft = normalizeRoomSettingsClient(app.match.roomSettingsDraft);
+  drawRoomSettingLabel(x + 34, y + 118, "観戦の可否", "観戦者の入室を許可します。");
+  drawButton(x + 388, y + 96, 82, 34, "許可", () => updateRoomSetting("allowSpectators", true), null, draft.allowSpectators ? { accent: "p1" } : { micro: true });
+  drawButton(x + 480, y + 96, 82, 34, "禁止", () => updateRoomSetting("allowSpectators", false), null, !draft.allowSpectators ? { accent: "p1" } : { micro: true });
+
+  drawRoomSettingLabel(x + 34, y + 204, "先攻・後攻の決定", "対戦開始時の先攻プレイヤーを決定します。");
+  const rules = [
+    { id: "random", label: "ランダム" },
+    { id: "host", label: "ホスト先攻" },
+    { id: "guest", label: "ゲスト先攻" },
+  ];
+  rules.forEach((rule, index) => {
+    drawButton(x + 34 + index * 178, y + 232, 164, 38, rule.label, () => updateRoomSetting("firstPlayerRule", rule.id), null, draft.firstPlayerRule === rule.id ? { accent: "p1" } : {});
+  });
+
+  drawRoomSettingLabel(x + 34, y + 330, "観戦者の手札閲覧", "観戦者に両プレイヤーの手札を公開するか設定します。");
+  const handOptionEnabled = draft.allowSpectators;
+  drawButton(x + 388, y + 308, 82, 34, "公開", handOptionEnabled ? () => updateRoomSetting("spectatorsSeeHands", true) : null, null, handOptionEnabled && draft.spectatorsSeeHands ? { accent: "p1" } : { micro: true, accent: handOptionEnabled ? undefined : "dim" });
+  drawButton(x + 480, y + 308, 82, 34, "非公開", handOptionEnabled ? () => updateRoomSetting("spectatorsSeeHands", false) : null, null, handOptionEnabled && !draft.spectatorsSeeHands ? { accent: "p1" } : { micro: true, accent: handOptionEnabled ? undefined : "dim" });
+  if (!handOptionEnabled) {
+    ctx.fillStyle = "rgba(120,140,180,0.58)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("観戦を許可すると設定できます。", x + 34, y + 376);
+  }
+
+  roundRect(x + 34, y + 408, w - 68, 64, 7, "rgba(15,25,55,0.7)", "rgba(55,95,180,0.45)", 1);
+  ctx.fillStyle = "rgba(155,185,230,0.8)";
+  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
+  const spectatorText = draft.allowSpectators ? `観戦可・手札${draft.spectatorsSeeHands ? "公開" : "非公開"}` : "観戦不可";
+  const firstText = rules.find((rule) => rule.id === draft.firstPlayerRule)?.label || "ランダム";
+  ctx.fillText(`設定内容: ${spectatorText} / ${firstText}`, x + 52, y + 446, w - 104);
+
+  drawButton(x + 34, y + h - 66, 220, 42, "キャンセル", closeRoomSettingsMenu);
+  drawButton(x + w - 254, y + h - 66, 220, 42, "この設定で作成", confirmRoomSettingsAndCreate, null, { accent: "p1" });
+}
+
+function drawRoomSettingLabel(x, y, title, description) {
+  ctx.fillStyle = "#c4daf8";
+  ctx.font = "700 15px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(title, x, y);
+  ctx.fillStyle = "rgba(125,155,205,0.72)";
+  ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(description, x, y + 20, 330);
 }
 
 function drawHeader() {
@@ -18114,7 +18467,7 @@ function drawStructZoneRow(playerId, box, mirrored) {
   const isP1 = playerId === "p1";
   const cW = layout.cell.w;
   const { x, y, w, h } = box;
-  const isViewer = playerId === viewerPlayerId();
+  const isViewer = playerId === viewerPlayerId() && app.match.role !== "spectator";
 
   const bg = isP1 ? "rgba(4,18,10,0.90)" : "rgba(22,4,4,0.88)";
   ctx.fillStyle = bg;
@@ -18389,7 +18742,7 @@ function drawSidePanel(playerId, box) {
   ctx.beginPath(); ctx.moveTo(box.x + 8, box.y + 230); ctx.lineTo(box.x + box.w - 8, box.y + 230); ctx.stroke();
 
   // STRUCT DECK — カード画像で全て表示（viewer のみ）
-  if (playerId === viewerPlayerId()) {
+  if (playerId === viewerPlayerId() && app.match.role !== "spectator") {
     const deckTitleY = box.y + 242;
     const deckCardsY = box.y + 256;
     ctx.fillStyle = "rgba(160,180,230,0.7)";
@@ -18510,6 +18863,9 @@ function isPrivateCardSelectionPendingChoice(pending = state.pendingChoice) {
 }
 
 function shouldHideCardSelectionFromViewer(pending = state.pendingChoice) {
+  if (app.match.status === "online" && app.match.role === "spectator") {
+    return app.match.roomSettings?.spectatorsSeeHands !== true;
+  }
   return Boolean(
     pending
     && isPrivateCardSelectionPendingChoice(pending)
@@ -18518,6 +18874,9 @@ function shouldHideCardSelectionFromViewer(pending = state.pendingChoice) {
 }
 
 function shouldShowPlayerHandToViewer(playerId) {
+  if (app.match.status === "online" && app.match.role === "spectator") {
+    return app.match.roomSettings?.spectatorsSeeHands === true;
+  }
   const pending = state.pendingChoice;
   if (!isHandSelectionPendingChoice(pending)) return true;
   const selectorId = pending.playerId;
@@ -18602,7 +18961,11 @@ function drawTopHand() {
   for (let i = 0; i < opponent.hand.length; i++) {
     const cx2 = x + 80 + i * (cardW + 2);
     if (cx2 + cardW > x + handAreaW - 4) break;
-    drawCardBack(cx2, y + 5, cardW, cardH);
+    if (app.match.status === "online" && app.match.role === "spectator" && app.match.roomSettings?.spectatorsSeeHands) {
+      drawCard(cx2, y + 5, cardW, cardH, opponent.hand[i], { small: true, artOnly: true });
+    } else {
+      drawCardBack(cx2, y + 5, cardW, cardH);
+    }
   }
 
   ctx.textAlign = "left";
@@ -21891,7 +22254,7 @@ function drawZoneViewerOverlay() {
     const cy = startY + row * (CARD_H + GAP_Y);
     const absIdx = startIdx + i;
     const isSelSD = zone === "structDeck" && state.selected?.kind === "structDeck" && state.selected.index === absIdx;
-    const isViewerSD = zone === "structDeck" && playerId === viewerPlayerId();
+    const isViewerSD = zone === "structDeck" && playerId === viewerPlayerId() && app.match.role !== "spectator";
     const isUniqueRiteDump = zone === "dump"
       && card.id === UNIQUE_RITE_CARD_ID
       && playerId === state.activePlayer
@@ -21919,7 +22282,7 @@ function drawZoneViewerOverlay() {
         beginUniqueRiteDumpActivate(playerId, absIdx);
         return;
       }
-      if (zone === "structDeck" && playerId === viewerPlayerId()) {
+      if (zone === "structDeck" && playerId === viewerPlayerId() && app.match.role !== "spectator") {
         if (!requireActivePlayerControl()) return;
         zoneViewerState = null;
         state.selected = { kind: "structDeck", playerId, index: absIdx, confirmed: false };
@@ -22607,7 +22970,9 @@ function gameSummary() {
           },
           coreHp: player.core.hp,
           resources: player.resources,
-          hand: id === viewerPlayerId()
+          hand: ((app.match.status === "online" && app.match.role === "spectator")
+            ? app.match.roomSettings?.spectatorsSeeHands === true
+            : id === viewerPlayerId()) && shouldShowPlayerHandToViewer(id)
             ? player.hand.map((card) => ({
                 name: card.name,
                 type: card.type,
@@ -22879,11 +23244,19 @@ const testing = {
   signOut,
   openDeckBuilder,
   openMatchLobby,
+  openRoomSettingsMenu,
+  closeRoomSettingsMenu,
+  updateRoomSetting,
+  confirmRoomSettingsAndCreate,
   leaveMatchToLobby,
   startLocalMatch,
   startMatchFromLobby,
   startOnlineMatch,
   copyRoomCode,
+  refreshRoomList,
+  joinListedRoom,
+  joinSpectatorRoom,
+  changeRoomListPage,
   createRoomMatch,
   regenerateRoomMatch,
   joinRoomMatch,
@@ -22891,6 +23264,8 @@ const testing = {
   syncOnlineAction,
   requestOnlineStateSync,
   onlineUserId,
+  controlledPlayerId,
+  canSpectatorSeeHands: () => app.match.role === "spectator" && app.match.roomSettings?.spectatorsSeeHands === true,
   forceOnlineDisconnect: () => {
     if (!onlineSocket) return false;
     onlineSocket.close();

@@ -91,9 +91,19 @@ try {
 
   const hostDeck = { core: "frontierCore", main: ["lightInfantry"], struct: ["town"] };
   const guestDeck = { core: "arcaneReactorCore", main: ["knowledgeFairy"], struct: ["magicWell"] };
-  host.socket.send(JSON.stringify({ type: "create", roomCode: "AB12CD", userId: "user-host", playerName: "Host", deck: hostDeck }));
+  const roomSettings = { allowSpectators: true, firstPlayerRule: "guest", spectatorsSeeHands: false };
+  host.socket.send(JSON.stringify({ type: "create", roomCode: "AB12CD", userId: "user-host", playerName: "Host", deck: hostDeck, settings: roomSettings }));
   const hostRoom = await waitForMessage(host, (message) => message.type === "room", "host room");
   assert(hostRoom.role === "host", "host should receive host role");
+
+  const waitingRooms = await fetch(`http://127.0.0.1:${port}/api/rooms`).then((response) => response.json());
+  assert(waitingRooms.rooms.length === 1, "room list should include one waiting room");
+  assert(waitingRooms.rooms[0].roomCode === "AB12CD", "room list should expose the waiting room code");
+  assert(waitingRooms.rooms[0].hostName === "Host", "room list should expose the host display name");
+  assert(waitingRooms.rooms[0].playerCount === 1 && waitingRooms.rooms[0].capacity === 2, "room list should expose occupancy");
+  assert(waitingRooms.rooms[0].canJoin === true && waitingRooms.rooms[0].canSpectate === true, "room list should expose available actions");
+  assert(waitingRooms.rooms[0].settings.firstPlayerRule === "guest", "room list should expose the first-player rule");
+  assert(!("deck" in waitingRooms.rooms[0]) && !("userId" in waitingRooms.rooms[0]), "room list should not expose private player data");
 
   guest.socket.send(JSON.stringify({ type: "join", roomCode: "AB12CD", userId: "user-guest", playerName: "Guest", deck: guestDeck }));
   const guestRoom = await waitForMessage(guest, (message) => message.type === "room", "guest room");
@@ -106,16 +116,43 @@ try {
   );
   assert(hostPresence.players.some((player) => player.name === "Guest"), "presence should include guest");
   assert(hostPresence.players.some((player) => player.role === "guest" && player.deck?.main?.[0] === "knowledgeFairy"), "presence should include guest deck");
+  const roomsAfterJoin = await fetch(`http://127.0.0.1:${port}/api/rooms`).then((response) => response.json());
+  assert(roomsAfterJoin.rooms.length === 1, "spectatable full rooms should remain in the room list");
+  assert(roomsAfterJoin.rooms[0].canJoin === false && roomsAfterJoin.rooms[0].canSpectate === true, "full rooms should be spectate-only");
 
-  const startedState = { turn: 1, activePlayer: "p1", board: [[null]], players: { p1: {}, p2: {} } };
+  const spectator = await openClient();
+  spectator.socket.send(JSON.stringify({ type: "spectate", roomCode: "AB12CD", userId: "user-spectator", playerName: "Watcher" }));
+  const spectatorRoom = await waitForMessage(spectator, (message) => message.type === "room", "spectator room");
+  assert(spectatorRoom.role === "spectator", "spectator should receive the spectator role");
+  assert(spectatorRoom.settings.spectatorsSeeHands === false, "spectator should receive room visibility settings");
+  assert(spectatorRoom.spectatorCount === 1, "room info should include spectator count");
+
+  const startedState = {
+    turn: 1,
+    activePlayer: "p2",
+    board: [[null]],
+    players: {
+      p1: { hand: [{ id: "host-secret", name: "Host Secret" }] },
+      p2: { hand: [{ id: "guest-secret", name: "Guest Secret" }] },
+    },
+  };
   host.socket.send(JSON.stringify({ type: "start", roomCode: "AB12CD", state: startedState }));
   const hostStart = await waitForMessage(host, (message) => message.type === "start", "host start echo");
   const guestStart = await waitForMessage(guest, (message) => message.type === "start", "guest start");
+  const spectatorStart = await waitForMessage(spectator, (message) => message.type === "start", "spectator start");
   assert(hostStart.state.turn === 1, "host should receive started state echo");
   assert(guestStart.state.turn === 1, "guest should receive started state");
   assert(guestStart.players.some((player) => player.role === "host" && player.name === "Host"), "start should include host name");
   assert(guestStart.players.some((player) => player.role === "guest" && player.name === "Guest"), "start should include guest name");
   assert(guestStart.players.some((player) => player.role === "guest" && player.deck?.struct?.[0] === "magicWell"), "start should include guest deck");
+  assert(spectatorStart.state.players.p1.hand[0].hidden === true, "hidden-hand spectator state should redact host hand data");
+  assert(spectatorStart.state.players.p2.hand[0].hidden === true, "hidden-hand spectator state should redact guest hand data");
+  assert(!JSON.stringify(spectatorStart.state).includes("Host Secret"), "spectator payload should not contain hidden hand names");
+  spectator.socket.send(JSON.stringify({ type: "state", roomCode: "AB12CD", state: { turn: 99 } }));
+  const spectatorMutationError = await waitForMessage(spectator, (message) => message.type === "error" && /観戦者/.test(message.message || ""), "spectator mutation rejection");
+  assert(/変更できません/.test(spectatorMutationError.message), "spectators should not be able to mutate battle state");
+  const roomsAfterStart = await fetch(`http://127.0.0.1:${port}/api/rooms`).then((response) => response.json());
+  assert(roomsAfterStart.rooms[0].status === "playing", "started spectatable rooms should be marked as playing");
 
   const largeText = "deck-state-".repeat(9000);
   const largeStartedState = {
@@ -197,12 +234,13 @@ try {
 
   rejoinedHost.socket.close();
   rejoinedGuest.socket.close();
+  spectator.socket.close();
   oldRoomProbe.socket.close();
   console.log(
     JSON.stringify(
       {
         ok: true,
-        cases: ["config", "config-script", "auth-disabled", "deck-save-load", "create", "join", "presence-deck", "start", "start-echo", "start-deck", "large-start", "state", "host-rejoin", "guest-rejoin", "operation-deduplication", "room-discard", "room-regenerate"],
+        cases: ["config", "config-script", "auth-disabled", "deck-save-load", "room-list", "room-settings", "create", "join", "presence-deck", "spectator-join", "spectator-hand-redaction", "spectator-read-only", "start", "start-echo", "start-deck", "large-start", "state", "host-rejoin", "guest-rejoin", "operation-deduplication", "room-discard", "room-regenerate"],
       },
       null,
       2,
