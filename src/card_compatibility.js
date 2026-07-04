@@ -61,6 +61,12 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "payEnemyAttackCostsAndRest",
   "buffSelfAtkThisAttack", "destroyAllUnits", "expandDataLinkRange",
   "discardHandToMillOpponentDeck",
+  "offerSelfRedeployFromExileWithRaid", "voluntarySelfDestruct",
+  "veresSonsOnSummon", "veresBeastBuffApply", "veresSonsReuseOnDamage",
+  "veresReviveFromDumpBuffed", "veresRestSummonBeastFromDeck", "veresReviveOnFirstDestroy",
+  "quicheArmorGrantOnSummon", "quicheArmorGrantApply",
+  "pachamamaSearchSelfOrFarmer",
+  "huascarMultiDamageOnSummon", "huascarMultiDamageApply",
 ]);
 
 const STRUCT_PRODUCTION_EFFECTS = new Set([

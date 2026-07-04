@@ -124,6 +124,12 @@ const PLAYERS = {
   p2: { id: "p2", name: "Player 2", side: "top", forward: 1, summonRow: 0, coreRow: -1, directRow: 2 },
 };
 
+const TOKEN_DEFS = {
+  quartzToken: { name: "クォーツトークン", atk: 0, hp: 3, keywords: [{ id: "immobile" }, { id: "raid" }], text: "[不動][奇襲]" },
+  veresServantToken: { name: "ヴェレスの従者トークン", atk: 1, hp: 2, tags: ["屍人"], keywords: [], text: "[屍人]" },
+  veresBeastToken: { name: "ヴェレスの野獣トークン", atk: 3, hp: 4, tags: ["獣"], keywords: [], actCost: { nature: 1 }, text: "[獣]\nアクトコスト：自①" },
+};
+
 const DEFAULT_CORE_ID = "frontierCore";
 const DEFAULT_MAIN_DECK_IDS = [
   "lightInfantry",
@@ -682,6 +688,7 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
     queueItem = null,
     grantTag = null,
     grantTurnEndDeckTop = false,
+    suppressAbilityEffect = null,
     message = "ユニットを出すマスをクリックしてください",
     allowRaid = false,
     validRows = null,
@@ -696,6 +703,7 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
     spec,
     grantTag,
     grantTurnEndDeckTop,
+    suppressAbilityEffect,
     validRows: validRows || summonPlacementRowsForPlayer(game, playerId, { allowRaid }),
     queueItem,
     onComplete,
@@ -2873,9 +2881,6 @@ const abilityEffects = {
     }
   },
   summonToken({ game, playerId, ability }) {
-    const TOKEN_DEFS = {
-      quartzToken: { name: "クォーツトークン", atk: 0, hp: 3, keywords: [{ id: "immobile" }, { id: "raid" }], text: "[不動][奇襲]" },
-    };
     const def = TOKEN_DEFS[ability.tokenId];
     if (!def) return;
     const player = game.players[playerId];
@@ -2938,6 +2943,146 @@ const abilityEffects = {
     game.selected = { kind: "choice", choice: "reviveFromDump" };
     game.message = `墓地から蘇生するユニット（コスト総量${maxCost}以下${filterTag ? `・[${filterTag}]` : ""}）を選んでください。`;
     return "pending";
+  },
+  // ヴェレスの息子たち: 出撃時に4つの効果から1つを選ぶ
+  veresSonsOnSummon({ game, playerId, card, ability, source }) {
+    game.pendingChoice = {
+      type: "veresSonsChoice",
+      playerId,
+      cardName: card.name,
+      queueItem: { playerId, card, ability, source: source || { zone: "board" } },
+    };
+    game.selected = { kind: "choice", choice: "veresSonsChoice" };
+    game.message = `${card.name}: 出撃時効果を選んでください`;
+    return "pending";
+  },
+  veresBeastBuffApply({ game, playerId, card, targets }) {
+    const target = (targets || [])[0];
+    if (!target) return;
+    target.atk = (target.atk || 0) + 3;
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」に+3/±0`);
+  },
+  // ヴェレスの息子たち: 初めての与ダメージ時、出撃時効果をもう一度使う
+  veresSonsReuseOnDamage({ game, playerId, card, source }) {
+    if (card.veresSonsReused) return;
+    card.veresSonsReused = true;
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 初めての与ダメージにより出撃時効果を再使用`);
+    return abilityEffects.veresSonsOnSummon({ game, playerId, card, ability: {}, source });
+  },
+  // ヴェレス: 出撃時、コスト総量2以下のユニットを最大4体墓地から出し、[屍人]と+2/+2を与える
+  veresReviveFromDumpBuffed({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const maxCost = ability.maxCost ?? 2;
+    const maxCount = ability.maxCount || 4;
+    const eligible = player.dump.filter((c) => isUnitCard(c) && totalCostAmount(c.cost || {}) <= maxCost);
+    if (!eligible.length) {
+      log(game, `${player.name}: 「${card.name}」— 墓地に対象ユニットがいない`);
+      return;
+    }
+    const picked = eligible.slice(0, maxCount);
+    const unitQueue = picked.map((c) => {
+      const idx = player.dump.indexOf(c);
+      return player.dump.splice(idx, 1)[0];
+    });
+    notifyDumpChanged(game, playerId);
+    log(game, `${player.name}: 「${card.name}」— 墓地から${unitQueue.length}体を蘇生（[屍人]・+2/+2）`);
+    continueUnitDeployQueue(playerId, unitQueue, { playerId, card, ability, source: source || { zone: "board" } }, {
+      fromDump: true,
+      onEachPlaced: (unit) => {
+        applyGrantedTag(unit, "屍人");
+        unit.atk = (unit.atk || 0) + 2;
+        unit.maxHp = (unit.maxHp || unit.hp || 0) + 2;
+        unit.currentHp = (unit.currentHp || unit.hp || 0) + 2;
+      },
+    });
+    return "pending";
+  },
+  // ヴェレス: レストする：コスト総量4以下の[獣]ユニットを1体デッキから出す
+  veresRestSummonBeastFromDeck({ game, playerId, card, ability, source }) {
+    if (card.rested) return;
+    const player = game.players[playerId];
+    const maxCost = ability.maxCost ?? 4;
+    const idx = player.mainDeck.findIndex((c) => isUnitCard(c) && (c.tags || []).includes("獣") && totalCostAmount(c.cost || {}) <= maxCost);
+    if (idx < 0) {
+      log(game, `${player.name}: 「${card.name}」— デッキに対象の[獣]ユニットがいない`);
+      return;
+    }
+    card.rested = true;
+    const [unitCard] = player.mainDeck.splice(idx, 1);
+    log(game, `${player.name}: 「${card.name}」をレスト → デッキから「${unitCard.name}」を出す`);
+    continueUnitDeployQueue(playerId, [unitCard], { playerId, card, ability, source: source || { zone: "board" } }, {});
+    return "pending";
+  },
+  // ヴェレス: 初めて破壊された時、墓地から同じマスに出る
+  veresReviveOnFirstDestroy({ game, playerId, card, source }) {
+    if (card.veresRevivedOnce) return;
+    const player = game.players[playerId];
+    const dumpIdx = player.dump.indexOf(card);
+    if (dumpIdx < 0) return;
+    const { row, col } = source || {};
+    if (row == null || col == null || game.board[row]?.[col]) {
+      log(game, `${player.name}: 「${card.name}」— 元のマスが空いていないため復活できない`);
+      return;
+    }
+    const [revived] = player.dump.splice(dumpIdx, 1);
+    notifyDumpChanged(game, playerId);
+    const unit = makeUnit(revived.id, playerId, row, col, { rested: false });
+    unit.veresRevivedOnce = true;
+    unit.abilities = (unit.abilities || []).filter((a) => a.effect !== "veresReviveOnFirstDestroy");
+    commitUnitToBoard(game, unit, row, col);
+    log(game, `${player.name}: 「${card.name}」— 墓地から同じマスに復活`);
+    triggerAbilities(game, playerId, unit, "onSummon");
+  },
+  // クイチェ・ワランカ: 出撃時、場のユニット1つに[装甲③]を与える
+  quicheArmorGrantOnSummon({ game, playerId, card, ability, source }) {
+    beginMultiUnitTargetSelection(game, playerId, card, {
+      ...ability,
+      maxTargets: 1,
+      minTargets: 1,
+      targetScope: "anyUnit",
+      confirmEffect: "quicheArmorGrantApply",
+    }, source);
+    return "pending";
+  },
+  quicheArmorGrantApply({ game, playerId, card, targets }) {
+    const target = (targets || [])[0];
+    if (!target) return;
+    ensureKeyword(target, "armor", Math.max(keywordValue(target, "armor"), 3));
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」に[装甲③]を付与`);
+  },
+  // パチャママ・ルクルナ: 出撃時、デッキから「パチャママ・ルクルナ」または「農民」を1体出す
+  pachamamaSearchSelfOrFarmer({ game, playerId, card, ability, source }) {
+    const player = game.players[playerId];
+    const idx = player.mainDeck.findIndex((c) => c.name === "パチャママ・ルクルナ" || c.name === "農民");
+    if (idx < 0) {
+      log(game, `${player.name}: 「${card.name}」— デッキに対象カードがない`);
+      return;
+    }
+    const [unitCard] = player.mainDeck.splice(idx, 1);
+    log(game, `${player.name}: 「${card.name}」— デッキから「${unitCard.name}」を出す`);
+    continueUnitDeployQueue(playerId, [unitCard], { playerId, card, ability, source: source || { zone: "board" } }, {
+      suppressAbilityEffect: "pachamamaSearchSelfOrFarmer",
+    });
+    return "pending";
+  },
+  // ワスカル・コリ: 出撃時、相手のユニット3つに5ダメージ
+  huascarMultiDamageOnSummon({ game, playerId, card, ability, source }) {
+    beginMultiUnitTargetSelection(game, playerId, card, {
+      ...ability,
+      maxTargets: 3,
+      minTargets: 1,
+      targetScope: "enemyUnit",
+      confirmEffect: "huascarMultiDamageApply",
+    }, source);
+    return "pending";
+  },
+  huascarMultiDamageApply({ game, playerId, card, targets }) {
+    for (const target of targets || []) {
+      if (!target) continue;
+      const result = dealDamageToUnit(game, target, 5, { source: card }, { cleanup: false, effectAttack: true });
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」へ${result.damage}ダメージ`);
+    }
+    cleanupAllDestroyed(card, game);
   },
   restTargetNoUnrest({ game, target }) {
     if (!target) return;
@@ -5842,6 +5987,34 @@ function parseDeckmakerAbilities(card, localType) {
   // 現地世界空間作用大隊: 除外ゾーンへ行った時、[奇襲]を得て任意のマスへ出撃してもよい
   if (card.id === "card_1782995481933" && !abilities.some((a) => a.effect === "offerSelfRedeployFromExileWithRaid")) {
     abilities.push({ trigger: "onExile", effect: "offerSelfRedeployFromExileWithRaid" });
+  }
+
+  // ヴェレスの息子たち: 出撃時に4択、初めての与ダメージ時に出撃時効果を再使用
+  if (card.id === "card_1783092993587" && !abilities.some((a) => a.effect === "veresSonsOnSummon")) {
+    abilities.push({ trigger: "onSummon", effect: "veresSonsOnSummon" });
+    abilities.push({ trigger: "onDamageDealt", effect: "veresSonsReuseOnDamage" });
+  }
+
+  // ヴェレス: 出撃時に墓地から蘇生、レストで獣を出す、初めて破壊された時に同じマスへ復活
+  if (card.id === "card_1783089338332" && !abilities.some((a) => a.effect === "veresReviveFromDumpBuffed")) {
+    abilities.push({ trigger: "onSummon", effect: "veresReviveFromDumpBuffed", maxCost: 2, maxCount: 4 });
+    abilities.push({ trigger: "onActivate", effect: "veresRestSummonBeastFromDeck", maxCost: 4 });
+    abilities.push({ trigger: "onSelfDestroyedToDump", effect: "veresReviveOnFirstDestroy" });
+  }
+
+  // クイチェ・ワランカ: 出撃時、場のユニット1つに[装甲③]を与える
+  if (card.id === "card_1783090088482" && !abilities.some((a) => a.effect === "quicheArmorGrantOnSummon")) {
+    abilities.push({ trigger: "onSummon", effect: "quicheArmorGrantOnSummon" });
+  }
+
+  // パチャママ・ルクルナ: 出撃時、デッキから「パチャママ・ルクルナ」または「農民」を1体出す
+  if (card.id === "card_1783089769970" && !abilities.some((a) => a.effect === "pachamamaSearchSelfOrFarmer")) {
+    abilities.push({ trigger: "onSummon", effect: "pachamamaSearchSelfOrFarmer" });
+  }
+
+  // ワスカル・コリ: 出撃時、相手のユニット3つに5ダメージ
+  if (card.id === "card_1783090514852" && !abilities.some((a) => a.effect === "huascarMultiDamageOnSummon")) {
+    abilities.push({ trigger: "onSummon", effect: "huascarMultiDamageOnSummon" });
   }
 
   if (card.id === "card_1782545233380") {
@@ -9115,6 +9288,7 @@ function isValidCharmPlacementTarget(unit, pending) {
 function isValidMultiUnitTarget(unit, pending) {
   if (!isValidCharmPlacementTarget(unit, pending)) return false;
   if (pending.targetFilter === "noFlying" && hasKeyword(unit, "flying")) return false;
+  if (pending.requiredTag && !(unit.tags || []).includes(pending.requiredTag)) return false;
   return true;
 }
 
@@ -9127,6 +9301,7 @@ function beginMultiUnitTargetSelection(game, playerId, card, ability, source) {
     minTargets: ability.minTargets || 0,
     targetScope: ability.targetScope || ability.target || "enemyUnit",
     targetFilter: ability.targetFilter || null,
+    requiredTag: ability.requiredTag || null,
     confirmEffect: ability.confirmEffect,
     selected: [],
     queueItem: { playerId, card, ability, source: source || { zone: "board" } },
@@ -11024,9 +11199,9 @@ function resolveSummonPlacement(row, col) {
       type: "unit",
       name: spec.tokenDef.name,
       faction: "ニュートラル",
-      tags: [],
+      tags: [...(spec.tokenDef.tags || [])],
       cost: {},
-      actCost: {},
+      actCost: { ...(spec.tokenDef.actCost || {}) },
       text: spec.tokenDef.text,
       keywords: (spec.tokenDef.keywords || []).map((k) => ({ ...k })),
       abilities: [],
@@ -11057,6 +11232,9 @@ function resolveSummonPlacement(row, col) {
     unit.abilities = [...(unit.abilities || []), { trigger: "onTurnEnd", effect: "returnSelfToDeckTop" }];
   }
   if (pending.grantTag) applyGrantedTag(unit, pending.grantTag);
+  if (pending.suppressAbilityEffect) {
+    unit.abilities = (unit.abilities || []).filter((a) => a.effect !== pending.suppressAbilityEffect);
+  }
   commitUnitToBoard(state, unit, row, col);
   log(state, `${player.name}: 「${unit.name}」を場に出した`);
   triggerAbilities(state, pending.playerId, unit, "onSummon", { fromDump: Boolean(spec.fromDump) });
@@ -12237,9 +12415,99 @@ function continueUnitDeployQueue(playerId, unitQueue, queueItem, options = {}) {
   beginSummonPlacementChoice(state, playerId, { cardId: unitCard.id, fromDump: Boolean(options.fromDump) }, {
     validRows: rows,
     message: `「${unitCard.name}」を出撃させるマスをクリック`,
-    onComplete: () => continueUnitDeployQueue(playerId, unitQueue, queueItem, options),
+    suppressAbilityEffect: options.suppressAbilityEffect || null,
+    onComplete: (g, unit) => {
+      if (options.onEachPlaced) options.onEachPlaced(unit);
+      continueUnitDeployQueue(playerId, unitQueue, queueItem, options);
+    },
   });
   render();
+}
+
+function continueTokenDeployQueue(playerId, tokenId, remaining, queueItem) {
+  const player = state.players[playerId];
+  if (remaining <= 0) {
+    if (queueItem) completeAbilitySource(state, queueItem);
+    processEffectQueue(state);
+    render();
+    return;
+  }
+  const def = TOKEN_DEFS[tokenId];
+  const hasRaid = (def?.keywords || []).some((k) => k.id === "raid");
+  const rows = summonPlacementRowsForPlayer(state, playerId, { allowRaid: hasRaid });
+  const hasOpenCell = rows.some((row) => Array.from({ length: COLS }, (_, col) => col).some((col) => !state.board[row]?.[col]));
+  if (!hasOpenCell) {
+    log(state, `${player.name}: 出すマスがないため「${def?.name || tokenId}」を出せません`);
+    if (queueItem) completeAbilitySource(state, queueItem);
+    processEffectQueue(state);
+    render();
+    return;
+  }
+  beginSummonPlacementChoice(state, playerId, { kind: "token", tokenId, tokenDef: def }, {
+    validRows: rows,
+    allowRaid: hasRaid,
+    message: `「${def?.name || tokenId}」を出すマスをクリック（残り${remaining}体）`,
+    onComplete: () => continueTokenDeployQueue(playerId, tokenId, remaining - 1, queueItem),
+  });
+  render();
+}
+
+function resolveVeresSonsChoice(option) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "veresSonsChoice") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  const { playerId, queueItem } = pending;
+  const { card, ability, source } = queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  const player = state.players[playerId];
+  if (option === "servants") {
+    log(state, `${player.name}: 「${card.name}」— 「ヴェレスの従者トークン」を2体出す`);
+    continueTokenDeployQueue(playerId, "veresServantToken", 2, queueItem);
+    return true;
+  }
+  if (option === "beast") {
+    log(state, `${player.name}: 「${card.name}」— 「ヴェレスの野獣トークン」を1体出す`);
+    continueTokenDeployQueue(playerId, "veresBeastToken", 1, queueItem);
+    return true;
+  }
+  if (option === "buffZombies") {
+    let count = 0;
+    for (let row = 0; row < ROWS; row += 1) {
+      for (let col = 0; col < COLS; col += 1) {
+        const unit = state.board[row]?.[col];
+        if (unit && (unit.tags || []).includes("屍人")) {
+          unit.atk = (unit.atk || 0) + 1;
+          unit.maxHp = (unit.maxHp || unit.hp || 0) + 1;
+          unit.currentHp = (unit.currentHp || unit.hp || 0) + 1;
+          count += 1;
+        }
+      }
+    }
+    log(state, `${player.name}: 「${card.name}」— 場の[屍人]ユニット${count}体に+1/+1`);
+    completeAbilitySource(state, queueItem);
+    processEffectQueue(state);
+    syncOnlineAction("resolveChoice", playerId);
+    render();
+    return true;
+  }
+  if (option === "buffBeast") {
+    beginMultiUnitTargetSelection(state, playerId, card, {
+      ...ability,
+      maxTargets: 1,
+      minTargets: 1,
+      targetScope: "anyUnit",
+      requiredTag: "獣",
+      confirmEffect: "veresBeastBuffApply",
+    }, source);
+    state.pendingChoice.queueItem = queueItem;
+    render();
+    return true;
+  }
+  completeAbilitySource(state, queueItem);
+  processEffectQueue(state);
+  render();
+  return true;
 }
 
 function resolveDeployNamedSelection() {
@@ -15705,9 +15973,11 @@ function finalizePendingDestruction(unit, killer = null, game) {
     g.players[unit.owner].exileZone.push(stripRuntime(unit));
     log(g, `「${unit.name}」が破壊され除外された`);
   } else {
-    g.players[unit.owner].dump.push(stripRuntime(unit));
+    const dumped = stripRuntime(unit);
+    g.players[unit.owner].dump.push(dumped);
     notifyDumpChanged(g, unit.owner);
     log(g, `「${unit.name}」が破壊された`);
+    triggerAbilities(g, unit.owner, dumped, "onSelfDestroyedToDump", { row, col });
   }
   if (g.selected?.row === row && g.selected?.col === col) g.selected = null;
   // notify structs always; notify only the killing unit (or all units if no specific killer)
@@ -18372,6 +18642,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "drawPlusPayResource") drawDrawPlusPayResourcePanel(pending);
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
   else if (pending.type === "deployNamedSelection") drawDeployNamedSelectionPanel(pending);
+  else if (pending.type === "veresSonsChoice") drawVeresSonsChoicePanel(pending);
   else if (pending.type === "kaijuAwaken") drawKaijuAwakenPanel(pending);
   else if (pending.type === "payForBuff") drawPayForBuffPanel(pending);
   else if (pending.type === "revealTagsForResources") drawRevealTagsForResourcesPanel(pending);
@@ -20348,6 +20619,30 @@ function drawSelectDestroyCardsPanel(pending) {
   }
 }
 
+function drawVeresSonsChoicePanel(pending) {
+  const options = [
+    { id: "servants", label: "「ヴェレスの従者トークン」(1/2, [屍人])を2体出す" },
+    { id: "beast", label: "「ヴェレスの野獣トークン」(3/4, [獣])を1体出す" },
+    { id: "buffZombies", label: "場の[屍人]ユニット全員に+1/+1" },
+    { id: "buffBeast", label: "場の[獣]ユニット1つに+3/±0" },
+  ];
+  const btnW = 460, btnH = 46, gap = 12;
+  const w = btnW + gap * 2;
+  const h = options.length * (btnH + gap) + gap + 70;
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+  drawChoicePanelBase(x, y, w, h, "rgba(60,50,120,0.8)", "#8060ff");
+  ctx.fillStyle = "#d8c8ff";
+  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`${pending.cardName}: 出撃時効果を選択`, x + 24, y + 34);
+  const isController = canControlChoicePlayer(pending.playerId);
+  options.forEach((opt, i) => {
+    const bx = x + gap;
+    const by = y + 58 + i * (btnH + gap);
+    drawButton(bx, by, btnW, btnH, opt.label, isController ? () => resolveVeresSonsChoice(opt.id) : null, null, { accent: "p1" });
+  });
+}
+
 function drawDeployNamedSelectionPanel(pending) {
   const x = 330, y = 162, w = 780, h = 420;
   drawChoicePanelBase(x, y, w, h, "rgba(60,130,70,0.75)", "#60d080");
@@ -21612,6 +21907,14 @@ function abilityText(card) {
         crownKnightFortify: "効果保護①・装甲④を得る",
         goltenaBombardMark: "攻撃可能マスを照準（次の相手ターン終了時に5ダメージ）",
         offerSelfRedeployFromExileWithRaid: "除外時：[奇襲]を得て任意のマスに出撃してもよい",
+        veresSonsOnSummon: "出撃時：4つの効果から1つを選ぶ",
+        veresSonsReuseOnDamage: "初めての与ダメージ時：出撃時効果を再使用",
+        veresReviveFromDumpBuffed: `出撃時：コスト総量${ability.maxCost ?? 2}以下のユニットを${ability.maxCount || 4}体まで墓地から出し、[屍人]と+2/+2`,
+        veresRestSummonBeastFromDeck: `レストする：コスト総量${ability.maxCost ?? 4}以下の[獣]ユニットを1体デッキから出す`,
+        veresReviveOnFirstDestroy: "初めて破壊された時：墓地から同じマスに出る",
+        quicheArmorGrantOnSummon: "出撃時：場のユニット1つに[装甲③]を与える",
+        pachamamaSearchSelfOrFarmer: "出撃時：デッキから「パチャママ・ルクルナ」または「農民」を1体出す",
+        huascarMultiDamageOnSummon: "出撃時：相手のユニット3つに5ダメージ",
       }[ability.effect] || ability.effect;
       return `${trigger}: ${effect}`;
     })
@@ -21956,6 +22259,7 @@ const testing = {
   toggleDestroyChoice,
   toggleDeployNamedSelection,
   resolveDeployNamedSelection,
+  resolveVeresSonsChoice,
   resolveDestroyChoice,
   toggleKaijuAwakenChoice,
   resolveKaijuAwakenChoice,
