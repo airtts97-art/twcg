@@ -12168,6 +12168,21 @@ function resolveTsunataiRiteChoice(handIndex) {
   return true;
 }
 
+function resolveTsunataiRiteSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "tsunataiRiteHand") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  log(state, `${state.players[pending.playerId].name}: 「${pending.cardName}」の出撃をスキップ`);
+  const qi = pending.queueItem;
+  state.pendingChoice = null;
+  state.selected = null;
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
 function toggleColorfulDiscardChoice(handIndex) {
   const pending = state.pendingChoice;
   if (pending?.type !== "colorfulDiscard" && pending?.type !== "discardHandToMill") return;
@@ -19930,6 +19945,7 @@ function drawTsunataiRitePanel(pending) {
   if (!canSeeHand) {
     ctx.fillText("相手の手札内容は見えません。", x + 28, y + 74);
   }
+  const player = state.players[pending.playerId];
   pending.eligible.forEach(({ handCard, handIndex }, i) => {
     const cx = x + 28 + (i % 4) * 154;
     const cy = y + 88 + Math.floor(i / 4) * 150;
@@ -19937,16 +19953,21 @@ function drawTsunataiRitePanel(pending) {
       .filter(([, amount]) => amount > 0)
       .map(([resource, amount]) => `${RESOURCE_LABELS[resource] || resource}${amount}`)
       .join("");
+    const affordable = canPayForCard(player, handCard.cost || {}, handCard);
     if (canSeeHand) {
       drawSelectableChoiceCard(cx, cy, 140, 196, handCard, {
+        disabled: !affordable,
         label: `${handCard.name}${costLabel ? `\n(${costLabel})` : ""}`,
-        onClick: isController ? () => resolveTsunataiRiteChoice(handIndex) : null,
+        onClick: isController && affordable ? () => resolveTsunataiRiteChoice(handIndex) : null,
       });
     } else {
       drawCardBack(cx, cy, 140, 196);
-      if (isController) addHit(cx, cy, 140, 196, () => resolveTsunataiRiteChoice(handIndex));
+      if (isController && affordable) addHit(cx, cy, 140, 196, () => resolveTsunataiRiteChoice(handIndex));
     }
   });
+  if (isController) {
+    drawButton(x + w - 130, y + h - 44, 100, 30, "スキップ", resolveTsunataiRiteSkip, null, { accent: "dim" });
+  }
 }
 
 function drawSheriffRemoveKeywordsPanel(pending) {
@@ -23342,6 +23363,7 @@ const testing = {
   resolveFieldExperimentSkip,
   resolveSadGirlHandUnitGive,
   resolveTsunataiRiteChoice,
+  resolveTsunataiRiteSkip,
   toggleDestroyChoice,
   toggleDeployNamedSelection,
   resolveDeployNamedSelection,
