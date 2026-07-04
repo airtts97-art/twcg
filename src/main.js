@@ -13689,10 +13689,13 @@ function startTurn(game, playerId, options = {}) {
     if (unit.skipNextOwnerUnrest) {
       delete unit.skipNextOwnerUnrest;
       if ((unit.lockedRestTurns || 0) > 0) unit.lockedRestTurns--;
+      unit.forcedRestThisTurn = true;
     } else if ((unit.lockedRestTurns || 0) > 0) {
       unit.lockedRestTurns--;
+      unit.forcedRestThisTurn = true;
     } else {
       unit.rested = false;
+      delete unit.forcedRestThisTurn;
     }
     unit.attacksThisTurn = 0;
     unit.dealtDamageThisTurn = false;
@@ -14311,7 +14314,7 @@ function endTurn() {
     }
   }
   for (const unit of unitsOwnedBy(endingPlayer)) {
-    if (hasKeyword(unit, "alert")) unit.rested = false;
+    if (hasKeyword(unit, "alert") && !unit.forcedRestThisTurn) unit.rested = false;
     if (unit.closeAirSupportTurnBuff?.untilPlayerTurnEnd === endingPlayer) {
       unit.atk = Math.max(0, (unit.atk || 0) - (unit.closeAirSupportTurnBuff.atkBonus || 0));
       delete unit.closeAirSupportTurnBuff;
