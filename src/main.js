@@ -14020,6 +14020,11 @@ function activatePermanentTact(tactIndex) {
   if (tact.rested) return fail("このタクトはレスト中です。");
   const mainAbilities = (tact.abilities || []).filter((a) => MAIN_PHASE_TACT_TRIGGERS.includes(a.trigger));
   if (!mainAbilities.length) return fail("メインフェーズで発動できる効果がありません。");
+  if (offerIntelAgencyCancel(state.activePlayer, tact, { mode: "reactivate" })) {
+    syncOnlineAction("activatePermanentTact", state.activePlayer);
+    render();
+    return true;
+  }
   triggerAbilities(state, state.activePlayer, tact, "onMainPhase", { zone: "tact" });
   syncOnlineAction("activatePermanentTact", state.activePlayer);
   render();
@@ -14696,7 +14701,7 @@ function finishPlayTact(tactOwnerId, tactCard) {
   log(state, `${state.players[tactOwnerId].name}: 「${tactCard.name}」を使用`);
 }
 
-function offerIntelAgencyCancel(tactOwnerId, tactCard) {
+function offerIntelAgencyCancel(tactOwnerId, tactCard, options = {}) {
   const responderId = opponentOf(tactOwnerId);
   const responder = state.players[responderId];
   const intelStruct = (responder.structs || []).find((struct) => struct.id === "card_1753664241159" && !struct.rested);
@@ -14711,6 +14716,8 @@ function offerIntelAgencyCancel(tactOwnerId, tactCard) {
     tactCard,
     tactName: tactCard.name,
     preferPeople: canPayPeople,
+    // "play": 手札からの発動、"reactivate": 場にある永続タクトの再発動
+    mode: options.mode === "reactivate" ? "reactivate" : "play",
   };
   state.message = `${responder.name}: 諜報機関で「${tactCard.name}」を無効化しますか？`;
   return true;
@@ -14719,7 +14726,7 @@ function offerIntelAgencyCancel(tactOwnerId, tactCard) {
 function resolveIntelAgencyCancel(useIntel) {
   const pending = state.pendingChoice;
   if (pending?.type !== "intelAgencyCancel") return false;
-  const { tactOwnerId, tactCard, playerId: responderId } = pending;
+  const { tactOwnerId, tactCard, playerId: responderId, mode } = pending;
   state.pendingChoice = null;
   state.selected = null;
   if (useIntel) {
@@ -14727,7 +14734,8 @@ function resolveIntelAgencyCancel(useIntel) {
     const cost = pending.preferPeople ? { people: 3 } : { electric: 3 };
     if (!pay(responder, cost)) {
       state.message = "資源が不足しているため無効化できません。";
-      finishPlayTact(tactOwnerId, tactCard);
+      if (mode === "reactivate") triggerAbilities(state, tactOwnerId, tactCard, "onMainPhase", { zone: "tact" });
+      else finishPlayTact(tactOwnerId, tactCard);
     } else {
       const owner = state.players[tactOwnerId];
       const index = owner.tactZone.findIndex((c) => c === tactCard || c.instanceId === tactCard.instanceId);
@@ -14741,16 +14749,14 @@ function resolveIntelAgencyCancel(useIntel) {
       const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
       log(state, `${responder.name}: 諜報機関で「${tactCard.name}」を無効化（${costLabel}）`);
     }
+  } else if (mode === "reactivate") {
+    triggerAbilities(state, tactOwnerId, tactCard, "onMainPhase", { zone: "tact" });
   } else {
     finishPlayTact(tactOwnerId, tactCard);
   }
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", responderId);
   return true;
-}
-
-function tryCancelTactWithIntel(tactOwnerId, tactCard) {
-  return offerIntelAgencyCancel(tactOwnerId, tactCard);
 }
 
 function playWildFromHand(handIndex, soulPayAmount = undefined) {
