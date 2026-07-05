@@ -2971,35 +2971,6 @@ const abilityEffects = {
     const costLabel = Object.entries(target.actCost || {}).filter(([, a]) => a > 0).map(([r]) => RESOURCE_LABELS[r] || r).join("・");
     if (costLabel) log(game, `${card.name}: 「${target.name}」アクトコスト（${costLabel}）の資源を獲得`);
   },
-  reviveUnitFromDump({ game, playerId, card, ability, source }) {
-    const player = game.players[playerId];
-    const maxCost = ability.maxCost || 1;
-    const filterTag = ability.tag || null;
-    const eligible = [];
-    player.dump.forEach((c, dumpIndex) => {
-      if (!isUnitCard(c)) return;
-      if (totalCostAmount(c.cost || {}) > maxCost) return;
-      if (filterTag && !(c.tags || []).includes(filterTag)) return;
-      eligible.push({ card: c, dumpIndex });
-    });
-    if (!eligible.length) {
-      log(game, `${player.name}: 「${card.name}」— 墓地に対象ユニットがいない`);
-      return;
-    }
-    game.pendingChoice = {
-      type: "reviveFromDump",
-      step: "chooseDumpCard",
-      playerId,
-      eligible,
-      maxCost,
-      grantTag: ability.grantTag || null,
-      battleZoneOnly: Boolean(ability.battleZoneOnly),
-      queueItem: { playerId, card, ability, source: source || { zone: "board" } },
-    };
-    game.selected = { kind: "choice", choice: "reviveFromDump" };
-    game.message = `墓地から蘇生するユニット（コスト総量${maxCost}以下${filterTag ? `・[${filterTag}]` : ""}）を選んでください。`;
-    return "pending";
-  },
   // ヴェレスの息子たち: 出撃時に4つの効果から1つを選ぶ
   veresSonsOnSummon({ game, playerId, card, ability, source }) {
     game.pendingChoice = {
@@ -5766,7 +5737,7 @@ function parseDeckmakerAbilities(card, localType) {
   if (firstDrawReviveMatch) {
     const maxCost = parseDeckmakerKeywordValue(firstDrawReviveMatch[1]) || 1;
     const grantTag = firstDrawReviveMatch[2] || "屍人";
-    abilities.push({ trigger: "onFirstDraw", effect: "reviveUnitFromDump", maxCost, grantTag });
+    abilities.push({ trigger: "onFirstDraw", effect: "searchZoneDeployPick", zone: "dump", maxCost, grantTag });
   }
 
   const payHpBuffMatch = text.match(
@@ -6138,7 +6109,7 @@ function parseDeckmakerAbilities(card, localType) {
   // \u7b2c\u4e8c\u5893\u6a19: \u6bce\u30bf\u30fc\u30f3\u6700\u521d\u306e\u30c9\u30ed\u30fc\u6642\u306b\u30b3\u30b9\u30c81\u4ee5\u4e0b\u306e\u30e6\u30cb\u30c3\u30c8\u3092\u8607\u751f\u3057\u5c4d\u4eba\u30bf\u30b0\u4ed8\u4e0e
   if (card.id === "card_1753681080997") {
     abilities.length = 0;
-    abilities.push({ trigger: "onFirstDraw", effect: "reviveUnitFromDump", maxCost: 1, grantTag: "\u5c4d\u4eba", battleZoneOnly: true });
+    abilities.push({ trigger: "onFirstDraw", effect: "searchZoneDeployPick", zone: "dump", maxCost: 1, grantTag: "\u5c4d\u4eba", battleZoneOnly: true });
   }
 
   if (card.id === "card_1753775442028") {
@@ -11990,65 +11961,6 @@ function resolveSummonPlacementSkip() {
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
   return true;
-}
-
-function resolveReviveFromDump(index) {
-  const pending = state.pendingChoice;
-  if (pending?.type !== "reviveFromDump") return false;
-  if (pending.step === "chooseCell") return false;
-  const entry = pending.eligible[index];
-  if (!entry?.card) return false;
-  const player = state.players[pending.playerId];
-  // battleZoneOnly が優先する前線マスに加え、そこが満杯でも詰まないよう
-  // 通常の出撃マスもフォールバックとして選べるようにする。
-  let validRows = null;
-  if (pending.battleZoneOnly) {
-    const battleRow = player.summonRow + player.forward;
-    validRows = [...new Set([battleRow, player.summonRow])].filter((row) => row >= 0 && row < ROWS);
-  }
-  const rowsToCheck = validRows || summonPlacementRowsForPlayer(state, pending.playerId, { allowRaid: false });
-  const hasOpenCell = rowsToCheck.some((row) => unitFieldColsForRow(row).some((col) => !state.board[row]?.[col]));
-  if (!hasOpenCell) {
-    log(state, `${player.name}: 出すマスがないため「${entry.card.name}」を蘇生できません`);
-    const qi = pending.queueItem;
-    state.pendingChoice = null;
-    state.selected = null;
-    if (qi) completeAbilitySource(state, qi);
-    processEffectQueue(state);
-    syncOnlineAction("resolveChoice", pending.playerId);
-    render();
-    return true;
-  }
-  beginSummonPlacementChoice(state, pending.playerId, {
-    kind: "unit",
-    cardId: entry.card.id,
-    fromDump: true,
-    dumpIndex: entry.dumpIndex,
-  }, {
-    grantTag: pending.grantTag,
-    queueItem: pending.queueItem,
-    validRows,
-    message: `「${entry.card.name}」を蘇生するマスをクリックしてください`,
-  });
-  render();
-  return true;
-}
-
-function finishReviveFromDumpSkip() {
-  const pending = state.pendingChoice;
-  if (pending?.type !== "reviveFromDump") return false;
-  const qi = pending.queueItem;
-  state.pendingChoice = null;
-  state.selected = null;
-  log(state, `${state.players[pending.playerId].name}: 蘇生スキップ`);
-  completeAbilitySource(state, qi);
-  processEffectQueue(state);
-  syncOnlineAction("resolveChoice", pending.playerId);
-  return true;
-}
-
-function resolveReviveFromDumpSkip() {
-  return finishReviveFromDumpSkip();
 }
 
 function beginFieldExperimentSummon(pending, handIndex) {
@@ -19568,7 +19480,6 @@ function drawChoiceOverlay() {
   else if (pending.type === "searchDeckPick") drawSearchDeckPickPanel(pending);
   else if (pending.type === "payOrDamage") drawPayOrDamagePanel(pending);
   else if (pending.type === "dumpWarBondReturn") drawDumpWarBondReturnPanel(pending);
-  else if (pending.type === "reviveFromDump") drawReviveFromDumpPanel(pending);
   else if (pending.type === "chooseActivationResource") drawChooseActivationResourcePanel(pending);
   else if (pending.type === "chooseUnitActivate") drawChooseUnitActivatePanel(pending);
   else if (pending.type === "chooseStructPhaseActivate") drawChooseStructPhaseActivatePanel(pending);
@@ -21299,35 +21210,6 @@ function drawPayForBuffPanel(pending) {
   }
 }
 
-function drawReviveFromDumpPanel(pending) {
-  const eligible = pending.eligible || [];
-  const cardW = 108, cardH = 150, gap = 16;
-  const cols = Math.min(eligible.length, 5);
-  const w = Math.max(480, cols * (cardW + gap) + gap + 60);
-  const h = 280;
-  const x = (W - w) / 2;
-  const y = (H - h) / 2;
-  drawChoicePanelBase(x, y, w, h, "rgba(80,40,140,0.75)", "#c060ff");
-  ctx.fillStyle = "#d8b0ff";
-  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`墓地から蘇生（コスト総量${pending.maxCost}以下）`, x + 24, y + 32);
-  ctx.fillStyle = "rgba(190,160,240,0.8)";
-  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("蘇生するユニットを選んでください。", x + 24, y + 54);
-  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
-  const startX = x + 30;
-  const cardsY = y + 70;
-  eligible.forEach((entry, i) => {
-    const card = entry.card || entry;
-    const cx = startX + i * (cardW + gap);
-    drawCard(cx, cardsY, cardW, cardH, card, { selected: false });
-    if (isController) addHit(cx, cardsY, cardW, cardH, () => { resolveReviveFromDump(i); render(); });
-  });
-  if (isController) {
-    drawButton(x + w - 120, y + h - 44, 100, 30, "スキップ", () => { resolveReviveFromDumpSkip(); render(); });
-  }
-}
-
 function drawChooseActivationResourcePanel(pending) {
   const player = state.players[pending.playerId];
   const affordable = pending.resources || RESOURCE_KEYS.filter((r) => (player.resources[r] || 0) >= pending.amount);
@@ -23018,7 +22900,6 @@ function abilityText(card) {
         destroySelfIfUnrested: "アンレストなら自壊",
         summonToken: "トークン生成",
         gainActCostResources: "攻撃ダメージ時：相手アクトコスト資源を獲得",
-        reviveUnitFromDump: `墓地からコスト${ability.maxCost}以下のユニットを蘇生`,
         identityInvestigationPlay: "正体不明3体以上・他世界0体：蘇生か[不動][不攻]解除",
         identityGhostAttackDebuff: "攻撃時：対象に±0/-X（X=正体不明ユニット数）",
         identityTurnEndFieldDecay: "ターン終了時：全场-X/-1",
@@ -23436,7 +23317,6 @@ const testing = {
   resolveRevealPick,
   resolveRevealPickSkip,
   resolveSearchDeckPick,
-  resolveReviveFromDump,
   resolveSearchZoneDeployPickSkip,
   resolveSummonPlacement,
   resolveSummonPlacementSkip,

@@ -46,7 +46,7 @@ const KNOWN_ABILITY_EFFECTS = new Set([
   "restAttacker",
   "chooseProduceResource", "chooseSummonGolem", "destroySelf", "searchDeckByType", "searchDeckMinCostToHand",
   "revealTopNPick", "payResourceOrCoreDamage", "gainShockOrAlert", "grantKeywordsToEnemyRelativeRow",
-  "destroySelfIfUnrested", "summonToken", "gainActCostResources", "reviveUnitFromDump", "restTargetNoUnrest",
+  "destroySelfIfUnrested", "summonToken", "gainActCostResources", "restTargetNoUnrest",
   "produceResourceCostHP", "produceResourceCostHuman", "deployNamedFromDecks", "grantTactPeopleDiscount",
   "adjacentTagBuff", "grantMobileIfAnyTag", "grantConditionalKeywordsByCounter", "goldGolemStrike",
   "payDestroyUpToEnemyCards", "registerDumpLifeGain", "enterRestedLocked", "unrestSelf",
