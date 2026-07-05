@@ -2429,29 +2429,6 @@ const abilityEffects = {
     for (const entry of exiled) triggerAbilities(game, entry.ownerId, entry.card, "onExile");
     cleanupAllDestroyed();
   },
-  reviveFromExile({ game, playerId, card }) {
-    const eligible = [];
-    for (const [pid, player] of Object.entries(game.players)) {
-      const exileZone = player.exileZone || [];
-      for (let i = 0; i < exileZone.length; i++) {
-        const c = exileZone[i];
-        if (c.type === "unit") eligible.push({ ...c, _exileOwner: pid, _exileIndex: i });
-      }
-    }
-    if (eligible.length === 0) {
-      log(game, `${game.players[playerId].name}: 「${card.name}」— 除外ゾーンにユニットがいない`);
-      return;
-    }
-    game.pendingChoice = {
-      type: "reviveFromExile",
-      playerId,
-      eligible,
-      cardName: card.name,
-    };
-    game.selected = { kind: "choice", choice: "reviveFromExile" };
-    game.message = "除外ゾーンから場に出すユニットを選んでください。";
-    return "pending";
-  },
   grantKeywordsToAllMagicMachines({ game, ability }) {
     for (const pid of ["p1", "p2"]) {
       for (const unit of unitsOwnedBy(pid)) {
@@ -3124,26 +3101,52 @@ const abilityEffects = {
     ensureKeyword(target, "armor", Math.max(keywordValue(target, "armor"), 3));
     log(game, `${game.players[playerId].name}: 「${card.name}」— 「${target.name}」に[装甲③]を付与`);
   },
-  // パチャママ・ルクルナ: 出撃時、デッキから「パチャママ・ルクルナ」または「農民」を1体選んで出す
-  pachamamaSearchSelfOrFarmer({ game, playerId, card, ability, source }) {
+  // 共通: デッキ・墓地・除外ゾーンなどから条件(names/tag/maxCostのmatchesCond条件)に
+  // 合うユニットを選んで場に出す。ability.zone で対象ゾーンを指定
+  // （"mainDeck"(既定) | "dump" | "exileZoneAllPlayers"）。
+  // ability.suppressSelfEffect が指定されている場合、出したユニット自身の同名アビリティは無効化される
+  // （例: パチャママ・ルクルナが同名カードを出したときの連鎖抑止）。
+  searchZoneDeployPick({ game, playerId, card, ability, source }) {
     const player = game.players[playerId];
-    const candidates = player.mainDeck
-      .map((c, deckIndex) => ({ card: c, deckIndex }))
-      .filter(({ card: c }) => c.name === "パチャママ・ルクルナ" || c.name === "農民");
-    if (!candidates.length) {
-      log(game, `${player.name}: 「${card.name}」— デッキに対象カードがない`);
+    const cond = ability.matchCond || {
+      ...(ability.names ? { names: ability.names } : {}),
+      ...(ability.tag ? { tag: ability.tag } : {}),
+    };
+    const zone = ability.zone || "mainDeck";
+    const eligible = [];
+    const collect = (ownerId, list) => {
+      (list || []).forEach((c) => {
+        if (c.type !== "unit") return;
+        if (ability.maxCost != null && totalCostAmount(c.cost || {}) > ability.maxCost) return;
+        if (!matchesCond(c, cond)) return;
+        eligible.push({ card: c, ownerId, zone: zone === "exileZoneAllPlayers" ? "exileZone" : zone });
+      });
+    };
+    if (zone === "exileZoneAllPlayers") {
+      collect("p1", game.players.p1.exileZone);
+      collect("p2", game.players.p2.exileZone);
+    } else {
+      collect(playerId, player[zone]);
+    }
+    if (!eligible.length) {
+      log(game, `${player.name}: 「${card.name}」— 対象カードが見つからない`);
       return;
     }
     game.pendingChoice = {
-      type: "pachamamaSearchPick",
+      type: "searchZoneDeployPick",
       playerId,
       cardName: card.name,
-      candidates,
+      promptLabel: ability.promptLabel || (ability.names || []).map((n) => `「${n}」`).join("または"),
+      eligible,
       selectedIndex: undefined,
+      grantTag: ability.grantTag || null,
+      battleZoneOnly: Boolean(ability.battleZoneOnly),
+      ownSummonRowOnly: Boolean(ability.ownSummonRowOnly),
+      suppressAbilityEffect: ability.suppressSelfEffect || null,
       queueItem: { playerId, card, ability, source: source || { zone: "board" } },
     };
-    game.selected = { kind: "choice", choice: "pachamamaSearchPick" };
-    game.message = `${card.name}: デッキから出すユニットを選んでください`;
+    game.selected = { kind: "choice", choice: "searchZoneDeployPick" };
+    game.message = `${card.name}: 出すユニットを選んでください`;
     return "pending";
   },
   // ワスカル・コリ: 出撃時、相手のユニット3つに5ダメージ
@@ -4183,7 +4186,7 @@ cardCatalog.main.precipitousFall = {
   text: "自分・相手の除外されているユニットから一つ選び、自分の第一行に出す。",
   flavor: "望むかどうかに関わらず、世界への墜落は突然起こりうる。",
   keywords: [],
-  abilities: [{ trigger: "onPlay", effect: "reviveFromExile" }],
+  abilities: [{ trigger: "onPlay", effect: "searchZoneDeployPick", zone: "exileZoneAllPlayers", ownSummonRowOnly: true }],
 };
 
 let nextInstanceId = 1;
@@ -5283,8 +5286,8 @@ function parseDeckmakerAbilities(card, localType) {
 
   // Revive from exile: "除外されているユニットから一つ選び、自分の第一行に出す"
   if (/除外(?:されている|された)?ユニットから(?:一つ|1つ)?選び.*第一行に出す/.test(text)) {
-    if (!abilities.some((a) => a.effect === "reviveFromExile")) {
-      abilities.push({ trigger: "onPlay", effect: "reviveFromExile" });
+    if (!abilities.some((a) => a.effect === "searchZoneDeployPick" && a.zone === "exileZoneAllPlayers")) {
+      abilities.push({ trigger: "onPlay", effect: "searchZoneDeployPick", zone: "exileZoneAllPlayers", ownSummonRowOnly: true });
     }
   }
 
@@ -6186,8 +6189,14 @@ function parseDeckmakerAbilities(card, localType) {
   }
 
   // パチャママ・ルクルナ: 出撃時、デッキから「パチャママ・ルクルナ」または「農民」を1体出す
-  if (card.id === "card_1783089769970" && !abilities.some((a) => a.effect === "pachamamaSearchSelfOrFarmer")) {
-    abilities.push({ trigger: "onSummon", effect: "pachamamaSearchSelfOrFarmer" });
+  if (card.id === "card_1783089769970" && !abilities.some((a) => a.effect === "searchZoneDeployPick")) {
+    abilities.push({
+      trigger: "onSummon",
+      effect: "searchZoneDeployPick",
+      zone: "mainDeck",
+      names: ["パチャママ・ルクルナ", "農民"],
+      suppressSelfEffect: "searchZoneDeployPick",
+    });
   }
 
   // ワスカル・コリ: 出撃時、相手のユニット3つに5ダメージ
@@ -6707,7 +6716,7 @@ function parseDeckmakerAbilities(card, localType) {
 
   if (card.id === "precipitousFall") {
     abilities.length = 0;
-    abilities.push({ trigger: "onPlay", effect: "reviveFromExile" });
+    abilities.push({ trigger: "onPlay", effect: "searchZoneDeployPick", zone: "exileZoneAllPlayers", ownSummonRowOnly: true });
   }
 
   if (card.id === "turbulentRepatriation") {
@@ -10935,6 +10944,7 @@ function matchesCond(card, cond, options = {}) {
   if (typeof cond === "string") return matchesBracketRef(card, cond);
   if (cond.tag) return matchesBracketRef(card, cond.tag);
   if (cond.nameContains) return (card.name || "").includes(cond.nameContains);
+  if (cond.names) return (cond.names || []).includes(card?.name);
   return true;
 }
 
@@ -11383,37 +11393,66 @@ function resolveHandToDeckPick() {
   return true;
 }
 
-function selectPachamamaSearchPick(index) {
+function selectSearchZoneDeployPick(index) {
   const pending = state.pendingChoice;
-  if (pending?.type !== "pachamamaSearchPick") return false;
+  if (pending?.type !== "searchZoneDeployPick") return false;
   if (!canControlChoicePlayer(pending.playerId)) return false;
   pending.selectedIndex = pending.selectedIndex === index ? undefined : index;
   render();
   return true;
 }
 
-function resolvePachamamaSearchPick(index) {
+function resolveSearchZoneDeployPick(index) {
   const pending = state.pendingChoice;
-  if (pending?.type !== "pachamamaSearchPick") return false;
+  if (pending?.type !== "searchZoneDeployPick") return false;
   if (!canControlChoicePlayer(pending.playerId)) return false;
-  const player = state.players[pending.playerId];
-  const entry = pending.candidates[index];
+  const entry = pending.eligible[index];
   if (!entry) return false;
-  let deckIdx = player.mainDeck.indexOf(entry.card);
-  if (deckIdx < 0) deckIdx = entry.deckIndex;
-  if (deckIdx < 0 || player.mainDeck[deckIdx] !== entry.card) {
-    state.message = "そのカードはもうデッキにありません。";
+  const owner = state.players[entry.ownerId];
+  const list = owner?.[entry.zone];
+  const idx = list ? list.indexOf(entry.card) : -1;
+  if (!list || idx < 0) {
+    state.message = "そのカードはもう見つかりません。";
     render();
     return false;
   }
-  const [unitCard] = player.mainDeck.splice(deckIdx, 1);
+  const [unitCard] = list.splice(idx, 1);
+  if (entry.zone === "dump") notifyDumpChanged(state, entry.ownerId);
+  const qi = pending.queueItem;
+  const player = state.players[pending.playerId];
+  let validRows = null;
+  if (pending.ownSummonRowOnly) {
+    validRows = [PLAYERS[pending.playerId].summonRow];
+  } else if (pending.battleZoneOnly) {
+    const battleRow = player.summonRow + player.forward;
+    validRows = [...new Set([battleRow, player.summonRow])].filter((row) => row >= 0 && row < ROWS);
+  }
+  const suppressAbilityEffect = pending.suppressAbilityEffect;
+  const grantTag = pending.grantTag;
+  state.pendingChoice = null;
+  state.selected = null;
+  log(state, `${player.name}: 「${qi.card.name}」— 「${unitCard.name}」を出す`);
+  continueUnitDeployQueue(pending.playerId, [unitCard], qi, {
+    suppressAbilityEffect,
+    grantTag,
+    validRows,
+    fromDump: entry.zone === "dump",
+  });
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
+  return true;
+}
+
+function resolveSearchZoneDeployPickSkip() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "searchZoneDeployPick") return false;
+  if (!canControlChoicePlayer(pending.playerId)) return false;
+  log(state, `${state.players[pending.playerId].name}: 「${pending.cardName}」の出撃をスキップ`);
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
-  log(state, `${player.name}: 「${qi.card.name}」— デッキから「${unitCard.name}」を出す`);
-  continueUnitDeployQueue(pending.playerId, [unitCard], qi, {
-    suppressAbilityEffect: "pachamamaSearchSelfOrFarmer",
-  });
+  if (qi) completeAbilitySource(state, qi);
+  processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
   return true;
@@ -12841,61 +12880,6 @@ function resolveImposterSummon(index) {
   return true;
 }
 
-function resolveReviveFromExile(index) {
-  const pending = state.pendingChoice;
-  if (pending?.type !== "reviveFromExile") return false;
-  const choice = pending.eligible[index];
-  if (!choice) return false;
-  const exileOwner = choice._exileOwner;
-  const exileIndex = choice._exileIndex;
-  const ownerExile = exileOwner ? (state.players[exileOwner]?.exileZone || []) : [];
-  if (!exileOwner || typeof exileIndex !== "number" || !ownerExile[exileIndex]) {
-    state.message = "除外ゾーンからカードを取り出せませんでした。";
-    return false;
-  }
-  const playerInfo = PLAYERS[pending.playerId];
-  const player = state.players[pending.playerId];
-  const row = playerInfo.summonRow;
-  const exileCard = ownerExile[exileIndex];
-  const qi = pending.queueItem;
-  const hasOpenCell = unitFieldColsForRow(row).some((col) => !state.board[row]?.[col]);
-  if (!hasOpenCell) {
-    log(state, `${player.name}: 場が満員のため「${exileCard.name}」を場に出せない`);
-    state.pendingChoice = null;
-    state.selected = null;
-    if (qi) completeAbilitySource(state, qi);
-    processEffectQueue(state);
-    syncOnlineAction("resolveChoice", pending.playerId);
-    return true;
-  }
-  beginSummonPlacementChoice(state, pending.playerId, {
-    kind: "unit",
-    cardId: exileCard.id,
-    fromExile: true,
-    exileOwner,
-    exileIndex,
-  }, {
-    queueItem: qi,
-    validRows: [row],
-    message: `「${exileCard.name}」を出すマスをクリックしてください`,
-  });
-  render();
-  return true;
-}
-
-function resolveReviveFromExileSkip() {
-  const pending = state.pendingChoice;
-  if (pending?.type !== "reviveFromExile") return false;
-  const qi = pending.queueItem;
-  state.pendingChoice = null;
-  state.selected = null;
-  log(state, `${state.players[pending.playerId].name}: 除外ゾーンからの呼び出しをスキップ`);
-  completeAbilitySource(state, qi);
-  processEffectQueue(state);
-  syncOnlineAction("resolveChoice", pending.playerId);
-  return true;
-}
-
 function resolveChooseActivationResource(resource) {
   const pending = state.pendingChoice;
   if (pending?.type !== "chooseActivationResource") return false;
@@ -13111,7 +13095,7 @@ function continueUnitDeployQueue(playerId, unitQueue, queueItem, options = {}) {
     render();
     return;
   }
-  const rows = summonPlacementRowsForPlayer(state, playerId, { allowRaid: false });
+  const rows = options.validRows || summonPlacementRowsForPlayer(state, playerId, { allowRaid: false });
   const hasOpenCell = rows.some((row) => unitFieldColsForRow(row).some((col) => !state.board[row]?.[col]));
   if (!hasOpenCell) {
     log(state, `${player.name}: 出すマスがないため「${unitCard.name}」を出せません`);
@@ -13119,6 +13103,7 @@ function continueUnitDeployQueue(playerId, unitQueue, queueItem, options = {}) {
   }
   beginSummonPlacementChoice(state, playerId, { cardId: unitCard.id, fromDump: Boolean(options.fromDump) }, {
     validRows: rows,
+    grantTag: options.grantTag || null,
     message: `「${unitCard.name}」を出撃させるマスをクリック`,
     suppressAbilityEffect: options.suppressAbilityEffect || null,
     onComplete: (g, unit) => {
@@ -14694,10 +14679,20 @@ function playTactFromHand(handIndex, soulPayAmount = undefined) {
       const hasTarget = player.hand.some((c) => c !== card && c.type === "unit" && matchesCond(c, { nameContains: nameNeedle }));
       if (!hasTarget) return fail(`${card.name}: 手札に「${nameNeedle}」の名を含むユニットが必要です。`);
     }
-    if (ability.trigger === "onPlay" && ability.effect === "reviveFromExile") {
-      const hasExileUnit = ["p1", "p2"].some((pid) =>
-        (state.players[pid].exileZone || []).some((c) => c.type === "unit"));
-      if (!hasExileUnit) return fail(`${card.name}: 除外ゾーンにユニットがいません。`);
+    if (ability.trigger === "onPlay" && ability.effect === "searchZoneDeployPick") {
+      const zoneCond = ability.matchCond || {
+        ...(ability.names ? { names: ability.names } : {}),
+        ...(ability.tag ? { tag: ability.tag } : {}),
+      };
+      const zoneMatches = (c) =>
+        c.type === "unit"
+        && matchesCond(c, zoneCond)
+        && (ability.maxCost == null || totalCostAmount(c.cost || {}) <= ability.maxCost);
+      const zoneName = ability.zone || "mainDeck";
+      const hasTarget = zoneName === "exileZoneAllPlayers"
+        ? ["p1", "p2"].some((pid) => (state.players[pid].exileZone || []).some(zoneMatches))
+        : (player[zoneName] || []).some(zoneMatches);
+      if (!hasTarget) return fail(`${card.name}: 対象となるユニットが見つかりません。`);
     }
     if (ability.trigger === "onPlay" && ability.effect === "tactToStructOverStruct") {
       const requiredName = ability.requiredStructName || "覆没の迷宮";
@@ -19574,7 +19569,6 @@ function drawChoiceOverlay() {
   else if (pending.type === "payOrDamage") drawPayOrDamagePanel(pending);
   else if (pending.type === "dumpWarBondReturn") drawDumpWarBondReturnPanel(pending);
   else if (pending.type === "reviveFromDump") drawReviveFromDumpPanel(pending);
-  else if (pending.type === "reviveFromExile") drawReviveFromExilePanel(pending);
   else if (pending.type === "chooseActivationResource") drawChooseActivationResourcePanel(pending);
   else if (pending.type === "chooseUnitActivate") drawChooseUnitActivatePanel(pending);
   else if (pending.type === "chooseStructPhaseActivate") drawChooseStructPhaseActivatePanel(pending);
@@ -19583,7 +19577,7 @@ function drawChoiceOverlay() {
   else if (pending.type === "drawPlusPayResource") drawDrawPlusPayResourcePanel(pending);
   else if (pending.type === "selectDestroyCards") drawSelectDestroyCardsPanel(pending);
   else if (pending.type === "dumpCardsPick") drawDumpCardsPickPanel(pending);
-  else if (pending.type === "pachamamaSearchPick") drawPachamamaSearchPickPanel(pending);
+  else if (pending.type === "searchZoneDeployPick") drawSearchZoneDeployPickPanel(pending);
   else if (pending.type === "veresDumpPick") drawVeresDumpPickPanel(pending);
   else if (pending.type === "handToDeckPick") drawHandToDeckPickPanel(pending);
   else if (pending.type === "deployNamedSelection") drawDeployNamedSelectionPanel(pending);
@@ -21334,34 +21328,6 @@ function drawReviveFromDumpPanel(pending) {
   }
 }
 
-function drawReviveFromExilePanel(pending) {
-  const eligible = pending.eligible || [];
-  const cardW = 108, cardH = 150, gap = 16;
-  const cols = Math.min(eligible.length, 5);
-  const w = Math.max(480, cols * (cardW + gap) + gap + 60);
-  const h = 300;
-  const x = (W - w) / 2;
-  const y = (H - h) / 2;
-  drawChoicePanelBase(x, y, w, h, "rgba(100,20,60,0.85)", "#ff4080");
-  ctx.fillStyle = "#ffc0d8";
-  ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("除外ゾーンから召喚", x + 24, y + 32);
-  ctx.fillStyle = "rgba(255,200,220,0.9)";
-  ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("場に出すユニットを選んでください。（自分の第一行に出る）", x + 24, y + 54);
-  const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
-  const startX = x + 30;
-  const cardsY = y + 70;
-  eligible.forEach((card, i) => {
-    const cx = startX + i * (cardW + gap);
-    drawCard(cx, cardsY, cardW, cardH, card, { selected: false });
-    if (isController) addHit(cx, cardsY, cardW, cardH, () => { resolveReviveFromExile(i); render(); });
-  });
-  if (isController) {
-    drawButton(x + w - 120, y + h - 44, 100, 30, "スキップ", () => { resolveReviveFromExileSkip(); render(); });
-  }
-}
-
 function drawChooseActivationResourcePanel(pending) {
   const player = state.players[pending.playerId];
   const affordable = pending.resources || RESOURCE_KEYS.filter((r) => (player.resources[r] || 0) >= pending.amount);
@@ -21718,9 +21684,9 @@ function drawHandToDeckPickPanel(pending) {
   }
 }
 
-function drawPachamamaSearchPickPanel(pending) {
-  const entries = pending.candidates || [];
-  const colW = 200, colH = 80, cols = Math.min(entries.length, 3);
+function drawSearchZoneDeployPickPanel(pending) {
+  const entries = pending.eligible || [];
+  const colW = 200, colH = 80, cols = Math.max(1, Math.min(entries.length, 3));
   const rows = Math.ceil(entries.length / cols);
   const panelW = Math.max(500, cols * (colW + 16) + 56);
   const panelH = Math.max(390, rows * (colH + 16) + 160);
@@ -21730,10 +21696,10 @@ function drawPachamamaSearchPickPanel(pending) {
   drawChoicePanelBase(x, y, panelW, panelH, "rgba(120,80,180,0.7)", "#8040ff");
   ctx.fillStyle = "#d0b8ff";
   ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`${pending.cardName}: デッキから出すユニットを選択`, x + 24, y + 36);
+  ctx.fillText(`${pending.cardName}: 出すユニットを選択`, x + 24, y + 36);
   ctx.fillStyle = "rgba(180,160,220,0.75)";
   ctx.font = "600 12px 'Yu Gothic UI', sans-serif";
-  ctx.fillText("「パチャママ・ルクルナ」または「農民」", x + 24, y + 56);
+  ctx.fillText(pending.promptLabel || "", x + 24, y + 56);
   const isController = canControlChoicePlayer(pending.playerId);
   entries.forEach((entry, i) => {
     const card = entry.card;
@@ -21753,7 +21719,7 @@ function drawPachamamaSearchPickPanel(pending) {
     ctx.fillText(card.type + `  ${(card.tags || []).slice(0, 2).join("/")}`, cx + 8, cy + 40, colW - 16);
     ctx.fillText(formatCost(card.cost || {}), cx + 8, cy + 56, colW - 16);
     if (isController) {
-      addHit(cx, cy, colW, colH, () => selectPachamamaSearchPick(i));
+      addHit(cx, cy, colW, colH, () => selectSearchZoneDeployPick(i));
     }
   });
   if (isController && sel !== undefined) {
@@ -21763,10 +21729,13 @@ function drawPachamamaSearchPickPanel(pending) {
       200,
       38,
       "このユニットを出す",
-      () => resolvePachamamaSearchPick(sel),
+      () => resolveSearchZoneDeployPick(sel),
       null,
       { accent: "p1" },
     );
+  }
+  if (isController) {
+    drawButton(x + panelW - 120, y + panelH - 44, 100, 30, "スキップ", resolveSearchZoneDeployPickSkip, null, { accent: "dim" });
   }
 }
 
@@ -23095,7 +23064,7 @@ function abilityText(card) {
         veresRestSummonBeastFromDeck: `レストする：コスト総量${ability.maxCost ?? 4}以下の[獣]ユニットを1体デッキから出す`,
         veresReviveOnFirstDestroy: "初めて破壊された時：墓地から同じマスに出る",
         quicheArmorGrantOnSummon: "出撃時：場のユニット1つに[装甲③]を与える",
-        pachamamaSearchSelfOrFarmer: "出撃時：デッキから「パチャママ・ルクルナ」または「農民」を1体出す",
+        searchZoneDeployPick: `出撃時：${ability.zone === "dump" ? "墓地" : ability.zone === "exileZoneAllPlayers" ? "除外ゾーン" : "デッキ"}から${(ability.names || []).map((n) => `「${n}」`).join("または") || "対象"}を1体出す`,
         huascarMultiDamageOnSummon: "出撃時：相手のユニット3つに5ダメージ",
         gainResourceOnNamedTactPlay: `自分が「${ability.tactName}」を発動した時：${RESOURCE_LABELS[ability.resource] || ability.resource}+${ability.amount}`,
         museumSearchMining: `金①：デッキから「${ability.cardName}」を手札に加える`,
@@ -23454,8 +23423,8 @@ const testing = {
   resolveDestroyChoice,
   toggleDumpCardsPick,
   resolveDumpCardsPick,
-  selectPachamamaSearchPick,
-  resolvePachamamaSearchPick,
+  selectSearchZoneDeployPick,
+  resolveSearchZoneDeployPick,
   toggleVeresDumpPick,
   resolveVeresDumpPick,
   toggleHandToDeckPick,
@@ -23468,8 +23437,7 @@ const testing = {
   resolveRevealPickSkip,
   resolveSearchDeckPick,
   resolveReviveFromDump,
-  resolveReviveFromExile,
-  resolveReviveFromExileSkip,
+  resolveSearchZoneDeployPickSkip,
   resolveSummonPlacement,
   resolveSummonPlacementSkip,
   resolveSoulPayChoice,
