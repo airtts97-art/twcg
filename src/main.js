@@ -1057,6 +1057,17 @@ const abilityEffects = {
       log(game, `${game.players[playerId].name}: 「${card.name}」— 破壊する相手ユニットがいなかった`);
     }
   },
+  christmasTruceHealAndRestAll({ game, playerId, card }) {
+    let count = 0;
+    for (const pid of ["p1", "p2"]) {
+      for (const unit of unitsOwnedBy(pid, game)) {
+        unit.currentHp = unit.maxHp || unit.hp || unit.currentHp;
+        unit.rested = true;
+        count += 1;
+      }
+    }
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 場の全ユニット${count}体のHPを全回復しレスト状態にした`);
+  },
   searchSelfToHand({ game, playerId, card, ability }) {
     const player = game.players[playerId];
     const amount = ability.amount || 1;
@@ -6411,6 +6422,11 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1783156872094") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "mercenaryContractPlay" });
+  }
+
+  if (card.id === "card_1782548454494") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "christmasTruceHealAndRestAll" });
   }
 
   if (card.id === "card_1782777924727") {
@@ -19000,7 +19016,7 @@ function shouldShowPlayerHandToViewer(playerId) {
   return viewerPlayerId() !== selectorId;
 }
 
-function drawHiddenHandZone(area, label = "HAND") {
+function drawHiddenHandZone(area, label = "HAND", count = null) {
   const x = area.x;
   const y = area.y;
   const w = area.w;
@@ -19008,13 +19024,14 @@ function drawHiddenHandZone(area, label = "HAND") {
   roundRect(x, y, w, h, area === layout.hand ? 8 : 6, "rgba(12,16,32,0.92)", "rgba(60,70,100,0.35)", 1);
   ctx.fillStyle = "rgba(130,145,190,0.55)";
   ctx.font = "700 11px 'Yu Gothic UI', sans-serif";
-  ctx.fillText(`${label} — 非公開`, x + 14, y + Math.round(h / 2) + 4);
+  const countLabel = count != null ? `（${count}枚）` : "";
+  ctx.fillText(`${label} — 非公開${countLabel}`, x + 14, y + Math.round(h / 2) + 4);
 }
 
 function drawHand() {
   const viewer = viewerPlayerId();
   if (!shouldShowPlayerHandToViewer(viewer)) {
-    drawHiddenHandZone(layout.hand, "HAND");
+    drawHiddenHandZone(layout.hand, "HAND", state.players[viewer]?.hand.length ?? null);
     return;
   }
   const player = state.players[viewer];
@@ -19059,7 +19076,7 @@ function drawHand() {
 function drawTopHand() {
   const oppId = opponentOf(viewerPlayerId());
   if (!shouldShowPlayerHandToViewer(oppId)) {
-    drawHiddenHandZone(layout.topHand, "HAND");
+    drawHiddenHandZone(layout.topHand, "HAND", state.players[oppId]?.hand.length ?? null);
     return;
   }
   const opponent = state.players[oppId];
