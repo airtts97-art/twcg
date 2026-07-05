@@ -98,6 +98,8 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1783012700492", // ロウニン-バットウ
   "card_1783012268813", // ネコマスター
   "card_1782928730197", // 《裁定》スパロウ
+  "card_1783089769970", // パチャママ・ルクルナ
+  "card_1783156872094", // 傭兵雇用契約書
 ]);
 
 export function isImplementedCard(cardId) {

@@ -1462,12 +1462,12 @@ const abilityEffects = {
     log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
   },
   tacticalBombardmentActivate({ game, playerId, card, ability, source }) {
-    if (source?.zone === "tact" && card.permanentTact) card.rested = true;
     const modes = tacticalBombardmentAvailableModes(game, playerId, card);
     if (!modes.length) {
       log(game, `${game.players[playerId].name}: 「${card.name}」— 発動できるモードがありません`);
       return;
     }
+    if (source?.zone === "tact" && card.permanentTact) card.rested = true;
     game.pendingChoice = {
       type: "tacticalBombardment",
       step: "chooseMode",
@@ -1479,6 +1479,24 @@ const abilityEffects = {
     game.selected = { kind: "choice", choice: "tacticalBombardment" };
     game.message = `${card.name}: 効果を1つ選んでください`;
     return "pending";
+  },
+  mercenaryContractPlay({ game, playerId, card }) {
+    card.permanentTact = true;
+    card.rested = false;
+    card.abilities = [
+      { trigger: "onMainPhase", effect: "mercenaryContractActivate", isPermanent: true },
+    ];
+    log(game, `${game.players[playerId].name}: 「${card.name}」をTACTゾーンに配置`);
+  },
+  mercenaryContractActivate({ game, playerId, card, source }) {
+    if (source?.zone === "tact" && card.permanentTact) card.rested = true;
+    const unitCount = unitsOwnedBy("p1", game).length + unitsOwnedBy("p2", game).length;
+    if (unitCount <= 0) {
+      log(game, `${game.players[playerId].name}: 「${card.name}」— 場にユニットがいません`);
+      return;
+    }
+    addResources(game.players[playerId], "funds", unitCount);
+    log(game, `${game.players[playerId].name}: 「${card.name}」— 場のユニット${unitCount}体分の金${unitCount}を得た`);
   },
   tacticalBombUnitStrike({ game, target, ability, card }) {
     if (!target) return;
@@ -6408,6 +6426,11 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1782776308523") {
     abilities.length = 0;
     abilities.push({ trigger: "onPlay", effect: "tacticalBombardmentPlay" });
+  }
+
+  if (card.id === "card_1783156872094") {
+    abilities.length = 0;
+    abilities.push({ trigger: "onPlay", effect: "mercenaryContractPlay" });
   }
 
   if (card.id === "card_1782777924727") {
@@ -21568,7 +21591,12 @@ function drawSparrowDestroyChoicePanel(pending) {
   const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
   const cardW = 74;
   const cardH = Math.round(cardW / CARD_ASPECT);
-  candidates.slice(0, 16).forEach((item, i) => {
+  const pageSize = 16;
+  const pageCount = Math.max(1, Math.ceil(candidates.length / pageSize));
+  const page = Math.max(0, Math.min(pageCount - 1, Number(pending.page) || 0));
+  pending.page = page;
+  const visible = candidates.slice(page * pageSize, (page + 1) * pageSize);
+  visible.forEach((item, i) => {
     const cx = x + 28 + (i % 8) * (cardW + 18);
     const cy = y + 92 + Math.floor(i / 8) * (cardH + 30);
     drawSelectableChoiceCard(cx, cy, cardW, cardH, item.card, {
@@ -21576,6 +21604,15 @@ function drawSparrowDestroyChoicePanel(pending) {
       onClick: isController ? () => resolveSparrowDestroyChoice(item.key) : null,
     });
   });
+  if (pageCount > 1) {
+    drawButton(x + 28, y + h - 44, 90, 30, "前へ", page > 0 && isController ? () => { pending.page = page - 1; render(); } : null, null, { micro: true, accent: page > 0 ? undefined : "dim" });
+    ctx.fillStyle = "rgba(255,210,190,0.85)";
+    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`${page + 1} / ${pageCount}（全${candidates.length}枚）`, x + w / 2, y + h - 24);
+    ctx.textAlign = "left";
+    drawButton(x + w - 118, y + h - 44, 90, 30, "次へ", page < pageCount - 1 && isController ? () => { pending.page = page + 1; render(); } : null, null, { micro: true, accent: page < pageCount - 1 ? undefined : "dim" });
+  }
 }
 
 function drawDumpCardsPickPanel(pending) {
