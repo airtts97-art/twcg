@@ -2104,7 +2104,7 @@ const abilityEffects = {
     returnUnitToOwnerHand(game, target);
   },
   lowNinBatSummonStrike({ game, playerId, card, ability, source }) {
-    const enemies = unitsOwnedBy(opponentOf(playerId), game).filter((unit) => canAttackUnit(card, unit).ok);
+    const enemies = unitsOwnedBy(opponentOf(playerId), game).filter((unit) => canAttackUnit(card, unit, { ignoreRange: true }).ok);
     if (!enemies.length) return;
     if (enemies.length === 1) {
       card.specialAttackNoRest = true;
@@ -2115,9 +2115,9 @@ const abilityEffects = {
     game.pendingTarget = {
       playerId,
       card,
-      ability: { ...ability, effect: "lowNinBatSummonStrikeResolve", target: "enemyUnit", requiresAttackableTarget: true },
+      ability: { ...ability, effect: "lowNinBatSummonStrikeResolve", target: "enemyUnit", requiresAttackableTarget: true, ignoreRangeForAttack: true },
       source: source || { zone: "board" },
-      filter: (unit) => unit.owner !== playerId && canAttackUnit(card, unit).ok,
+      filter: (unit) => unit.owner !== playerId && canAttackUnit(card, unit, { ignoreRange: true }).ok,
     };
     game.selected = { kind: "target", target: "enemyUnit" };
     game.message = `${card.name}: 攻撃する相手ユニットを選んでください`;
@@ -2591,12 +2591,20 @@ const abilityEffects = {
     game.message = pickPrompt;
     return "pending";
   },
-  summonGolemFromDeck({ game, playerId, card, ability }) {
-    summonGolemFromZones(game, playerId, {
-      maxCost: ability.maxCost || 3,
-      row: ability.row,
-      sourceCardName: card.name,
-      deckOnly: ability.deckOnly !== false,
+  summonGolemFromDeck({ game, playerId, card, ability, source }) {
+    return abilityEffects.searchZoneDeployPick({
+      game,
+      playerId,
+      card,
+      ability: {
+        zone: "mainDeck",
+        tag: "ゴーレム",
+        maxCost: ability.maxCost || 3,
+        row: ability.row,
+        ownSummonRowOnly: !Number.isInteger(ability.row),
+        promptLabel: "[ゴーレム]",
+      },
+      source,
     });
   },
   longTermInvestmentPlay({ game, playerId, card, ability }) {
@@ -2605,18 +2613,35 @@ const abilityEffects = {
     player.drawBonusNextTurn = (player.drawBonusNextTurn || 0) + amount;
     log(game, `${player.name}: 「${card.name}」→ 次のターンのドロー+${amount}`);
   },
-  summonGolemFromDeckOrDump({ game, playerId, card, ability }) {
-    summonGolemFromZones(game, playerId, {
-      maxCost: ability.maxCost || 3,
-      row: ability.row,
-      sourceCardName: card.name,
+  summonGolemFromDeckOrDump({ game, playerId, card, ability, source }) {
+    return abilityEffects.searchZoneDeployPick({
+      game,
+      playerId,
+      card,
+      ability: {
+        zone: ["mainDeck", "dump"],
+        tag: "ゴーレム",
+        maxCost: ability.maxCost || 3,
+        row: ability.row,
+        ownSummonRowOnly: !Number.isInteger(ability.row),
+        promptLabel: "[ゴーレム]",
+      },
+      source,
     });
   },
-  summonGolemToSameRow({ game, playerId, card, ability }) {
-    summonGolemFromZones(game, playerId, {
-      maxCost: ability.maxCost || 3,
-      row: card.row,
-      sourceCardName: card.name,
+  summonGolemToSameRow({ game, playerId, card, ability, source }) {
+    return abilityEffects.searchZoneDeployPick({
+      game,
+      playerId,
+      card,
+      ability: {
+        zone: ["mainDeck", "dump"],
+        tag: "ゴーレム",
+        maxCost: ability.maxCost || 3,
+        sameRowAsSource: true,
+        promptLabel: "[ゴーレム]",
+      },
+      source,
     });
   },
   tactToStructOverStruct({ game, playerId, card, ability }) {
@@ -3094,22 +3119,24 @@ const abilityEffects = {
       ...(ability.names ? { names: ability.names } : {}),
       ...(ability.tag ? { tag: ability.tag } : {}),
     };
-    const zone = ability.zone || "mainDeck";
+    const zones = Array.isArray(ability.zone) ? ability.zone : [ability.zone || "mainDeck"];
     const eligible = [];
-    const collect = (ownerId, list) => {
+    const collect = (ownerId, list, zoneName) => {
       (list || []).forEach((c) => {
         if (c.type !== "unit") return;
         if (ability.maxCost != null && totalCostAmount(c.cost || {}) > ability.maxCost) return;
         if (!matchesCond(c, cond)) return;
-        eligible.push({ card: c, ownerId, zone: zone === "exileZoneAllPlayers" ? "exileZone" : zone });
+        eligible.push({ card: c, ownerId, zone: zoneName === "exileZoneAllPlayers" ? "exileZone" : zoneName });
       });
     };
-    if (zone === "exileZoneAllPlayers") {
-      collect("p1", game.players.p1.exileZone);
-      collect("p2", game.players.p2.exileZone);
-    } else {
-      collect(playerId, player[zone]);
-    }
+    zones.forEach((zone) => {
+      if (zone === "exileZoneAllPlayers") {
+        collect("p1", game.players.p1.exileZone, zone);
+        collect("p2", game.players.p2.exileZone, zone);
+      } else {
+        collect(playerId, player[zone], zone);
+      }
+    });
     if (!eligible.length) {
       log(game, `${player.name}: 「${card.name}」— 対象カードが見つからない`);
       return;
@@ -3124,6 +3151,7 @@ const abilityEffects = {
       grantTag: ability.grantTag || null,
       battleZoneOnly: Boolean(ability.battleZoneOnly),
       ownSummonRowOnly: Boolean(ability.ownSummonRowOnly),
+      fixedRow: Number.isInteger(ability.row) ? ability.row : (ability.sameRowAsSource ? card.row : null),
       suppressAbilityEffect: ability.suppressSelfEffect || null,
       queueItem: { playerId, card, ability, source: source || { zone: "board" } },
     };
@@ -3344,7 +3372,7 @@ const abilityEffects = {
   goldGolemStrike({ game, playerId, card, target }) {
     if (!target || target.owner === playerId) return;
     const damage = calculateAttackDamage(card, target);
-    const result = dealDamageToUnit(game, target, damage, { source: card }, { cleanup: true, killer: card, effectAttack: true });
+    const result = dealDamageToUnit(game, target, damage, { source: card }, { cleanup: true, killer: card, effectAttack: true, skipArmorReduction: true });
     log(game, `${game.players[playerId].name}: ${card.name} special strike ${target.name} ${result.damage}`);
     if (result.pending) return "pending";
   },
@@ -3600,38 +3628,6 @@ function findSummonPlacement(game, playerId, card) {
     if (col >= 0) return { row, col };
   }
   return null;
-}
-
-function isGolemCard(card, maxCost = 3) {
-  return card?.type === "unit" && (card.tags || []).includes("ゴーレム") && totalCostAmount(card.cost || {}) <= maxCost;
-}
-
-function summonGolemFromZones(game, playerId, { maxCost = 3, row = null, sourceCardName = "効果", deckOnly = false } = {}) {
-  const player = game.players[playerId];
-  const targetRow = Number.isInteger(row) ? row : player.summonRow;
-  const col = findFirstEmptyColInRow(game, targetRow);
-  if (col < 0) {
-    log(game, `${sourceCardName}: ゴーレムを出す空きマスがありません`);
-    return false;
-  }
-
-  let zone = "mainDeck";
-  let index = player.mainDeck.findIndex((card) => isGolemCard(card, maxCost));
-  if (!deckOnly && index < 0) {
-    zone = "dump";
-    index = player.dump.findIndex((card) => isGolemCard(card, maxCost));
-  }
-  if (index < 0) {
-    log(game, `${sourceCardName}: コスト総量${maxCost}以下のゴーレムが見つかりません`);
-    return false;
-  }
-
-  const [card] = player[zone].splice(index, 1);
-  const unit = makeUnit(card.id, playerId, targetRow, col, { rested: false });
-  commitUnitToBoard(game, unit, targetRow, col);
-  log(game, `${sourceCardName}: ${card.name} を場に出しました`);
-  triggerAbilities(game, playerId, unit, "onSummon", { from: zone });
-  return true;
 }
 
 const cardCatalog = {
@@ -6637,8 +6633,8 @@ function parseDeckmakerAbilities(card, localType) {
   if (card.id === "card_1783013688397") {
     abilities.length = 0;
     abilities.push({ trigger: "onSummon", effect: "ashitaStackDumpTactsOnSummon" });
-    abilities.push({ trigger: "onActivate", effect: "ashitaUseStackedTact" });
-    abilities.push({ trigger: "onActivate", effect: "ashitaStackDiscardBounce", target: "anyUnit" });
+    abilities.push({ trigger: "onActivate", effect: "ashitaUseStackedTact", noRest: true });
+    abilities.push({ trigger: "onActivate", effect: "ashitaStackDiscardBounce", target: "anyUnit", noRest: true });
   }
 
   if (card.id === "card_1783013402820") {
@@ -8812,11 +8808,16 @@ function handleOnlineMessage(message) {
       // A restarted server can legitimately restart its state version at 1.
       // A room rejoin is authoritative even when this tab remembers a higher old version.
       if (message.rejoined || shouldApplyOnlineState(message.version)) {
-        applyRemoteGameState(message.state);
-        markOnlineStateApplied(message.version);
-        applyOnlinePlayerNames();
-        app.screen = "game";
-        app.match.mode = "オンライン対戦";
+        try {
+          applyRemoteGameState(message.state);
+          markOnlineStateApplied(message.version);
+          applyOnlinePlayerNames();
+          app.screen = "game";
+          app.match.mode = "オンライン対戦";
+        } catch (e) {
+          console.error("[sync] applyRemoteGameState failed (room):", e);
+          app.match.message = "同期に失敗しました。再同期しています…";
+        }
       }
       render();
     } else if (message.role === "host" && onlineDesiredSession?.recoveryState) {
@@ -8892,7 +8893,15 @@ function handleOnlineMessage(message) {
     app.match.spectatorCount = Math.max(0, Number(message.spectatorCount) || 0);
     syncMatchDecksFromPlayers(app.match.players);
     if (!shouldApplyOnlineState(message.version, message.reason === "syncRequest")) return;
-    applyRemoteGameState(message.state);
+    try {
+      applyRemoteGameState(message.state);
+    } catch (e) {
+      console.error("[sync] applyRemoteGameState failed (start):", e);
+      app.match.message = "同期に失敗しました。再同期しています…";
+      render();
+      requestOnlineStateSync("apply-error");
+      return;
+    }
     markOnlineStateApplied(message.version);
     applyOnlinePlayerNames();
     app.match.status = "online";
@@ -8921,7 +8930,15 @@ function handleOnlineMessage(message) {
       render();
       return;
     }
-    applyRemoteGameState(message.state);
+    try {
+      applyRemoteGameState(message.state);
+    } catch (e) {
+      console.error("[sync] applyRemoteGameState failed (state):", e);
+      app.match.message = "同期に失敗しました。再同期しています…";
+      render();
+      requestOnlineStateSync("apply-error");
+      return;
+    }
     markOnlineStateApplied(message.version);
     applyOnlinePlayerNames();
     persistOnlineSession(message.state);
@@ -10772,6 +10789,77 @@ function payForCard(player, cost = {}, card = null, { soulPayAmount = 0 } = {}) 
   return true;
 }
 
+const MATTER_CARD_ID = "card_1783012502753";
+
+function findFieldMatterUnit(playerId) {
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      const unit = state.board[row]?.[col];
+      if (unit && unit.owner === playerId && unit.id === MATTER_CARD_ID) return unit;
+    }
+  }
+  return null;
+}
+
+function findAltSoshoFieldUnit(playerId, excludeName) {
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      const unit = state.board[row]?.[col];
+      if (unit && unit.owner === playerId && (unit.tags || []).includes("基祖") && unit.name !== excludeName) return unit;
+    }
+  }
+  return null;
+}
+
+function requestMatterDiscountChoice(player, card, continuation) {
+  if (!card || card.type !== "unit") return false;
+  if (!(card.tags || []).includes("プログラム")) return false;
+  if ((card.cost?.electric || 0) <= 0) return false;
+  const matterUnit = findFieldMatterUnit(player.id);
+  if (!matterUnit) return false;
+  state.pendingChoice = {
+    type: "matterDiscount",
+    playerId: player.id,
+    cardName: card.name,
+    matterName: matterUnit.name,
+    canBounce: Boolean(findAltSoshoFieldUnit(player.id, matterUnit.name)),
+    continuation,
+  };
+  state.selected = { kind: "choice", choice: "matterDiscount" };
+  state.message = `「${card.name}」出撃：「${matterUnit.name}」を消費して電②減額しますか？`;
+  syncOnlineAction("matterDiscountChoice", player.id);
+  render();
+  return true;
+}
+
+function resolveMatterDiscountChoice(action) {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "matterDiscount" || !canControlChoicePlayer(pending.playerId)) return false;
+  if (!["destroy", "bounce", "skip"].includes(action)) return false;
+  if (action === "bounce" && !pending.canBounce) return false;
+  const continuation = pending.continuation;
+  state.pendingChoice = null;
+  state.selected = null;
+  const matterAction = action === "skip" ? null : action;
+  if (continuation?.type === "unit") {
+    return placeUnitFromHand(continuation.handIndex, continuation.row, continuation.col, undefined, matterAction);
+  }
+  return false;
+}
+
+function applyMatterDiscountSacrifice(playerId, action) {
+  const matterUnit = findFieldMatterUnit(playerId);
+  if (!matterUnit) return;
+  const player = state.players[playerId];
+  if (action === "bounce") {
+    returnUnitToOwnerHand(state, matterUnit);
+    log(state, `${player.name}: 電②減額のため「${matterUnit.name}」を手札に戻した`);
+  } else {
+    log(state, `${player.name}: 電②減額のため「${matterUnit.name}」を破壊`);
+    destroyUnitByEffect(state, matterUnit, { source: matterUnit });
+  }
+}
+
 function requestSoulPayChoice(player, cost, card, continuation) {
   const amounts = soulPayAmountsForCard(player, cost, card);
   if (!amounts.length) return false;
@@ -11111,8 +11199,11 @@ function resolvePendingTarget(row, col) {
   const target = pending.ability.target === "attackableCell"
     ? { row, col }
     : state.board[row]?.[col];
-  if (effect) effect({ game: state, playerId: pending.playerId, card: pending.card, ability: pending.ability, target });
+  // 効果を呼ぶ前にクリアしておく。攻撃系効果が内部でexecuteUnitAttackを呼ぶ場合、
+  // 「pendingTarget/pendingChoiceがあるか」で戦闘途中経過を保留するかを判定しており、
+  // 解決中のこのpendingTarget自身が残っていると誤って保留扱いになってしまうため。
   state.pendingTarget = null;
+  if (effect) effect({ game: state, playerId: pending.playerId, card: pending.card, ability: pending.ability, target });
   if (!state.pendingChoice) state.selected = null;
   completeAbilitySource(state, pending);
   processEffectQueue(state);
@@ -11408,7 +11499,9 @@ function resolveSearchZoneDeployPick(index) {
   const qi = pending.queueItem;
   const player = state.players[pending.playerId];
   let validRows = null;
-  if (pending.ownSummonRowOnly) {
+  if (Number.isInteger(pending.fixedRow)) {
+    validRows = [pending.fixedRow];
+  } else if (pending.ownSummonRowOnly) {
     validRows = [PLAYERS[pending.playerId].summonRow];
   } else if (pending.battleZoneOnly) {
     const battleRow = player.summonRow + player.forward;
@@ -12516,6 +12609,12 @@ function playAshitaStackedTact(game, unit, tactIndex) {
   if (!unit?.tactStack?.[tactIndex]) return;
   const tact = unit.tactStack.splice(tactIndex, 1)[0];
   const player = game.players[unit.owner];
+  player.dump.push(tact);
+  notifyDumpChanged(game, unit.owner);
+  log(game, `${player.name}: 「${unit.name}」の下敷き「${tact.name}」を使用`);
+  if (game === state && offerIntelAgencyCancel(unit.owner, tact, { mode: "stackedTact" })) {
+    return;
+  }
   for (const ability of tact.abilities || []) {
     if (ability.trigger === "onPlay") {
       game.effectQueue.push({
@@ -12526,9 +12625,6 @@ function playAshitaStackedTact(game, unit, tactIndex) {
       });
     }
   }
-  player.dump.push(tact);
-  notifyDumpChanged(game, unit.owner);
-  log(game, `${player.name}: 「${unit.name}」の下敷き「${tact.name}」を使用`);
   processEffectQueue(game);
 }
 
@@ -12539,6 +12635,12 @@ function resolveAshitaStackPick(index) {
   const unit = unitsOwnedBy(pending.playerId, state).find((candidate) => candidate.instanceId === pending.unitInstanceId);
   if (!unit || index < 0 || index >= (unit.tactStack || []).length) return false;
   playAshitaStackedTact(state, unit, index);
+  if (state.pendingChoice && state.pendingChoice !== pending) {
+    // 諜報機関の無効化確認など、新たな選択待ちに移行した場合はそちらを維持する
+    syncOnlineAction("resolveChoice", pending.playerId);
+    render();
+    return true;
+  }
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
@@ -13557,13 +13659,13 @@ function isValidAbilityTarget(item, target) {
   if (item.ability.effect === "verzariaConsumeZeroAtk") {
     return target.owner !== item.playerId && (target.charmCounters || 0) > 0 && effectiveAttackPower(target) <= 0;
   }
-  if (item.ability.effect === "dailyToyReturnToHand" || item.ability.effect === "ashitaStackDiscardBounce") {
+  if (item.ability.effect === "dailyToyReturnToHand") {
     if (unitPlayCostTotal(target) > 4) return false;
   }
   if (item.ability.effect === "ashitaStackDiscardBounce" && (item.card.tactStack || []).length < 2) return false;
   if (item.ability.effect === "ashitaUseStackedTact" && !(item.card.tactStack || []).length) return false;
   if (!["enemyUnit", "friendlyUnit", "anyUnit", "friendlyNeutralUnit"].includes(item.ability.target)) return false;
-  if (item.ability.requiresAttackableTarget && !canAttackUnit(item.card, target).ok) return false;
+  if (item.ability.requiresAttackableTarget && !canAttackUnit(item.card, target, { ignoreRange: item.ability.ignoreRangeForAttack }).ok) return false;
   if (item.ability.requiresPaidResourceInTargetActCost) {
     const paidResource = item.ability.paidResource;
     if (!paidResource || (normalizeResourceObject(target.actCost || {})[paidResource] || 0) <= 0) return false;
@@ -14487,7 +14589,7 @@ function applyUnitSacrificeRequirement(playerId, card) {
   return true;
 }
 
-function placeUnitFromHand(handIndex, row, col, soulPayAmount = undefined) {
+function placeUnitFromHand(handIndex, row, col, soulPayAmount = undefined, matterDiscountAction = undefined) {
   if (!requireActivePlayerControl()) return false;
   const player = state.players[state.activePlayer];
   const card = player.hand[handIndex];
@@ -14523,10 +14625,18 @@ function placeUnitFromHand(handIndex, row, col, soulPayAmount = undefined) {
       : "敵ユニットが存在する横列には配置できません。");
   }
   if (
-    soulPayAmount === undefined
-    && requestSoulPayChoice(player, card.cost, card, { type: "unit", handIndex, row, col })
+    matterDiscountAction === undefined
+    && requestMatterDiscountChoice(player, card, { type: "unit", handIndex, row, col })
   ) return true;
-  if (!payForCard(player, card.cost, card, { soulPayAmount })) return fail("資源が不足しています。");
+  const unitPlayCost = matterDiscountAction
+    ? { ...card.cost, electric: Math.max(0, (card.cost?.electric || 0) - 2) }
+    : card.cost;
+  if (
+    soulPayAmount === undefined
+    && requestSoulPayChoice(player, unitPlayCost, card, { type: "unit", handIndex, row, col })
+  ) return true;
+  if (!payForCard(player, unitPlayCost, card, { soulPayAmount })) return fail("資源が不足しています。");
+  if (matterDiscountAction) applyMatterDiscountSacrifice(state.activePlayer, matterDiscountAction);
 
   applyUnitSacrificeRequirement(state.activePlayer, card);
   if (card.identityRevealGate && !applyIdentityRevealGate(state.activePlayer, card)) {
@@ -14716,11 +14826,27 @@ function offerIntelAgencyCancel(tactOwnerId, tactCard, options = {}) {
     tactCard,
     tactName: tactCard.name,
     preferPeople: canPayPeople,
-    // "play": 手札からの発動、"reactivate": 場にある永続タクトの再発動
-    mode: options.mode === "reactivate" ? "reactivate" : "play",
+    // "play": 手札からの発動、"reactivate": 場にある永続タクトの再発動、
+    // "stackedTact": アシタノピポパ等の下敷きタクトの使用
+    mode: ["reactivate", "stackedTact"].includes(options.mode) ? options.mode : "play",
   };
   state.message = `${responder.name}: 諜報機関で「${tactCard.name}」を無効化しますか？`;
   return true;
+}
+
+function resumeIntelAgencyCancelledTact(tactOwnerId, tactCard, mode) {
+  if (mode === "reactivate") {
+    triggerAbilities(state, tactOwnerId, tactCard, "onMainPhase", { zone: "tact" });
+  } else if (mode === "stackedTact") {
+    for (const ability of tactCard.abilities || []) {
+      if (ability.trigger === "onPlay") {
+        state.effectQueue.push({ playerId: tactOwnerId, card: tactCard, ability, source: { zone: "stack" } });
+      }
+    }
+    processEffectQueue(state);
+  } else {
+    finishPlayTact(tactOwnerId, tactCard);
+  }
 }
 
 function resolveIntelAgencyCancel(useIntel) {
@@ -14734,25 +14860,24 @@ function resolveIntelAgencyCancel(useIntel) {
     const cost = pending.preferPeople ? { people: 3 } : { electric: 3 };
     if (!pay(responder, cost)) {
       state.message = "資源が不足しているため無効化できません。";
-      if (mode === "reactivate") triggerAbilities(state, tactOwnerId, tactCard, "onMainPhase", { zone: "tact" });
-      else finishPlayTact(tactOwnerId, tactCard);
+      resumeIntelAgencyCancelledTact(tactOwnerId, tactCard, mode);
     } else {
-      const owner = state.players[tactOwnerId];
-      const index = owner.tactZone.findIndex((c) => c === tactCard || c.instanceId === tactCard.instanceId);
-      if (index >= 0) {
-        const [cancelled] = owner.tactZone.splice(index, 1);
-        owner.dump.push(cancelled);
-        notifyDumpChanged(state, tactOwnerId);
+      if (mode !== "stackedTact") {
+        const owner = state.players[tactOwnerId];
+        const index = owner.tactZone.findIndex((c) => c === tactCard || c.instanceId === tactCard.instanceId);
+        if (index >= 0) {
+          const [cancelled] = owner.tactZone.splice(index, 1);
+          owner.dump.push(cancelled);
+          notifyDumpChanged(state, tactOwnerId);
+        }
       }
       const intelStruct = (responder.structs || []).find((struct) => struct.id === "card_1753664241159" && !struct.rested);
       if (intelStruct) intelStruct.rested = true;
       const costLabel = Object.entries(cost).map(([r, a]) => `${RESOURCE_LABELS[r] || r}${a}`).join("");
       log(state, `${responder.name}: 諜報機関で「${tactCard.name}」を無効化（${costLabel}）`);
     }
-  } else if (mode === "reactivate") {
-    triggerAbilities(state, tactOwnerId, tactCard, "onMainPhase", { zone: "tact" });
   } else {
-    finishPlayTact(tactOwnerId, tactCard);
+    resumeIntelAgencyCancelledTact(tactOwnerId, tactCard, mode);
   }
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", responderId);
@@ -16178,12 +16303,14 @@ function afterAttack(unit) {
   }
 }
 
-function canAttackUnit(attacker, defender) {
+function canAttackUnit(attacker, defender, options = {}) {
   const owner = state.players[attacker.owner];
-  const forwardDistance = (defender.row - attacker.row) * owner.forward;
-  const maxRows = keywordValue(attacker, "arc", 1);
-  if (forwardDistance < 1 || forwardDistance > maxRows) {
-    return { ok: false, reason: "攻撃範囲外です。" };
+  if (!options.ignoreRange) {
+    const forwardDistance = (defender.row - attacker.row) * owner.forward;
+    const maxRows = keywordValue(attacker, "arc", 1);
+    if (forwardDistance < 1 || forwardDistance > maxRows) {
+      return { ok: false, reason: "攻撃範囲外です。" };
+    }
   }
   if (!canReachFlyingTarget(attacker, defender)) {
     return { ok: false, reason: "航空ユニットへ攻撃できません。" };
@@ -16408,7 +16535,12 @@ function dealDamageToUnit(game, target, rawAmount, source = {}, options = {}) {
   ) {
     return { damage: 0, pending: false };
   }
-  const damage = capUnitDamage(target, rawAmount, game);
+  let effectiveAmount = rawAmount;
+  if (options.effectAttack && !options.skipArmorReduction) {
+    const armorVal = defenderArmorValue(target, sourceCard);
+    if (armorVal > 0) effectiveAmount = Math.max(0, effectiveAmount - armorVal);
+  }
+  const damage = capUnitDamage(target, effectiveAmount, game);
   if (damage > 0) revealAmbushUnit(game, target);
   target.currentHp = (target.currentHp ?? target.maxHp ?? target.hp ?? 0) - damage;
   if (options.cleanup === false) game._deferDestroyedCleanup = (game._deferDestroyedCleanup || 0) + 1;
@@ -19555,6 +19687,26 @@ function drawChoiceOverlay() {
   else if (pending.type === "payOptionalOnSummonSearch") drawPayOptionalOnSummonSearchPanel(pending);
   else if (pending.type === "soulPay") drawSoulPayPanel(pending);
   else if (pending.type === "structZoneReplace") drawStructZoneReplacePanel(pending);
+  else if (pending.type === "matterDiscount") drawMatterDiscountPanel(pending);
+}
+
+function drawMatterDiscountPanel(pending) {
+  const x = 420, y = 280, w = 620, h = 240;
+  drawChoicePanelBase(x, y, w, h, "rgba(40,80,120,0.82)", "#60a0ff");
+  ctx.fillStyle = "#d0e8ff";
+  ctx.font = "700 20px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.cardName}」出撃`, x + 28, y + 36);
+  ctx.fillStyle = "rgba(190,220,255,0.92)";
+  ctx.font = "600 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText(`「${pending.matterName}」を消費してプレイコストの電②を減らせます。`, x + 28, y + 64, w - 56);
+  const isController = canControlChoicePlayer(pending.playerId);
+  if (isController) {
+    drawButton(x + 28, y + h - 58, 260, 36, "破壊して電②減額", () => { resolveMatterDiscountChoice("destroy"); }, null, { accent: "p1" });
+    if (pending.canBounce) {
+      drawButton(x + 300, y + h - 100, 260, 36, "手札に戻して電②減額", () => { resolveMatterDiscountChoice("bounce"); }, null, { accent: "p1" });
+    }
+    drawButton(x + 300, y + h - 58, 260, 36, "そのまま出す", () => { resolveMatterDiscountChoice("skip"); });
+  }
 }
 
 function drawSoulPayPanel(pending) {
@@ -21462,27 +21614,35 @@ function drawSparrowDestroyChoicePanel(pending) {
   const isController = canControlActivePlayer() && pending.playerId === controlledPlayerId();
   const cardW = 74;
   const cardH = Math.round(cardW / CARD_ASPECT);
-  const pageSize = 16;
-  const pageCount = Math.max(1, Math.ceil(candidates.length / pageSize));
-  const page = Math.max(0, Math.min(pageCount - 1, Number(pending.page) || 0));
-  pending.page = page;
-  const visible = candidates.slice(page * pageSize, (page + 1) * pageSize);
+  const cols = 8;
+  const rowH = cardH + 30;
+  const gridTop = y + 92;
+  const gridBottom = y + h - 20;
+  const visibleRows = Math.max(1, Math.floor((gridBottom - gridTop) / rowH));
+  const totalRows = Math.max(1, Math.ceil(candidates.length / cols));
+  const maxScroll = Math.max(0, totalRows - visibleRows);
+  const scroll = Math.max(0, Math.min(maxScroll, Number(pending.scroll) || 0));
+  pending.scroll = scroll;
+  const startIndex = scroll * cols;
+  const visible = candidates.slice(startIndex, startIndex + visibleRows * cols);
   visible.forEach((item, i) => {
-    const cx = x + 28 + (i % 8) * (cardW + 18);
-    const cy = y + 92 + Math.floor(i / 8) * (cardH + 30);
+    const cx = x + 28 + (i % cols) * (cardW + 18);
+    const cy = gridTop + Math.floor(i / cols) * rowH;
     drawSelectableChoiceCard(cx, cy, cardW, cardH, item.card, {
       label: item.sub.replace(/^.*? /, ""),
       onClick: isController ? () => resolveSparrowDestroyChoice(item.key) : null,
     });
   });
-  if (pageCount > 1) {
-    drawButton(x + 28, y + h - 44, 90, 30, "前へ", page > 0 && isController ? () => { pending.page = page - 1; render(); } : null, null, { micro: true, accent: page > 0 ? undefined : "dim" });
-    ctx.fillStyle = "rgba(255,210,190,0.85)";
-    ctx.font = "700 12px 'Yu Gothic UI', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(`${page + 1} / ${pageCount}（全${candidates.length}枚）`, x + w / 2, y + h - 24);
-    ctx.textAlign = "left";
-    drawButton(x + w - 118, y + h - 44, 90, 30, "次へ", page < pageCount - 1 && isController ? () => { pending.page = page + 1; render(); } : null, null, { micro: true, accent: page < pageCount - 1 ? undefined : "dim" });
+  if (totalRows > visibleRows) {
+    drawButton(x + w - 70, gridTop, 46, 34, "↑", scroll > 0 ? () => { pending.scroll = scroll - 1; } : null, null, { micro: true, accent: scroll > 0 ? undefined : "dim" });
+    drawButton(x + w - 70, gridTop + 40, 46, 34, "↓", scroll < maxScroll ? () => { pending.scroll = scroll + 1; } : null, null, { micro: true, accent: scroll < maxScroll ? undefined : "dim" });
+    addWheelRegion(x, gridTop, w - 100, visibleRows * rowH, (dy) => {
+      pending.scroll = Math.max(0, Math.min(maxScroll, (Number(pending.scroll) || 0) + (dy > 0 ? 1 : -1)));
+      render();
+    });
+    ctx.fillStyle = "rgba(255,210,190,0.7)";
+    ctx.font = "600 11px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(`全${candidates.length}枚（ホイールでスクロール）`, x + 28, y + h - 8);
   }
 }
 
@@ -23345,6 +23505,7 @@ const testing = {
   resolveSummonPlacementSkip,
   resolveSoulPayChoice,
   cancelSoulPayChoice,
+  resolveMatterDiscountChoice,
   resolveStructZoneReplace,
   normalizeMisplacedStructCards: (playerId) => normalizeMisplacedStructCards(state, playerId),
   transferUnitControl: (unit, newControllerId, options = {}) => transferUnitControl(state, unit, newControllerId, options),
@@ -23373,6 +23534,7 @@ const testing = {
   resolveOptionalPayTurnEnd,
   resolveRemoveFieldCounter,
   resolveAshitaStackPick,
+  resolveIntelAgencyCancel,
   resolveNekoMasterIntercept,
   resolveDimensionEscapeIntercept,
   resolveCharmDestroyShield,
