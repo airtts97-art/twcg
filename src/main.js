@@ -697,9 +697,10 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
     message = "ユニットを出すマスをクリックしてください",
     allowRaid = false,
     validRows = null,
-    onComplete = null,
+    // continuation はプレーンなデータのみを保持すること(関数を含めるとオンライン対戦の
+    // 状態同期(JSONシリアライズ)で失われ、複数体配置キューが2体目以降で止まるバグになる)
+    continuation = null,
     allowSkip = false,
-    onSkip = null,
     skipLabel = "配置しない",
   } = options;
   game.pendingChoice = {
@@ -711,14 +712,38 @@ function beginSummonPlacementChoice(game, playerId, spec, options = {}) {
     suppressAbilityEffect,
     validRows: validRows || summonPlacementRowsForPlayer(game, playerId, { allowRaid }),
     queueItem,
-    onComplete,
+    continuation,
     allowSkip,
-    onSkip,
     skipLabel,
   };
   game.selected = { kind: "choice", choice: "summonPlacement" };
   game.message = message;
   return "pending";
+}
+
+function applySummonPlacementContinuation(continuation, playerId, unit) {
+  if (!continuation) return;
+  if (continuation.kind === "grantRaidRemoveExile") {
+    applyGrantedKeyword(unit, "raid");
+    const exileList = state.players[playerId]?.exileZone;
+    const idx = exileList ? exileList.findIndex((c) => c.id === continuation.cardId) : -1;
+    if (idx >= 0) exileList.splice(idx, 1);
+    return;
+  }
+  if (continuation.kind === "unitQueue") {
+    const opts = continuation.options || {};
+    if (opts.onEachPlacedEffect === "veresDumpReviveBuff") {
+      applyGrantedTag(unit, "屍人");
+      unit.atk = (unit.atk || 0) + 2;
+      unit.maxHp = (unit.maxHp || unit.hp || 0) + 2;
+      unit.currentHp = (unit.currentHp || unit.hp || 0) + 2;
+    }
+    continueUnitDeployQueue(playerId, continuation.unitQueue, continuation.queueItem, opts);
+    return;
+  }
+  if (continuation.kind === "tokenQueue") {
+    continueTokenDeployQueue(playerId, continuation.tokenId, continuation.remaining - 1, continuation.queueItem);
+  }
 }
 
 function matchesDeckSearchFilter(deckCard, filter) {
@@ -1183,17 +1208,12 @@ const abilityEffects = {
       log(game, `${game.players[playerId].name}: 「${card.name}」を出撃させるマスがないため除外されたまま`);
       return;
     }
-    const exileZone = game.players[playerId].exileZone;
     return beginSummonPlacementChoice(game, playerId, { cardId: card.id }, {
       allowRaid: true,
       allowSkip: true,
       skipLabel: "出撃しない",
       message: `「${card.name}」を[奇襲]で出撃させるマスをクリック（しない場合はキャンセル）`,
-      onComplete: (g, unit) => {
-        applyGrantedKeyword(unit, "raid");
-        const idx = exileZone.indexOf(card);
-        if (idx >= 0) exileZone.splice(idx, 1);
-      },
+      continuation: { kind: "grantRaidRemoveExile", cardId: card.id },
     });
   },
   grantSmokeScreenToFlanking({ game, playerId, card, ability }) {
@@ -11414,12 +11434,7 @@ function resolveVeresDumpPick() {
   log(state, `${player.name}: 「${qi.card.name}」— 墓地から${picked.length}体を蘇生（[屍人]・+2/+2）`);
   continueUnitDeployQueue(pending.playerId, picked, qi, {
     fromDump: true,
-    onEachPlaced: (unit) => {
-      applyGrantedTag(unit, "屍人");
-      unit.atk = (unit.atk || 0) + 2;
-      unit.maxHp = (unit.maxHp || unit.hp || 0) + 2;
-      unit.currentHp = (unit.currentHp || unit.hp || 0) + 2;
-    },
+    onEachPlacedEffect: "veresDumpReviveBuff",
   });
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -12053,7 +12068,7 @@ function resolveSummonPlacement(row, col) {
   state.pendingChoice = null;
   state.selected = null;
   if (qi) completeAbilitySource(state, qi);
-  if (pending.onComplete) pending.onComplete(state, unit);
+  applySummonPlacementContinuation(pending.continuation, pending.playerId, unit);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -12067,7 +12082,6 @@ function resolveSummonPlacementSkip() {
   const qi = pending.queueItem;
   state.pendingChoice = null;
   state.selected = null;
-  if (pending.onSkip) pending.onSkip(state);
   if (qi) completeAbilitySource(state, qi);
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
@@ -13140,9 +13154,17 @@ function continueUnitDeployQueue(playerId, unitQueue, queueItem, options = {}) {
     grantTag: options.grantTag || null,
     message: `「${unitCard.name}」を出撃させるマスをクリック`,
     suppressAbilityEffect: options.suppressAbilityEffect || null,
-    onComplete: (g, unit) => {
-      if (options.onEachPlaced) options.onEachPlaced(unit);
-      continueUnitDeployQueue(playerId, unitQueue, queueItem, options);
+    continuation: {
+      kind: "unitQueue",
+      unitQueue,
+      queueItem,
+      options: {
+        validRows: options.validRows || null,
+        grantTag: options.grantTag || null,
+        suppressAbilityEffect: options.suppressAbilityEffect || null,
+        fromDump: Boolean(options.fromDump),
+        onEachPlacedEffect: options.onEachPlacedEffect || null,
+      },
     },
   });
   render();
@@ -13172,7 +13194,7 @@ function continueTokenDeployQueue(playerId, tokenId, remaining, queueItem) {
     validRows: rows,
     allowRaid: hasRaid,
     message: `「${def?.name || tokenId}」を出すマスをクリック（残り${remaining}体）`,
-    onComplete: () => continueTokenDeployQueue(playerId, tokenId, remaining - 1, queueItem),
+    continuation: { kind: "tokenQueue", tokenId, remaining, queueItem },
   });
   render();
 }
@@ -13189,11 +13211,13 @@ function resolveVeresSonsChoice(option) {
   if (option === "servants") {
     log(state, `${player.name}: 「${card.name}」— 「ヴェレスの従者トークン」を2体出す`);
     continueTokenDeployQueue(playerId, "veresServantToken", 2, queueItem);
+    syncOnlineAction("resolveChoice", playerId);
     return true;
   }
   if (option === "beast") {
     log(state, `${player.name}: 「${card.name}」— 「ヴェレスの野獣トークン」を1体出す`);
     continueTokenDeployQueue(playerId, "veresBeastToken", 1, queueItem);
+    syncOnlineAction("resolveChoice", playerId);
     return true;
   }
   if (option === "buffZombies") {
