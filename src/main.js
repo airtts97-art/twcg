@@ -11488,7 +11488,10 @@ function resolveSearchZoneDeployPick(index) {
   if (!entry) return false;
   const owner = state.players[entry.ownerId];
   const list = owner?.[entry.zone];
-  const idx = list ? list.indexOf(entry.card) : -1;
+  // オンライン対戦中はresyncでゾーン配列が新しいオブジェクトに差し替わることがあるため、
+  // 参照一致ではなくカードIDで探す(同名カードなら同一の効果なので取り違えても問題ない)。
+  let idx = list ? list.indexOf(entry.card) : -1;
+  if (idx < 0 && list) idx = list.findIndex((c) => c.id === entry.card.id);
   if (!list || idx < 0) {
     state.message = "そのカードはもう見つかりません。";
     render();
@@ -13120,6 +13123,7 @@ function continueUnitDeployQueue(playerId, unitQueue, queueItem, options = {}) {
   const player = state.players[playerId];
   const unitCard = unitQueue.shift();
   if (!unitCard) {
+    state.message = `${player.name}: 行動してください。`;
     if (queueItem) completeAbilitySource(state, queueItem);
     processEffectQueue(state);
     render();
@@ -13147,6 +13151,7 @@ function continueUnitDeployQueue(playerId, unitQueue, queueItem, options = {}) {
 function continueTokenDeployQueue(playerId, tokenId, remaining, queueItem) {
   const player = state.players[playerId];
   if (remaining <= 0) {
+    state.message = `${player.name}: 行動してください。`;
     if (queueItem) completeAbilitySource(state, queueItem);
     processEffectQueue(state);
     render();
@@ -14977,6 +14982,17 @@ function resolveStructZoneReplace(structIndex) {
   state.selected = null;
   playStruct(deckIndex, soulPayAmount, replaceIndex);
   syncOnlineAction("resolveChoice", pending.playerId);
+  return true;
+}
+
+function cancelStructZoneReplace() {
+  const pending = state.pendingChoice;
+  if (pending?.type !== "structZoneReplace" || !canControlChoicePlayer(pending.playerId)) return false;
+  state.pendingChoice = null;
+  state.selected = null;
+  state.message = `「${pending.cardName}」の建設を中止しました。`;
+  syncOnlineAction("resolveChoice", pending.playerId);
+  render();
   return true;
 }
 
@@ -20953,7 +20969,7 @@ function drawStructZoneReplacePanel(pending) {
   const maxCols = 5;
   const rows = Math.ceil(structs.length / maxCols) || 1;
   const panelW = Math.max(520, maxCols * (cardW + gap) + 96);
-  const panelH = 120 + rows * (cardH + gap) + 40;
+  const panelH = 120 + rows * (cardH + gap) + 40 + 44;
   const x = Math.round((W - panelW) / 2);
   const y = Math.round((H - panelH) / 2);
   drawChoicePanelBase(x, y, panelW, panelH, "rgba(50,70,120,0.78)", "#6080d0");
@@ -20967,6 +20983,9 @@ function drawStructZoneReplacePanel(pending) {
   const isController = canControlChoicePlayer(pending.playerId);
   const startX = x + 28;
   const startY = y + 88;
+  if (isController) {
+    drawButton(x + panelW - 148, y + panelH - 44, 120, 32, "キャンセル", cancelStructZoneReplace, null, { accent: "dim" });
+  }
   if (!structs.length) {
     ctx.fillStyle = "rgba(220,180,180,0.8)";
     ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
@@ -23507,6 +23526,7 @@ const testing = {
   cancelSoulPayChoice,
   resolveMatterDiscountChoice,
   resolveStructZoneReplace,
+  cancelStructZoneReplace,
   normalizeMisplacedStructCards: (playerId) => normalizeMisplacedStructCards(state, playerId),
   transferUnitControl: (unit, newControllerId, options = {}) => transferUnitControl(state, unit, newControllerId, options),
   findControlTransferDestination: (newControllerId, fromRow, options = {}) =>
