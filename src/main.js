@@ -21960,9 +21960,12 @@ function drawStructPhaseOverlay() {
   const pending = state.pendingStructPhase;
   if (!pending) {
     structPhaseScroll = 0;
-    // このスクロール値は破壊工作等の pendingChoice「destroyEnemyStruct」でも共有しているため、
-    // そちらが表示中は毎フレームここでリセットしないようにする。
-    if (state.pendingChoice?.type !== "destroyEnemyStruct") enemyStructChoiceScroll = 0;
+    // このスクロール値は破壊工作(destroyEnemyStruct)・戦術爆撃(tacticalBombardment)の
+    // 相手ストラクト選択パネルでも共有しているため、そちらが表示中は毎フレーム
+    // ここでリセットしないようにする。
+    if (!["destroyEnemyStruct", "tacticalBombardment"].includes(state.pendingChoice?.type)) {
+      enemyStructChoiceScroll = 0;
+    }
     return;
   }
   const player = state.players[pending.playerId];
