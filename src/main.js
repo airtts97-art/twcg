@@ -11426,8 +11426,17 @@ function resolveVeresDumpPick() {
     render();
     return true;
   }
-  const indexes = [...selected].sort((a, b) => b - a);
-  const picked = indexes.map((idx) => player.dump.splice(idx, 1)[0]).filter(Boolean).reverse();
+  // selected は pending.candidates(墓地からユニットのみ抽出済み配列)内でのインデックスであり、
+  // player.dump(全カード)内の生インデックスとは一致しない。これを直接dump.splice()に使うと、
+  // 墓地に混在するタクト等のカードとズレて無関係なカード(タクト含む)を取り出してしまうバグになる。
+  // 選択されたカード実体を特定してから、そのカードの現在位置をdump内で探して取り出す。
+  const selectedCards = [...selected].map((i) => pending.candidates[i]?.card).filter(Boolean);
+  const picked = [];
+  for (const card of selectedCards) {
+    let idx = player.dump.indexOf(card);
+    if (idx < 0) idx = player.dump.findIndex((c) => c.id === card.id);
+    if (idx >= 0) picked.push(player.dump.splice(idx, 1)[0]);
+  }
   notifyDumpChanged(state, pending.playerId);
   state.pendingChoice = null;
   state.selected = null;
@@ -16161,6 +16170,8 @@ function resolvePayEnemyAttackCostsAndRest(shouldPay) {
         unit.rested = true;
         unit.lockedRestTurns = Math.max(unit.lockedRestTurns || 0, 1);
         unit.skipNextOwnerUnrest = true;
+        // 警戒等の「ターン終了時にアンレスト」系の効果より優先してロックを即時有効にする
+        unit.forcedRestThisTurn = true;
         restedNames.push(unit.name);
       }
     }
