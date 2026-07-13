@@ -5909,15 +5909,20 @@ function parseDeckmakerAbilities(card, localType) {
     abilities.push({ trigger: "onActivate", effect: "destroyAllUnits", activationCost: { magic: 10 }, excludeSelf: true });
   }
 
-  // 農業協同組合: 建設時に農民・農場を合計3枚まで場に出す
+  // 農業協同組合: 建設時に農民・農場を合計3枚まで場に出す。レストする：自②を得る
   if (card.id === "card_1753683067735") {
-    abilities.push({
-      trigger: "onPlay",
-      effect: "deployNamedFromDecks",
-      unitName: "農民",
-      structName: "農場",
-      maxTotal: 3,
-    });
+    if (!abilities.some((a) => a.effect === "deployNamedFromDecks")) {
+      abilities.push({
+        trigger: "onPlay",
+        effect: "deployNamedFromDecks",
+        unitName: "農民",
+        structName: "農場",
+        maxTotal: 3,
+      });
+    }
+    if (!abilities.some((a) => a.effect === "produceResource" && a.trigger === "onStructurePhase")) {
+      abilities.push({ trigger: "onStructurePhase", effect: "produceResource", resource: "nature", amount: 2 });
+    }
   }
 
   if (card.id === "card_1753611174564") {
@@ -11559,6 +11564,7 @@ function resolveSearchZoneDeployPickSkip() {
   state.pendingChoice = null;
   state.selected = null;
   if (qi) completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -12005,6 +12011,13 @@ function resolveCoreStructStartDecline() {
 function resolveSummonPlacement(row, col) {
   if (!canControlChoicePlayer(state.pendingChoice?.playerId)) return false;
   const pending = state.pendingChoice;
+  // summonTokenは盤面クリック時にresolveSummonPlacementへ直接ルーティングされる箇所があるため、
+  // ここでsummonPlacementへ正規化しておく(resolveSummonTokenを経由しなくても動くようにする)。
+  if (pending?.type === "summonToken") {
+    pending.spec = { kind: "token", tokenId: pending.tokenId, tokenDef: pending.tokenDef };
+    pending.type = "summonPlacement";
+    pending.validRows = pending.validRows || summonPlacementRowsForPlayer(state, pending.playerId, { allowRaid: pending.hasRaid });
+  }
   if (pending?.type !== "summonPlacement") return false;
   if (!pending.validRows.includes(row)) return false;
   if (!isUnitFieldCell(row, col)) return false;
@@ -12078,6 +12091,11 @@ function resolveSummonPlacement(row, col) {
   state.selected = null;
   if (qi) completeAbilitySource(state, qi);
   applySummonPlacementContinuation(pending.continuation, pending.playerId, unit);
+  // 攻撃時効果(onAttack)からゴーレム召喚等の配置キューが挟まった場合、配置が完了するまで
+  // 攻撃自体(pendingAttackContinuation)が中断されたままになる。ここで再開を試みる
+  // (キューがまだ続く場合はpendingChoiceが再設定されているため、resumePendingAfterChoice内の
+  // ガードにより早すぎる再開は起きない)。
+  resumePendingAfterChoice();
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -12092,6 +12110,7 @@ function resolveSummonPlacementSkip() {
   state.pendingChoice = null;
   state.selected = null;
   if (qi) completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -12102,7 +12121,18 @@ function beginFieldExperimentSummon(pending, handIndex) {
   const player = state.players[pending.playerId];
   const entry = pending.eligible.find((item) => item.handIndex === handIndex);
   if (!entry) return false;
-  const handCard = entry.handCard;
+  // entry.handCardの参照はオンライン同期(JSONシリアライズ)を挟むと手札の実体とは
+  // 別オブジェクトになりうるため、参照一致ではなくhandIndex(+id照合)で引き直す。
+  let actualIndex = handIndex;
+  if (!(player.hand[actualIndex] && player.hand[actualIndex].id === entry.handCard.id)) {
+    actualIndex = player.hand.findIndex((c) => c.id === entry.handCard.id);
+  }
+  if (actualIndex < 0) {
+    finishFieldExperimentChoice(state, pending);
+    render();
+    return false;
+  }
+  const handCard = player.hand[actualIndex];
   const electricCost = totalCostAmount(handCard.cost || {});
   if (!canPay(player, { electric: electricCost })) {
     state.message = `電${electricCost}を支払えません。`;
@@ -12110,12 +12140,6 @@ function beginFieldExperimentSummon(pending, handIndex) {
     return false;
   }
   pay(player, { electric: electricCost });
-  const actualIndex = player.hand.indexOf(handCard);
-  if (actualIndex < 0) {
-    finishFieldExperimentChoice(state, pending);
-    render();
-    return false;
-  }
   const [exiled] = player.hand.splice(actualIndex, 1);
   player.exileZone.push(exiled);
   notifyHandOrDumpCardExiled(state, pending.playerId, "hand", exiled);
@@ -12292,6 +12316,7 @@ function resolveTsunataiRiteSkip() {
   state.pendingChoice = null;
   state.selected = null;
   if (qi) completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -13090,6 +13115,7 @@ function resolveLifeCounterPaymentSkip() {
   state.pendingChoice = null;
   state.selected = null;
   if (qi) completeAbilitySource(state, qi);
+  resumePendingAfterChoice();
   processEffectQueue(state);
   syncOnlineAction("resolveChoice", pending.playerId);
   render();
@@ -17352,6 +17378,37 @@ function addWheelRegion(x, y, w, h, onWheel) {
 }
 
 function render() {
+  try {
+    renderInner();
+  } catch (e) {
+    console.error("render error:", e);
+    drawRenderErrorOverlay(e);
+  }
+}
+
+function drawRenderErrorOverlay(error) {
+  // renderInner()が例外を投げた場合、盤面が真っ黒/フリーズしたまま何も表示されず
+  // 操作不能に見える不具合を防ぐため、最低限のエラー表示とロビーへの脱出手段を用意する。
+  try {
+    hitRegions.length = 0;
+    hoverRegions.length = 0;
+    wheelRegions.length = 0;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#05070f";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#ff8080";
+    ctx.font = "700 18px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("表示エラーが発生しました", 24, 40);
+    ctx.fillStyle = "rgba(255,200,200,0.85)";
+    ctx.font = "600 13px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(String(error?.message || error || "unknown error"), 24, 66, W - 48);
+    if (app.screen === "game") drawEscapeToLobbyButton();
+  } catch (innerError) {
+    console.error("render error overlay also failed:", innerError);
+  }
+}
+
+function renderInner() {
   hitRegions.length = 0;
   hoverRegions.length = 0;
   wheelRegions.length = 0;
@@ -17394,7 +17451,7 @@ function drawEscapeToLobbyButton() {
   if (app.screen !== "game") return;
   const w = 150, h = 34;
   const x = W - w - 14, y = H - h - 14;
-  drawButton(x, y, w, h, "ロビーに戻る", leaveMatchToLobby, null, { accent: "dim" });
+  drawButton(x, y, w, h, "ロビーに戻る", leaveMatchToLobby, null, { accent: "dim", allowWhenGameOver: true });
 }
 
 function drawGameOverOverlay() {

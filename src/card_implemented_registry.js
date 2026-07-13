@@ -102,6 +102,7 @@ export const IMPLEMENTED_CARD_IDS = new Set([
   "card_1783156872094", // 傭兵雇用契約書
   "card_1782548454494", // クリスマス休戦
   "card_1783012502753", // 魔TteR:【APp】(マター:APp)
+  "card_1753683067735", // 農業協同組合
 ]);
 
 export function isImplementedCard(cardId) {
